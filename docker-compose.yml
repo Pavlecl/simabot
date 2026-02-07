@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  ozon-bot:
+    build: .
+    container_name: ozon_sima_bot
+    # Эта настройка заставит бота перезапускаться автоматически,
+    # если он упадет или если вы перезагрузите сервер
+    restart: unless-stopped
+    # Подключаем ваши переменные окружения (.env)
+    env_file:
+      - .env
+    # Настраиваем логирование, чтобы не забивать диск сервера
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    volumes:
+      - ./bot_database.db:/app/bot_database.db
