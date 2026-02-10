@@ -51,12 +51,25 @@ async def remove_virtual_order(posting_number):
 
 
 async def get_virtual_orders_full():
+    """Возвращает номера виртуальных заказов вместе с данными Симы (если они есть)"""
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('SELECT posting_number, added_at FROM virtual_orders ORDER BY added_at DESC') as cursor:
+        # Соединяем таблицу виртуальных заказов с мета-данными по номеру отправления
+        query = '''
+            SELECT 
+                v.posting_number, 
+                v.added_at, 
+                m.sima_order_number, 
+                m.plan_delivery_date
+            FROM virtual_orders v
+            LEFT JOIN active_orders_meta m ON v.posting_number = m.posting_number
+            ORDER BY v.added_at DESC
+        '''
+        async with db.execute(query) as cursor:
             return await cursor.fetchall()
 
 
 async def clear_virtual_orders():
+    """Очищает всю таблицу виртуальных заказов"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('DELETE FROM virtual_orders')
         await db.commit()
@@ -109,3 +122,40 @@ async def get_all_meta_postings():
         async with db.execute('SELECT posting_number FROM active_orders_meta') as cursor:
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
+
+
+async def get_all_virtual_articles():
+    """Возвращает словарь {артикул: общее_количество} из виртуальных заказов"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Получаем все номера заказов из virtual_orders
+        async with db.execute('SELECT posting_number FROM virtual_orders') as cursor:
+            rows = await cursor.fetchall()
+            virtual_postings = [row[0] for row in rows]
+
+        if not virtual_postings:
+            return {}
+
+        # Получаем JSON-ы продуктов из active_orders_meta для этих номеров
+        placeholders = ','.join(['?'] * len(virtual_postings))
+        query = f'SELECT products_json FROM active_orders_meta WHERE posting_number IN ({placeholders})'
+
+        async with db.execute(query, virtual_postings) as cursor:
+            rows = await cursor.fetchall()
+
+        # Считаем общее количество каждого артикула в виртуальных заказах
+        total_virtual_items = {}
+        for row in rows:
+            products = json.loads(row[0])
+            for p in products:
+                # В JSON у нас обычно offer_id или sku, зависит от того, что вы сохраняли
+                art = str(p.get('offer_id') or p.get('sku'))
+                qty = int(p.get('quantity', 0))
+                total_virtual_items[art] = total_virtual_items.get(art, 0) + qty
+
+        return total_virtual_items
+
+async def clear_all_virtual_orders():
+    """Удаляет ВСЕ записи из таблицы виртуальных заказов"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('DELETE FROM virtual_orders')
+        await db.commit()
