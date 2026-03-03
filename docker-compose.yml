@@ -1,68 +1,53 @@
-# Удалите эту строку: version: '3.8' (она выдает WARN)
+version: "3.9"
+
+# 📚 УРОК: docker-compose запускает несколько контейнеров как единую систему.
+# Каждый сервис — это отдельный процесс в своём контейнере.
+# Они общаются по имени сервиса (например: db, bot → db:5432)
 
 services:
-  # 1. База данных PostgreSQL
+
+  # --- База данных PostgreSQL ---
   db:
     image: postgres:15-alpine
-    container_name: sima_postgres
-    restart: unless-stopped # Changed to unless-stopped for consistency
+    restart: always
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASS}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASS:-postgres}
+      POSTGRES_DB: ${DB_NAME:-sima_control}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5435:5432"
-    # Добавляем проверку здоровья БД
+      # Данные хранятся на диске хоста — не пропадут при перезапуске
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"] # Используем переменные
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # 2. Твой Телеграм Бот
+  # --- Telegram Bot ---
   bot:
     build: .
-    container_name: ozon_sima_bot
-    restart: unless-stopped
+    restart: always
+    command: python main.py
+    env_file: .env
     depends_on:
       db:
-        condition: service_healthy # Ждем, пока БД будет здорова
-    env_file:
-      - .env
-    environment: # Передаем переменные БД явно, так как `database.py` их читает
-      - DB_HOST=db # Имя сервиса БД в Docker Compose
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASS}
-      - DB_NAME=${DB_NAME}
-    command: ["python", "main.py"] # main.py теперь запускает ТОЛЬКО бота
+        condition: service_healthy
+    # 📚 УРОК: depends_on с condition гарантирует, что бот стартует
+    # только когда PostgreSQL готов принимать подключения (healthcheck).
 
-  # 3. Веб-сервер (Сайт)
+  # --- Веб-интерфейс FastAPI ---
   web:
     build: .
-    container_name: sima_web
-    restart: unless-stopped
+    restart: always
+    command: uvicorn web_app:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    ports:
+      - "8000:8000"
+      # Порт 8000 хоста → порт 8000 контейнера
+      # В production лучше поставить nginx перед ним (HTTPS, сжатие)
     depends_on:
       db:
-        condition: service_healthy # Ждем, пока БД будет здорова
-    env_file:
-      - .env
-    environment: # Передаем переменные БД явно
-      - DB_HOST=db # Имя сервиса БД в Docker Compose
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASS}
-      - DB_NAME=${DB_NAME}
-    ports:
-      - "8001:8000"
-    # Запускаем FastAPI сервер
-    command: ["uvicorn", "web_server:app", "--host", "0.0.0.0", "--port", "8000"]
-    # Добавляем проверку здоровья для веб-сервера
-    healthcheck:
-      test: [ "CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/\")' || exit 1" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+        condition: service_healthy
 
 volumes:
-  postgres_data:
+  pgdata:

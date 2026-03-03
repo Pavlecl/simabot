@@ -1,0 +1,83 @@
+# .github/workflows/deploy.yml
+#
+# 📚 УРОК: GitHub Actions — это CI/CD система встроенная в GitHub.
+#
+# CI (Continuous Integration) — автоматическая проверка кода при каждом push
+# CD (Continuous Deployment) — автоматический деплой после успешной проверки
+#
+# Как это работает:
+# 1. Вы делаете git push в ветку main
+# 2. GitHub запускает этот файл на своём облачном сервере (runner)
+# 3. Runner подключается к вашему серверу по SSH
+# 4. На сервере выполняется скрипт обновления
+# 5. Если что-то пошло не так — GitHub уведомит вас на почту
+#
+# Секреты (SSH_HOST, SSH_USER, SSH_KEY) хранятся в:
+# GitHub → репозиторий → Settings → Secrets and variables → Actions
+
+name: 🚀 Deploy to golem
+
+on:
+  push:
+    branches:
+      - main  # Деплой только при push в main, не в feature-ветки
+
+  # Позволяет запустить вручную из интерфейса GitHub
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest  # GitHub предоставляет бесплатный Ubuntu-сервер для запуска
+
+    steps:
+      # Шаг 1: Скачиваем код репозитория на runner
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # Шаг 2: Подключаемся к серверу и деплоим
+      # appleboy/ssh-action — популярное action для SSH-команд
+      - name: 🔑 Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}      # 89.179.122.136
+          username: ${{ secrets.SSH_USER }}  # pavlecl
+          key: ${{ secrets.SSH_KEY }}        # Приватный SSH ключ (содержимое ~/.ssh/id_ed25519)
+          port: 22
+
+          # Скрипт выполняется на вашем сервере golem
+          # 📚 УРОК: set -e означает "остановиться если любая команда вернула ошибку"
+          # Без этого скрипт продолжит выполнение даже при ошибке — опасно!
+          script: |
+            set -e
+
+            echo "📦 Переходим в папку проекта..."
+            cd ~/sima_bot
+
+            echo "⬇️  Получаем последние изменения из GitHub..."
+            git pull origin main
+
+            echo "🔨 Пересобираем образы (только если изменился Dockerfile или requirements.txt)..."
+            docker compose build --no-cache bot web
+
+            echo "🔄 Перезапускаем сервисы с нулевым downtime..."
+            # --no-deps чтобы не трогать БД
+            docker compose up -d --no-deps bot web
+
+            echo "🧹 Удаляем старые образы (освобождаем место на диске)..."
+            docker image prune -f
+
+            echo "✅ Деплой завершён успешно!"
+            docker compose ps
+
+      # Шаг 3: Уведомление об успехе (опционально, закомментировано)
+      # - name: 📣 Notify Telegram
+      #   if: always()  # Выполняется даже при ошибке
+      #   uses: appleboy/telegram-action@master
+      #   with:
+      #     to: ${{ secrets.TELEGRAM_CHAT_ID }}
+      #     token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      #     message: |
+      #       ${{ job.status == 'success' && '✅' || '❌' }} Deploy ${{ job.status }}
+      #       Commit: ${{ github.event.commits[0].message }}
+      #       By: ${{ github.actor }}

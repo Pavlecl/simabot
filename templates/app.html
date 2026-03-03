@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIMA CONTROL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080a0f;
+    --surface: #0f1318;
+    --surface2: #151b24;
+    --border: #1e2530;
+    --accent: #e85d26;
+    --accent-dim: rgba(232,93,38,0.15);
+    --green: #2dce89;
+    --yellow: #f5a623;
+    --red: #f5365c;
+    --text: #c8d0dc;
+    --text-dim: #4a5568;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Bebas Neue', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    display: flex;
+    flex-direction: column;
+    font-size: 13px;
+  }
+
+  /* ===== HEADER ===== */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    height: 52px;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, var(--accent) 0%, transparent 40%);
+  }
+
+  .logo {
+    font-family: var(--display);
+    font-size: 22px;
+    letter-spacing: 3px;
+    color: #fff;
+    margin-right: 32px;
+  }
+  .logo span { color: var(--accent); }
+
+  nav { display: flex; gap: 4px; flex: 1; }
+
+  nav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+  }
+
+  nav a:hover { color: var(--text); border-color: var(--border); }
+
+  nav a.active {
+    color: var(--accent);
+    border-color: var(--accent-dim);
+    background: var(--accent-dim);
+  }
+
+  .user-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .role-badge {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border: 1px solid;
+  }
+
+  .role-badge.admin { color: var(--accent); border-color: var(--accent-dim); }
+  .role-badge.fulfillment { color: var(--green); border-color: rgba(45,206,137,0.3); }
+
+  .logout-btn {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 11px;
+    transition: color 0.15s;
+  }
+  .logout-btn:hover { color: var(--red); }
+
+  /* ===== MAIN LAYOUT ===== */
+  main {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    gap: 20px;
+  }
+
+  /* ===== TAB PANELS ===== */
+  .tab-panel { display: none; flex: 1; flex-direction: column; gap: 20px; overflow: hidden; }
+  .tab-panel.active { display: flex; }
+
+  /* ===== STAT CARDS ===== */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent);
+  }
+
+  .stat-value {
+    font-family: var(--display);
+    font-size: 40px;
+    line-height: 1;
+    color: #fff;
+    margin-bottom: 6px;
+  }
+
+  .stat-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .stat-card.green::before { background: var(--green); }
+  .stat-card.yellow::before { background: var(--yellow); }
+  .stat-card.red::before { background: var(--red); }
+
+  /* ===== TABLE ===== */
+  .table-container {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  thead {
+    position: sticky;
+    top: 0;
+    background: var(--surface2);
+    z-index: 10;
+  }
+
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .code { color: var(--accent); }
+
+  /* Статусы */
+  .status {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+  .status.awaiting_packaging { color: var(--yellow); border-color: rgba(245,166,35,0.3); }
+  .status.awaiting_deliver { color: var(--green); border-color: rgba(45,206,137,0.3); }
+  .status.processing { color: #8b9fc0; border-color: var(--border); }
+  .status.delivered { color: var(--text-dim); border-color: var(--border); }
+  .status.cancelled { color: var(--red); border-color: rgba(245,54,92,0.3); }
+
+  /* ===== FILTERS ===== */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .toolbar-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  select, input[type="text"] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  select:focus, input[type="text"]:focus { border-color: var(--accent); }
+
+  .btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 7px 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 1px;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #c94d1e; }
+
+  /* ===== EDIT MODAL ===== */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    width: 520px;
+    max-width: 95vw;
+    position: relative;
+  }
+
+  .modal::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  .modal-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-title {
+    font-family: var(--display);
+    font-size: 20px;
+    letter-spacing: 2px;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+  }
+  .modal-close:hover { color: var(--red); }
+
+  .modal-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+  .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 12px; justify-content: flex-end; }
+
+  .field-group label {
+    display: block;
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  .field-group input, .field-group textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 10px 12px;
+    outline: none;
+    resize: vertical;
+    transition: border-color 0.15s;
+  }
+  .field-group input:focus, .field-group textarea:focus { border-color: var(--accent); }
+
+  /* ===== QUEUE CARDS ===== */
+  .queue-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+    overflow-y: auto;
+    flex: 1;
+    align-content: start;
+  }
+
+  .queue-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px;
+    position: relative;
+    transition: border-color 0.15s;
+  }
+  .queue-card:hover { border-color: var(--text-dim); }
+
+  .queue-card.has-sur { border-left: 3px solid var(--green); }
+  .queue-card.no-sur { border-left: 3px solid var(--yellow); }
+
+  .queue-posting {
+    font-size: 11px;
+    color: var(--accent);
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+  }
+
+  .queue-meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 16px;
+    margin-bottom: 12px;
+  }
+
+  .queue-meta-item { font-size: 10px; }
+  .queue-meta-key { color: var(--text-dim); }
+  .queue-meta-value { color: var(--text); }
+
+  .products-list {
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .product-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .product-item .qty { color: var(--accent); font-weight: 700; }
+
+  /* ===== PAGINATION ===== */
+  .pagination {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding-top: 4px;
+  }
+  .page-info { font-size: 11px; color: var(--text-dim); margin: 0 8px; }
+
+  /* ===== LOADING / EMPTY ===== */
+  .state-msg {
+    text-align: center;
+    padding: 60px;
+    color: var(--text-dim);
+    font-size: 12px;
+    letter-spacing: 2px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--green);
+    padding: 12px 20px;
+    font-size: 12px;
+    z-index: 200;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.25s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { border-left-color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">SIMA<span>.</span>CTRL</div>
+  <nav>
+    {% if user.role == 'admin' %}
+    <a href="/" class="{{ 'active' if active_tab == 'dashboard' }}">Дашборд</a>
+    <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
+    {% endif %}
+    <a href="/queue" class="{{ 'active' if active_tab == 'queue' }}">Очередь сборки</a>
+  </nav>
+  <div class="user-info">
+    <span>{{ user.username }}</span>
+    <span class="role-badge {{ user.role }}">{{ user.role }}</span>
+    <a href="/logout" class="logout-btn">выйти →</a>
+  </div>
+</header>
+
+<main>
+
+  {# ===== TAB: DASHBOARD ===== #}
+  <div class="tab-panel {{ 'active' if active_tab == 'dashboard' }}" id="tab-dashboard">
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card"><div class="stat-value" id="s-total">—</div><div class="stat-label">Всего заказов</div></div>
+      <div class="stat-card yellow"><div class="stat-value" id="s-packaging">—</div><div class="stat-label">Ждут упаковки</div></div>
+      <div class="stat-card red"><div class="stat-value" id="s-no-sur">—</div><div class="stat-label">Без СУР</div></div>
+      <div class="stat-card"><div class="stat-value" id="s-virtual">—</div><div class="stat-label">Виртуальных</div></div>
+      <div class="stat-card green"><div class="stat-value" id="s-recent">—</div><div class="stat-label">За 7 дней</div></div>
+    </div>
+
+    <div class="table-container">
+      <table id="recent-table">
+        <thead>
+          <tr>
+            <th>Отправление</th>
+            <th>Статус</th>
+            <th>Заказ Сима</th>
+            <th>Плановая поставка</th>
+            <th>СУР</th>
+            <th>Добавлен</th>
+          </tr>
+        </thead>
+        <tbody id="recent-body">
+          <tr><td colspan="6" class="state-msg">ЗАГРУЗКА...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ===== TAB: ORDERS ===== #}
+  <div class="tab-panel {{ 'active' if active_tab == 'orders' }}" id="tab-orders">
+    <div class="toolbar">
+      <span class="toolbar-label">Фильтр:</span>
+      <select id="status-filter" onchange="loadOrders(1)">
+        <option value="">Все статусы</option>
+        <option value="awaiting_packaging">awaiting_packaging</option>
+        <option value="awaiting_deliver">awaiting_deliver</option>
+        <option value="processing">processing</option>
+        <option value="delivered">delivered</option>
+        <option value="cancelled">cancelled</option>
+      </select>
+      <button class="btn" onclick="loadOrders(1)">Обновить</button>
+      <span class="toolbar-label" id="orders-count" style="margin-left:auto"></span>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Отправление</th>
+            <th>Статус Ozon</th>
+            <th>Заказ Сима</th>
+            <th>Дата Сима</th>
+            <th>Поставка (план)</th>
+            <th>Поставка (ФФ)</th>
+            <th>СУР</th>
+            <th>Комментарий</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="orders-body">
+          <tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <button class="btn" id="prev-btn" onclick="loadOrders(currentPage - 1)">← Назад</button>
+      <span class="page-info" id="page-info"></span>
+      <button class="btn" id="next-btn" onclick="loadOrders(currentPage + 1)">Вперёд →</button>
+    </div>
+  </div>
+
+  {# ===== TAB: QUEUE ===== #}
+  <div class="tab-panel {{ 'active' if active_tab == 'queue' }}" id="tab-queue">
+    <div class="toolbar">
+      <span class="toolbar-label">Очередь ручной сборки</span>
+      <button class="btn" onclick="loadQueue()" style="margin-left:auto">Обновить</button>
+      <span class="toolbar-label" id="queue-count"></span>
+    </div>
+    <div class="queue-grid" id="queue-grid">
+      <div class="state-msg">ЗАГРУЗКА...</div>
+    </div>
+  </div>
+
+</main>
+
+{# ===== EDIT MODAL ===== #}
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">РЕДАКТИРОВАТЬ</div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:11px; color:var(--text-dim)">Отправление: <span id="modal-posting" style="color:var(--accent)"></span></div>
+
+      <div class="field-group">
+        <label>СУР (номер от фулфилмента)</label>
+        <input type="text" id="modal-sur" placeholder="например: СУР-2024-001">
+      </div>
+      <div class="field-group">
+        <label>Дата поставки на ФФ (факт)</label>
+        <input type="datetime-local" id="modal-ff-date">
+      </div>
+      <div class="field-group">
+        <label>Плановая дата поставки</label>
+        <input type="text" id="modal-plan-date" placeholder="например: 25.10">
+      </div>
+      <div class="field-group">
+        <label>Комментарий</label>
+        <textarea id="modal-comment" rows="3" placeholder="Любые заметки..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Отмена</button>
+      <button class="btn primary" onclick="saveOrder()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// =====================================================================
+// 📚 УРОК: JavaScript на странице
+// Вместо перезагрузки страницы мы используем fetch() для запросов к API.
+// fetch() — асинхронная функция, возвращает Promise.
+// async/await — синтаксический сахар для работы с Promise.
+// =====================================================================
+
+let currentPage = 1;
+let totalPages = 1;
+let editingPosting = null;
+
+// Определяем текущую вкладку из серверного рендера
+const activeTab = '{{ active_tab }}';
+const userRole = '{{ user.role }}';
+
+// При загрузке страницы — грузим данные для нужной вкладки
+document.addEventListener('DOMContentLoaded', () => {
+  if (activeTab === 'dashboard') loadDashboard();
+  if (activeTab === 'orders') loadOrders(1);
+  if (activeTab === 'queue') loadQueue();
+});
+
+// ===== ДАШБОРД =====
+async function loadDashboard() {
+  try {
+    const [stats, orders] = await Promise.all([
+      fetch('/api/stats').then(r => r.json()),
+      fetch('/api/orders?per_page=20').then(r => r.json())
+    ]);
+
+    // Заполняем карточки статистики
+    document.getElementById('s-total').textContent = stats.total ?? '—';
+    document.getElementById('s-packaging').textContent = stats.statuses?.awaiting_packaging ?? 0;
+    document.getElementById('s-no-sur').textContent = stats.no_sur ?? '—';
+    document.getElementById('s-virtual').textContent = stats.virtual ?? '—';
+    document.getElementById('s-recent').textContent = stats.recent_7d ?? '—';
+
+    // Заполняем таблицу последних заказов
+    renderOrdersTable(orders.orders, 'recent-body', false);
+  } catch(e) {
+    showToast('Ошибка загрузки дашборда', 'error');
+  }
+}
+
+// ===== ЗАКАЗЫ =====
+async function loadOrders(page) {
+  currentPage = page;
+  const status = document.getElementById('status-filter')?.value || '';
+  const url = `/api/orders?page=${page}&per_page=50&status=${encodeURIComponent(status)}`;
+
+  document.getElementById('orders-body').innerHTML =
+    '<tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>';
+
+  try {
+    const data = await fetch(url).then(r => r.json());
+    totalPages = Math.ceil(data.total / data.per_page);
+
+    renderOrdersTable(data.orders, 'orders-body', true);
+
+    document.getElementById('orders-count').textContent =
+      `Показано ${data.orders.length} из ${data.total}`;
+    document.getElementById('page-info').textContent =
+      `Стр. ${page} / ${totalPages}`;
+    document.getElementById('prev-btn').disabled = page <= 1;
+    document.getElementById('next-btn').disabled = page >= totalPages;
+
+  } catch(e) {
+    document.getElementById('orders-body').innerHTML =
+      `<tr><td colspan="9" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>`;
+  }
+}
+
+function renderOrdersTable(orders, tbodyId, showActions) {
+  const tbody = document.getElementById(tbodyId);
+  if (!orders || orders.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">НЕТ ДАННЫХ</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = orders.map(o => `
+    <tr>
+      <td class="code">${o.posting_number}</td>
+      <td><span class="status ${o.ozon_status}">${o.ozon_status || '—'}</span></td>
+      <td>${o.sima_order_number || '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td>${o.sima_order_date || '—'}</td>
+      <td>${o.plan_delivery_date || '—'}</td>
+      <td>${o.ff_delivery_date ? o.ff_delivery_date.slice(0,10) : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td>${o.sur_number
+        ? `<span style="color:var(--green)">${o.sur_number}</span>`
+        : '<span style="color:var(--yellow)">нет</span>'
+      }</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
+        ${o.comment || ''}
+      </td>
+      ${showActions ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})'>✎</button></td>` : '<td></td>'}
+    </tr>
+  `).join('');
+}
+
+// ===== ОЧЕРЕДЬ =====
+async function loadQueue() {
+  document.getElementById('queue-grid').innerHTML =
+    '<div class="state-msg">ЗАГРУЗКА...</div>';
+
+  try {
+    const data = await fetch('/api/queue').then(r => r.json());
+    document.getElementById('queue-count').textContent = `Итого: ${data.total}`;
+
+    if (!data.queue || data.queue.length === 0) {
+      document.getElementById('queue-grid').innerHTML =
+        '<div class="state-msg">✅ ОЧЕРЕДЬ ПУСТА</div>';
+      return;
+    }
+
+    document.getElementById('queue-grid').innerHTML = data.queue.map(item => `
+      <div class="queue-card ${item.sur_number ? 'has-sur' : 'no-sur'}">
+        <div class="queue-posting">${item.posting_number}</div>
+        <div class="queue-meta">
+          <div class="queue-meta-item">
+            <span class="queue-meta-key">Сима: </span>
+            <span class="queue-meta-value">${item.sima_order_number || '—'}</span>
+          </div>
+          <div class="queue-meta-item">
+            <span class="queue-meta-key">Поставка: </span>
+            <span class="queue-meta-value">${item.plan_delivery_date || '—'}</span>
+          </div>
+          <div class="queue-meta-item">
+            <span class="queue-meta-key">СУР: </span>
+            <span class="queue-meta-value" style="color:${item.sur_number ? 'var(--green)' : 'var(--yellow)'}">
+              ${item.sur_number || 'не заполнен'}
+            </span>
+          </div>
+          <div class="queue-meta-item">
+            <span class="queue-meta-key">Добавлен: </span>
+            <span class="queue-meta-value">${item.added_at ? item.added_at.slice(0,10) : '—'}</span>
+          </div>
+        </div>
+        ${item.products.length ? `
+        <div class="products-list">
+          ${item.products.map(p => `
+            <div class="product-item">
+              <span>${typeof p === 'string' ? p : (p.name || p.offer_id || p.sku || '?')}</span>
+              ${typeof p === 'object' && p.quantity ? `<span class="qty">×${p.quantity}</span>` : ''}
+            </div>
+          `).join('')}
+        </div>` : ''}
+        ${userRole === 'admin' ? `
+        <div style="margin-top:14px">
+          <button class="btn primary" style="width:100%;font-size:10px" onclick='openEdit(${JSON.stringify({
+            posting_number: item.posting_number,
+            sur_number: item.sur_number,
+            ff_delivery_date: null,
+            plan_delivery_date: item.plan_delivery_date,
+            comment: item.comment
+          })})'>✎ РЕДАКТИРОВАТЬ</button>
+        </div>` : ''}
+      </div>
+    `).join('');
+
+  } catch(e) {
+    document.getElementById('queue-grid').innerHTML =
+      '<div class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</div>';
+  }
+}
+
+// ===== МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ =====
+function openEdit(order) {
+  editingPosting = order.posting_number;
+  document.getElementById('modal-posting').textContent = order.posting_number;
+  document.getElementById('modal-sur').value = order.sur_number || '';
+  document.getElementById('modal-ff-date').value = order.ff_delivery_date
+    ? order.ff_delivery_date.slice(0, 16) : '';
+  document.getElementById('modal-plan-date').value = order.plan_delivery_date || '';
+  document.getElementById('modal-comment').value = order.comment || '';
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('edit-modal').classList.remove('open');
+  editingPosting = null;
+}
+
+// Закрываем по клику на оверлей
+document.getElementById('edit-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+async function saveOrder() {
+  if (!editingPosting) return;
+
+  const body = {
+    sur_number: document.getElementById('modal-sur').value.trim(),
+    ff_delivery_date: document.getElementById('modal-ff-date').value || null,
+    plan_delivery_date: document.getElementById('modal-plan-date').value.trim(),
+    comment: document.getElementById('modal-comment').value.trim(),
+  };
+
+  try {
+    // 📚 УРОК: PATCH-запрос с JSON-телом
+    const resp = await fetch(`/api/orders/${encodeURIComponent(editingPosting)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || resp.statusText);
+    }
+
+    closeModal();
+    showToast('✓ Сохранено');
+
+    // Обновляем текущую вкладку
+    if (activeTab === 'orders') loadOrders(currentPage);
+    if (activeTab === 'queue') loadQueue();
+    if (activeTab === 'dashboard') loadDashboard();
+
+  } catch(e) {
+    showToast(`Ошибка: ${e.message}`, 'error');
+  }
+}
+
+// ===== TOAST УВЕДОМЛЕНИЯ =====
+let toastTimer;
+function showToast(msg, type = '') {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = 'toast show' + (type === 'error' ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.className = 'toast'; }, 3000);
+}
+</script>
+</body>
+</html>
