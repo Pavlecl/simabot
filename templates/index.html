@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimaControl | Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+
+    <style>
+        :root {
+            --neon-blue: #00f3ff;
+            --neon-pink: #bc13fe;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            background: #050510;
+            background-image: radial-gradient(circle at 50% 50%, #1a1a40 0%, #000000 100%);
+            color: #fff;
+            font-family: 'Segoe UI', sans-serif;
+            min-height: 100vh;
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+            padding: 20px;
+        }
+
+        h2 {
+            text-shadow: 0 0 10px var(--neon-blue), 0 0 20px var(--neon-blue);
+            color: #fff;
+        }
+
+        table.dataTable tbody tr {
+            background-color: transparent !important;
+            color: #ddd;
+        }
+
+        .table-dark {
+            --bs-table-bg: transparent;
+        }
+
+        input.editable {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid #444;
+            color: var(--neon-blue);
+            border-radius: 4px;
+            width: 100%;
+            padding: 4px 8px;
+        }
+
+        input.editable:focus {
+            outline: none;
+            border-color: var(--neon-pink);
+            box-shadow: 0 0 8px var(--neon-pink);
+        }
+
+        .badge-ozon {
+            background: rgba(0, 85, 255, 0.2);
+            border: 1px solid #0055ff;
+            color: #4da6ff;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container-fluid p-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>🚀 SimaControl <span style="font-size:0.5em; color:#aaa">v2.0</span></h2>
+        <div>
+            <span class="me-3">👤 {{ user.username }} ({{ user.role }})</span>
+            <a href="/logout" class="btn btn-outline-danger btn-sm">Выход</a>
+        </div>
+    </div>
+
+    <div class="glass-panel">
+        <div class="table-responsive">
+            <table id="ordersTable" class="table table-dark table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Ozon №</th>
+                        <th>Статус</th>
+                        <th>Состав</th>
+                        <th>Добавлен</th>
+                        <th>Дата Сима</th>
+                        <th>№ Заказа Сима</th>
+                        <th>СУР</th>
+                        <th>Поставка на ФФ</th>
+                        <th>Комментарий</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                    <tr data-id="{{ order.posting_number }}">
+                        <td class="fw-bold">{{ order.posting_number }}</td>
+                        <td><span class="badge badge-ozon">{{ order.ozon_status }}</span></td>
+                        <td style="font-size: 0.85em; color: #aaa;">{{ order.product_str|safe }}</td>
+                        <td>{{ order.added_at.strftime('%d.%m %H:%M') if order.added_at else '—' }}</td>
+
+                        <td>
+                            <input type="text" class="editable" onchange="save(this, 'sima_order_date')"
+                                   value="{{ order.sima_order_date or '' }}"
+                                   placeholder="дд.мм.гггг"
+                                   {% if user.role == 'fulfillment' %}disabled{% endif %}>
+                        </td>
+                        <td>
+                            <input type="text" class="editable" onchange="save(this, 'sima_order_number')"
+                                   value="{{ order.sima_order_number or '' }}"
+                                   {% if user.role == 'fulfillment' %}disabled{% endif %}>
+                        </td>
+                        <td>
+                            <input type="text" class="editable" onchange="save(this, 'sur_number')"
+                                   value="{{ order.sur_number or '' }}"
+                                   {% if user.role == 'fulfillment' %}disabled{% endif %}>
+                        </td>
+                        <td>
+                            <input type="date" class="editable" onchange="save(this, 'ff_delivery_date')"
+                                   value="{{ order.ff_delivery_date.strftime('%Y-%m-%d') if order.ff_delivery_date else '' }}"
+                                   {% if user.role == 'fulfillment' %}disabled{% endif %}>
+                        </td>
+                        <td>
+                            <input type="text" class="editable" onchange="save(this, 'comment')"
+                                   value="{{ order.comment or '' }}" placeholder="...">
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.5.1.js"></script>
+<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+
+<script>
+    $(document).ready(function () {
+        $('#ordersTable').DataTable({
+            language: { url: "//cdn.datatables.net/plug-ins/1.13.4/i18n/ru.json" },
+            order: [[3, 'desc']],
+            pageLength: 25
+        });
+    });
+
+    function save(input, field) {
+        let row = input.closest('tr');
+        let id = row.getAttribute('data-id');
+        let val = input.value;
+
+        fetch('/update_order', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: `posting_number=${encodeURIComponent(id)}&field=${field}&value=${encodeURIComponent(val)}`
+        }).then(res => res.json()).then(data => {
+            if(data.error) {
+                alert("Ошибка: " + data.error);
+                input.style.borderColor = "red";
+            } else {
+                input.style.borderColor = "#00f3ff";
+                setTimeout(() => input.style.borderColor = "#444", 1000);
+            }
+        }).catch(err => {
+            alert("Ошибка сети: " + err);
+            input.style.borderColor = "red";
+        });
+    }
+</script>
+
+</body>
+</html>
+EOF

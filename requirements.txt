@@ -4,6 +4,12 @@ python-dotenv
 apscheduler
 pandas
 openpyxl
-aiosqlite
 matplotlib
-seaborn
+sqlalchemy
+asyncpg
+fastapi
+uvicorn
+python-multipart
+jinja2
+greenlet
+psycopg2-binary

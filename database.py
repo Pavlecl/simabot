@@ -1,161 +1,225 @@
-import aiosqlite
+import os
 import json
 from datetime import datetime
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, select, delete, update
+from sqlalchemy.dialects.postgresql import insert
 
-DB_PATH = "bot_database.db"
+# --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
+# Берем данные из .env файла, либо используем значения по умолчанию
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASS = os.getenv("DB_PASS", "postgres")
+DB_HOST = os.getenv("DB_HOST", "db")  # 'db' - это имя сервиса в docker-compose
+DB_NAME = os.getenv("DB_NAME", "sima_control")
 
+DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+Base = declarative_base()
+
+
+# --- МОДЕЛИ ТАБЛИЦ (ДЛЯ САЙТА И БОТА) ---
+
+class User(Base):
+    """Таблица пользователей для входа на сайт"""
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    password_hash = Column(String)
+    role = Column(String)  # 'admin' или 'fulfillment'
+
+
+class Order(Base):
+    """Основная таблица заказов (бывшая active_orders_meta, но расширенная)"""
+    __tablename__ = "orders"
+
+    # Ключевые поля Ozon
+    posting_number = Column(String, primary_key=True)  # Номер отправления
+    ozon_status = Column(String, default="unknown")  # Статус (awaiting_packaging и т.д.)
+    products_json = Column(Text)  # Состав заказа
+
+    # Поля Сима-Ленд (заполняет бот или админ на сайте)
+    sima_order_number = Column(String, nullable=True)
+    sima_order_date = Column(String, nullable=True)  # Храним как строку, чтобы не ломать логику бота "25.10"
+    plan_delivery_date = Column(String, nullable=True)  # Дата поставки (от бота)
+
+    # Новые поля для Сайта/Фулфилмента
+    sur_number = Column(String, nullable=True)  # СУР
+    ff_delivery_date = Column(DateTime, nullable=True)  # Реальная дата поставки на ФФ
+    comment = Column(Text, nullable=True)  # Комментарии
+
+    added_at = Column(DateTime, default=datetime.now)
+    ozon_created_at = Column(DateTime, nullable=True)  # Дата создания на стороне Ozon
+
+
+class VirtualOrder(Base):
+    """
+    Таблица только для ID сложных заказов.
+    Оставляем её отдельной, чтобы не ломать логику бота "get_all_virtual_orders".
+    """
+    __tablename__ = "virtual_orders"
+    posting_number = Column(String, primary_key=True)
+    added_at = Column(DateTime, default=datetime.now)
+
+
+# --- ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ---
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Таблица для виртуальных (сложных) заказов - оставляем как было
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS virtual_orders (
-                posting_number TEXT PRIMARY KEY,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # НОВАЯ таблица для истории и метаданных
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS active_orders_meta (
-                posting_number TEXT PRIMARY KEY,
-                products_json TEXT,
-                sima_order_number TEXT,
-                sima_order_date TEXT,
-                plan_delivery_date TEXT,
-                status TEXT,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        await db.commit()
+    """Создает таблицы в PostgreSQL при запуске"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
-# --- Старые функции для virtual_orders оставляем без изменений ---
+# --- ФУНКЦИИ БОТА (АДАПТИРОВАННЫЕ ПОД POSTGRES) ---
+
 async def add_virtual_order(posting_number):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('INSERT OR IGNORE INTO virtual_orders (posting_number) VALUES (?)', (posting_number,))
-        await db.commit()
+    async with AsyncSessionLocal() as session:
+        # Используем insert с игнорированием дубликатов
+        stmt = insert(VirtualOrder).values(posting_number=posting_number)
+        stmt = stmt.on_conflict_do_nothing(index_elements=['posting_number'])
+        await session.execute(stmt)
+        await session.commit()
 
 
 async def get_all_virtual_orders():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('SELECT posting_number FROM virtual_orders') as cursor:
-            rows = await cursor.fetchall()
-            return [row[0] for row in rows]
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(VirtualOrder.posting_number))
+        return result.scalars().all()
 
 
 async def remove_virtual_order(posting_number):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('DELETE FROM virtual_orders WHERE posting_number = ?', (posting_number,))
-        await db.commit()
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(VirtualOrder).where(VirtualOrder.posting_number == posting_number))
+        await session.commit()
 
 
 async def get_virtual_orders_full():
-    """Возвращает номера виртуальных заказов вместе с данными Симы (если они есть)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Соединяем таблицу виртуальных заказов с мета-данными по номеру отправления
-        query = '''
-            SELECT 
-                v.posting_number, 
-                v.added_at, 
-                m.sima_order_number, 
-                m.plan_delivery_date
-            FROM virtual_orders v
-            LEFT JOIN active_orders_meta m ON v.posting_number = m.posting_number
-            ORDER BY v.added_at DESC
-        '''
-        async with db.execute(query) as cursor:
-            return await cursor.fetchall()
+    """
+    Возвращает список кортежей, как это делал старый SQL запрос.
+    Join таблицы VirtualOrder с таблицей Order.
+    """
+    async with AsyncSessionLocal() as session:
+        # Эмулируем старый SQL запрос через ORM
+        query = select(
+            VirtualOrder.posting_number,
+            VirtualOrder.added_at,
+            Order.sima_order_number,
+            Order.plan_delivery_date
+        ).outerjoin(Order, VirtualOrder.posting_number == Order.posting_number).order_by(VirtualOrder.added_at.desc())
+
+        result = await session.execute(query)
+        rows = result.all()
+
+        # Преобразуем datetime в строки, если нужно, чтобы формат совпадал со старым sqlite
+        # Но обычно бот просто выводит данные, так что datetime тоже сработает при str()
+        formatted_rows = []
+        for row in rows:
+            # Превращаем row в кортеж (posting, date_str, sima_num, deliv_date)
+            p_num = row[0]
+            # row[1] это datetime, старый код ждал строку, преобразуем для совместимости
+            added_at = row[1].strftime("%Y-%m-%d %H:%M:%S") if row[1] else "---"
+            sima_num = row[2]
+            deliv_date = row[3]
+            formatted_rows.append((p_num, added_at, sima_num, deliv_date))
+
+        return formatted_rows
 
 
 async def clear_virtual_orders():
-    """Очищает всю таблицу виртуальных заказов"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('DELETE FROM virtual_orders')
-        await db.commit()
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(VirtualOrder))
+        await session.commit()
 
 
-# --- НОВЫЕ функции для active_orders_meta ---
+# --- ФУНКЦИИ ACTIVE ORDERS (META) ---
 
 async def save_order_meta(posting_number, products, sima_num, sima_date, deliv_date):
-    """Сохраняет данные о заказе при сборке"""
-    # Преобразуем список продуктов в JSON строку для хранения
+    """
+    Сохраняет или обновляет данные о заказе.
+    Теперь пишет в таблицу Order.
+    """
     products_str = json.dumps(products, ensure_ascii=False)
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            INSERT OR REPLACE INTO active_orders_meta 
-            (posting_number, products_json, sima_order_number, sima_order_date, plan_delivery_date, status)
-            VALUES (?, ?, ?, ?, ?, 'processing')
-        ''', (posting_number, products_str, sima_num, sima_date, deliv_date))
-        await db.commit()
+    async with AsyncSessionLocal() as session:
+        # Upsert (Вставить или Обновить)
+        stmt = insert(Order).values(
+            posting_number=posting_number,
+            products_json=products_str,
+            sima_order_number=sima_num,
+            sima_order_date=sima_date,
+            plan_delivery_date=deliv_date,
+            ozon_status='processing'  # Временный статус, пока ozon_api не обновит его реально
+        )
+        # Если такой заказ уже есть, обновляем данные симы
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['posting_number'],
+            set_={
+                'products_json': products_str,
+                'sima_order_number': sima_num,
+                'sima_order_date': sima_date,
+                'plan_delivery_date': deliv_date
+            }
+        )
+        await session.execute(stmt)
+        await session.commit()
 
 
 async def get_order_details(posting_number):
-    """Ищет заказ по номеру отправления Ozon"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('''
-            SELECT products_json, sima_order_number, sima_order_date, plan_delivery_date 
-            FROM active_orders_meta WHERE posting_number = ?
-        ''', (posting_number,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return {
-                    "products": json.loads(row[0]),
-                    "sima_num": row[1],
-                    "sima_date": row[2],
-                    "deliv_date": row[3]
-                }
-            return None
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Order).where(Order.posting_number == posting_number))
+        order = result.scalars().first()
+
+        if order:
+            return {
+                "products": json.loads(order.products_json) if order.products_json else [],
+                "sima_num": order.sima_order_number,
+                "sima_date": order.sima_order_date,
+                "deliv_date": order.plan_delivery_date
+            }
+        return None
 
 
 async def delete_shipped_order(posting_number):
-    """Удаляет заказ из истории (когда он уехал)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('DELETE FROM active_orders_meta WHERE posting_number = ?', (posting_number,))
-        await db.commit()
+    """Удаляет заказ из БД"""
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(Order).where(Order.posting_number == posting_number))
+        await session.commit()
 
 
 async def get_all_meta_postings():
-    """Получает все номера заказов из мета-таблицы для проверки статусов"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute('SELECT posting_number FROM active_orders_meta') as cursor:
-            rows = await cursor.fetchall()
-            return [row[0] for row in rows]
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Order.posting_number))
+        return result.scalars().all()
 
 
 async def get_all_virtual_articles():
-    """Возвращает словарь {артикул: общее_количество} из виртуальных заказов"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Получаем все номера заказов из virtual_orders
-        async with db.execute('SELECT posting_number FROM virtual_orders') as cursor:
-            rows = await cursor.fetchall()
-            virtual_postings = [row[0] for row in rows]
+    """Сложная логика подсчета товаров в виртуальных заказах"""
+    async with AsyncSessionLocal() as session:
+        # 1. Получаем ID всех виртуальных
+        v_res = await session.execute(select(VirtualOrder.posting_number))
+        virtual_postings = v_res.scalars().all()
 
         if not virtual_postings:
             return {}
 
-        # Получаем JSON-ы продуктов из active_orders_meta для этих номеров
-        placeholders = ','.join(['?'] * len(virtual_postings))
-        query = f'SELECT products_json FROM active_orders_meta WHERE posting_number IN ({placeholders})'
+        # 2. Получаем JSON продуктов для этих ID из основной таблицы
+        q = select(Order.products_json).where(Order.posting_number.in_(virtual_postings))
+        res = await session.execute(q)
+        rows = res.scalars().all()
 
-        async with db.execute(query, virtual_postings) as cursor:
-            rows = await cursor.fetchall()
-
-        # Считаем общее количество каждого артикула в виртуальных заказах
         total_virtual_items = {}
-        for row in rows:
-            products = json.loads(row[0])
+        for p_json in rows:
+            if not p_json: continue
+            products = json.loads(p_json)
             for p in products:
-                # В JSON у нас обычно offer_id или sku, зависит от того, что вы сохраняли
                 art = str(p.get('offer_id') or p.get('sku'))
                 qty = int(p.get('quantity', 0))
                 total_virtual_items[art] = total_virtual_items.get(art, 0) + qty
 
         return total_virtual_items
 
+
 async def clear_all_virtual_orders():
-    """Удаляет ВСЕ записи из таблицы виртуальных заказов"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('DELETE FROM virtual_orders')
-        await db.commit()
+    await clear_virtual_orders()

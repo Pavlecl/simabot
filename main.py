@@ -24,10 +24,10 @@ from database import init_db, get_order_details, get_virtual_orders_full, clear_
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
 
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# Если ADMIN_ID нужен как число, преобразуем:
 try:
     ADMIN_ID = int(os.getenv("ADMIN_ID"))
 except:
@@ -39,6 +39,31 @@ scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 analyzer = OzonAnalytics()
 
 logging.basicConfig(level=logging.INFO)
+
+
+# --- MIDDLEWARE: защита от посторонних ---
+from aiogram import BaseMiddleware
+from typing import Callable, Dict, Any, Awaitable
+
+class AdminOnlyMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[types.TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: types.TelegramObject,
+        data: Dict[str, Any]
+    ) -> Any:
+        # Получаем user_id из message или callback_query
+        user = data.get("event_from_user")
+        if user and user.id != ADMIN_ID:
+            if isinstance(event, types.Message):
+                await event.answer("⛔ У вас нет доступа к этому боту.")
+            elif isinstance(event, types.CallbackQuery):
+                await event.answer("⛔ Нет доступа.", show_alert=True)
+            return
+        return await handler(event, data)
+
+dp.message.middleware(AdminOnlyMiddleware())
+dp.callback_query.middleware(AdminOnlyMiddleware())
 
 
 # --- FSM (Машина состояний) ---
@@ -224,9 +249,10 @@ async def search_order_process(message: types.Message, state: FSMContext):
         )
         await message.answer(response_text, parse_mode="HTML")
     else:
-        await message.answer(f"❌ Заказ `{posting_number}` не найден в активной истории.", parse_mode="Markdown")
+        await message.answer(f"❌ Заказ <code>{html.escape(posting_number)}</code> не найден в активной истории.", parse_mode="HTML")
 
     await message.answer("Введите другой номер или нажмите Назад.")
+    # Не сбрасываем state — пользователь может искать несколько заказов подряд
 
 
 # --- ОТЧЕТЫ (АНАЛИТИКА) ---
@@ -355,6 +381,14 @@ async def cmd_check_order_start(message: types.Message, state: FSMContext):
     await message.answer("📁 Пришлите Excel-файл (выгрузку корзины) из Сима-Ленд для проверки состава:")
 
 
+@dp.message(AnalyticsStates.waiting_check_file, ~F.document)
+async def process_check_file_wrong_input(message: types.Message, state: FSMContext):
+    """Пользователь прислал текст вместо файла"""
+    if message.text == "⬅️ Назад":
+        return await back_to_main_menu(message, state)
+    await message.answer("📁 Пожалуйста, пришлите именно <b>файл Excel</b> (.xlsx или .csv) из Сима-Ленд.", parse_mode="HTML")
+
+
 @dp.message(AnalyticsStates.waiting_check_file, F.document)
 async def process_check_file(message: types.Message, state: FSMContext):
     await message.answer("⏳ Сверяю корзину с заказами Ozon...")
@@ -449,7 +483,7 @@ async def process_check_file(message: types.Message, state: FSMContext):
 
 async def main():
     await init_db()
-    # Удаляем вебхук на всякий случай, чтобы polling работал сразу
+    logging.info("✅ База данных инициализирована")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

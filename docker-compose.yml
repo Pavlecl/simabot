@@ -1,21 +1,68 @@
-version: '3.8'
+# Удалите эту строку: version: '3.8' (она выдает WARN)
 
 services:
-  ozon-bot:
+  # 1. База данных PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: sima_postgres
+    restart: unless-stopped # Changed to unless-stopped for consistency
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    # Добавляем проверку здоровья БД
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"] # Используем переменные
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Твой Телеграм Бот
+  bot:
     build: .
     container_name: ozon_sima_bot
-    # Эта настройка заставит бота перезапускаться автоматически,
-    # если он упадет или если вы перезагрузите сервер
     restart: unless-stopped
-    # Подключаем ваши переменные окружения (.env)
+    depends_on:
+      db:
+        condition: service_healthy # Ждем, пока БД будет здорова
     env_file:
       - .env
-    # Настраиваем логирование, чтобы не забивать диск сервера
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    environment: # Передаем переменные БД явно, так как `database.py` их читает
+      - DB_HOST=db # Имя сервиса БД в Docker Compose
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+    command: ["python", "main.py"] # main.py теперь запускает ТОЛЬКО бота
 
-    volumes:
-      - ./bot_database.db:/app/bot_database.db
+  # 3. Веб-сервер (Сайт)
+  web:
+    build: .
+    container_name: sima_web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy # Ждем, пока БД будет здорова
+    env_file:
+      - .env
+    environment: # Передаем переменные БД явно
+      - DB_HOST=db # Имя сервиса БД в Docker Compose
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+    ports:
+      - "8001:8000"
+    # Запускаем FastAPI сервер
+    command: ["uvicorn", "web_server:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Добавляем проверку здоровья для веб-сервера
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/\")' || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:

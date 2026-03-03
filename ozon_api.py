@@ -6,8 +6,9 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from database import (
     get_all_virtual_orders, remove_virtual_order, add_virtual_order,
-    save_order_meta, get_all_meta_postings, delete_shipped_order
+    save_order_meta, get_all_meta_postings, delete_shipped_order, AsyncSessionLocal, Order
 )
+from sqlalchemy.dialects.postgresql import insert
 
 load_dotenv()
 
@@ -222,3 +223,30 @@ async def get_total_ozon_demand():
             final_demand[art] = final_demand.get(art, 0) + qty
 
     return final_demand
+
+async def sync_orders_to_db(postings):
+    """Синхронизирует сырые posting'и из Ozon API в БД (до parse_orders)"""
+    async with AsyncSessionLocal() as db:
+        for p in postings:
+            # Парсим дату — shipment_date может быть None или пустой строкой
+            ozon_dt = None
+            raw_date = p.get('shipment_date') or p.get('ship_date')
+            if raw_date:
+                try:
+                    # Ozon присылает формат "2024-10-25T10:00:00.000Z"
+                    ozon_dt = datetime.fromisoformat(raw_date.rstrip('Z').split('.')[0])
+                except (ValueError, AttributeError):
+                    ozon_dt = None
+
+            stmt = insert(Order).values(
+                posting_number=p.get('posting_number') or p.get('number'),
+                ozon_status=p.get('status', 'unknown'),
+                products_json=json.dumps(p.get('products', []), ensure_ascii=False),
+                ozon_created_at=ozon_dt
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['posting_number'],
+                set_={'ozon_status': p.get('status', 'unknown')}
+            )
+            await db.execute(stmt)
+        await db.commit()
