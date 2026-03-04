@@ -20,9 +20,13 @@ from aiogram.fsm.context import FSMContext
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Импорт ваших модулей
-from database import init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders
+from database import (
+    init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders,
+    AsyncSessionLocal, Order, VirtualOrder
+)
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
+from sqlalchemy import select, func
 
 
 load_dotenv()
@@ -88,8 +92,8 @@ def get_main_kb():
         [KeyboardButton(text="Получить заказы Сима")],
         [KeyboardButton(text="Проверить заказ")],
         [KeyboardButton(text="📊 Аналитика")],
-        [KeyboardButton(text="📂 Виртуальные заказы")]
-
+        [KeyboardButton(text="📂 Виртуальные заказы")],
+        [KeyboardButton(text="📈 Статус системы")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -482,6 +486,84 @@ async def process_check_file(message: types.Message, state: FSMContext):
         await message.answer(f"❌ Ошибка: {e}")
 
     await state.clear()
+
+
+async def get_system_status() -> dict:
+    """Запрашивает статистику из БД — та же логика что в /api/stats на сайте"""
+    async with AsyncSessionLocal() as db:
+        # Всего заказов
+        total = (await db.execute(select(func.count(Order.posting_number)))).scalar()
+
+        # По статусам
+        statuses_q = await db.execute(
+            select(Order.ozon_status, func.count(Order.posting_number))
+            .group_by(Order.ozon_status)
+        )
+        statuses = {row[0]: row[1] for row in statuses_q.all()}
+
+        # Виртуальных (ждут ручной сборки)
+        virtual = (await db.execute(select(func.count(VirtualOrder.posting_number)))).scalar()
+
+        # Без СУР (не обработаны фулфилментом)
+        no_sur = (await db.execute(
+            select(func.count(Order.posting_number))
+            .where(Order.sur_number == None)
+            .where(Order.ozon_status.in_(['awaiting_packaging', 'awaiting_deliver', 'processing']))
+        )).scalar()
+
+        # За последние 7 дней
+        week_ago = datetime.now() - timedelta(days=7)
+        recent = (await db.execute(
+            select(func.count(Order.posting_number))
+            .where(Order.added_at >= week_ago)
+        )).scalar()
+
+    return {
+        "total": total,
+        "awaiting_packaging": statuses.get("awaiting_packaging", 0),
+        "awaiting_deliver": statuses.get("awaiting_deliver", 0),
+        "virtual": virtual,
+        "no_sur": no_sur,
+        "recent_7d": recent,
+    }
+
+
+@dp.message(Command("status"))
+@dp.message(F.text == "📈 Статус системы")
+async def cmd_status(message: types.Message):
+    """
+    📚 УРОК: Один хендлер на два триггера.
+    @dp.message можно навешивать несколько раз на одну функцию —
+    она сработает и на команду /status, и на кнопку "📈 Статус системы".
+    """
+    await message.answer("🔄 Получаю данные...")
+
+    try:
+        s = await get_system_status()
+
+        # Индикаторы — красный если есть проблемы
+        packaging_icon = "🟡" if s["awaiting_packaging"] > 0 else "✅"
+        virtual_icon = "📦" if s["virtual"] > 0 else "✅"
+        no_sur_icon = "🔴" if s["no_sur"] > 0 else "✅"
+
+        text = (
+            f"📊 <b>Статус системы</b>\n"
+            f"<code>{'─' * 28}</code>\n\n"
+            f"{packaging_icon} Ожидают упаковки: <b>{s['awaiting_packaging']}</b>\n"
+            f"🚚 Готовы к отправке: <b>{s['awaiting_deliver']}</b>\n"
+            f"{virtual_icon} Виртуальных (ручная сборка): <b>{s['virtual']}</b>\n"
+            f"{no_sur_icon} Без СУР: <b>{s['no_sur']}</b>\n\n"
+            f"<code>{'─' * 28}</code>\n"
+            f"📅 Добавлено за 7 дней: <b>{s['recent_7d']}</b>\n"
+            f"📋 Всего в базе: <b>{s['total']}</b>\n\n"
+            f"🌐 <a href='https://simacontrol.ru'>Открыть сайт</a>"
+        )
+
+        await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    except Exception as e:
+        logging.error(f"cmd_status error: {e}")
+        await message.answer(f"❌ Ошибка получения статуса: {e}")
 
 
 async def main():
