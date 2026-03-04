@@ -1,4 +1,5 @@
 import os
+import logging
 import aiohttp
 import asyncio
 import json
@@ -106,24 +107,37 @@ async def get_new_orders():
 
 
 async def cleanup_history():
-    """Проверяет заказы в нашей БД: если они уже отправлены Ozon, удаляем их"""
+    """Проверяет заказы в нашей БД: если они уже отправлены Ozon, удаляем их.
+    Все запросы выполняются параллельно через asyncio.gather.
+    """
     stored_postings = await get_all_meta_postings()
     if not stored_postings:
         return
 
     url = "https://api-seller.ozon.ru/v3/posting/fbs/get"
 
-    async with aiohttp.ClientSession() as session:
-        for p_num in stored_postings:
+    async def check_single(session, p_num):
+        """Проверяет один заказ и удаляет из БД если уже отправлен."""
+        try:
             payload = {"posting_number": p_num}
             async with session.post(url, json=payload, headers=HEADERS) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    res = data.get('result', {})
-                    status = res.get('status')
-
+                    status = data.get('result', {}).get('status')
                     if status not in ['awaiting_packaging', 'awaiting_deliver', 'arbitration']:
                         await delete_shipped_order(p_num)
+                else:
+                    logging.warning(f"cleanup_history: статус {resp.status} для {p_num}")
+        except Exception as e:
+            logging.error(f"cleanup_history: ошибка при проверке {p_num}: {e}")
+
+    async with aiohttp.ClientSession() as session:
+        # Запускаем все проверки параллельно — вместо N последовательных запросов
+        # return_exceptions=True гарантирует что одна ошибка не отменит все остальные
+        await asyncio.gather(
+            *[check_single(session, p_num) for p_num in stored_postings],
+            return_exceptions=True
+        )
 
 
 async def assemble_orders(sima_order_num, supply_date):

@@ -28,10 +28,13 @@ from analytics import OzonAnalytics
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID"))
-except:
-    ADMIN_ID = os.getenv("ADMIN_ID")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не задан в .env")
+
+_admin_id_raw = os.getenv("ADMIN_ID", "")
+if not _admin_id_raw.isdigit():
+    raise ValueError(f"ADMIN_ID должен быть числом, получено: {_admin_id_raw!r}")
+ADMIN_ID = int(_admin_id_raw)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -484,6 +487,13 @@ async def process_check_file(message: types.Message, state: FSMContext):
 async def main():
     await init_db()
     logging.info("✅ База данных инициализирована")
+
+    # Запускаем планировщик фоновых задач
+    from ozon_api import cleanup_history
+    scheduler.add_job(cleanup_history, 'interval', minutes=30, id='cleanup')
+    scheduler.start()
+    logging.info("✅ Планировщик запущен (cleanup каждые 30 мин)")
+
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
