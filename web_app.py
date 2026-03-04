@@ -237,25 +237,48 @@ async def get_orders(
     db: AsyncSession = Depends(get_db),
     page: int = 1,
     per_page: int = 50,
-    status: str = ""
+    status: str = "",
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
 ):
     """
-    📚 УРОК: Пагинация
-    Нельзя отдавать все заказы сразу — если их 10 000, браузер зависнет.
-    offset = (page - 1) * per_page — пропускаем предыдущие страницы
-    limit = per_page — берём только нужное количество
+    📚 УРОК: Пагинация + фильтрация
+    Параметры приходят из query string: /api/orders?page=1&status=...&search=...
+    SQLAlchemy позволяет цепочкой добавлять .where() — они объединяются через AND.
     """
     offset = (page - 1) * per_page
     query = select(Order).order_by(Order.added_at.desc())
 
     if status:
         query = query.where(Order.ozon_status == status)
+    if search:
+        # ilike — регистронезависимый LIKE. % — любое количество символов.
+        # Ищем по номеру отправления ИЛИ по содержимому products_json (артикулы)
+        query = query.where(
+            Order.posting_number.ilike(f"%{search}%") |
+            Order.products_json.ilike(f"%{search}%")
+        )
+    if date_from:
+        query = query.where(Order.plan_delivery_date >= date_from)
+    if date_to:
+        query = query.where(Order.plan_delivery_date <= date_to)
 
-    total_q = await db.execute(
-        select(func.count(Order.posting_number))
-        .where(Order.ozon_status == status if status else True)
-    )
-    total = total_q.scalar()
+    # Считаем total с теми же фильтрами
+    count_query = select(func.count(Order.posting_number))
+    if status:
+        count_query = count_query.where(Order.ozon_status == status)
+    if search:
+        count_query = count_query.where(
+            Order.posting_number.ilike(f"%{search}%") |
+            Order.products_json.ilike(f"%{search}%")
+        )
+    if date_from:
+        count_query = count_query.where(Order.plan_delivery_date >= date_from)
+    if date_to:
+        count_query = count_query.where(Order.plan_delivery_date <= date_to)
+
+    total = (await db.execute(count_query)).scalar()
 
     result = await db.execute(query.offset(offset).limit(per_page))
     orders = result.scalars().all()
@@ -422,6 +445,41 @@ async def create_fulfillment_user(
     db.add(ff_user)
     await db.commit()
     return {"ok": True, "message": f"Пользователь '{username}' создан"}
+
+
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request, user: dict = Depends(require_admin)):
+    """Страница управления пользователями — только для admin"""
+    return templates.TemplateResponse("app.html", {
+        "request": request,
+        "user": user,
+        "active_tab": "users"
+    })
+
+
+@app.get("/api/users")
+async def get_users(
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Список всех пользователей системы.
+    📚 УРОК: Никогда не возвращаем password_hash клиенту — только нужные поля.
+    """
+    result = await db.execute(select(User).order_by(User.id))
+    users = result.scalars().all()
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "role": u.role,
+                # created_at нет в модели — добавим None, фронт обработает
+                "created_at": None,
+            }
+            for u in users
+        ]
+    }
 
 
 # --- ЗАПУСК ---

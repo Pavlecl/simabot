@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
+  /* ===== ТЕМЫ ===== */
   :root {
     --bg: #080a0f;
     --surface: #0f1318;
@@ -23,6 +24,20 @@
     --display: 'Bebas Neue', sans-serif;
   }
 
+  [data-theme="light"] {
+    --bg: #f5f0e8;
+    --surface: #ede8df;
+    --surface2: #e4ddd2;
+    --border: #d4cbbf;
+    --accent: #e85d26;
+    --accent-dim: rgba(232,93,38,0.12);
+    --green: #1a9e6a;
+    --yellow: #c47d00;
+    --red: #d4204a;
+    --text: #2c2418;
+    --text-dim: #8a7d6e;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
 
@@ -33,6 +48,7 @@
     display: flex;
     flex-direction: column;
     font-size: 13px;
+    transition: background 0.2s, color 0.2s;
   }
 
   /* ===== HEADER ===== */
@@ -59,7 +75,7 @@
     font-family: var(--display);
     font-size: 22px;
     letter-spacing: 3px;
-    color: #fff;
+    color: var(--text);
     margin-right: 32px;
   }
   .logo span { color: var(--accent); }
@@ -76,22 +92,37 @@
     border: 1px solid transparent;
     transition: all 0.15s;
   }
-
   nav a:hover { color: var(--text); border-color: var(--border); }
-
   nav a.active {
     color: var(--accent);
     border-color: var(--accent-dim);
     background: var(--accent-dim);
   }
 
-  .user-info {
+  .header-right {
     display: flex;
     align-items: center;
     gap: 16px;
     font-size: 11px;
     color: var(--text-dim);
   }
+
+  /* Переключатель темы */
+  .theme-toggle {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
   .role-badge {
     font-size: 9px;
@@ -100,7 +131,6 @@
     padding: 3px 8px;
     border: 1px solid;
   }
-
   .role-badge.admin { color: var(--accent); border-color: var(--accent-dim); }
   .role-badge.fulfillment { color: var(--green); border-color: rgba(45,206,137,0.3); }
 
@@ -122,7 +152,6 @@
     gap: 20px;
   }
 
-  /* ===== TAB PANELS ===== */
   .tab-panel { display: none; flex: 1; flex-direction: column; gap: 20px; overflow: hidden; }
   .tab-panel.active { display: flex; }
 
@@ -141,7 +170,6 @@
     position: relative;
     overflow: hidden;
   }
-
   .stat-card::before {
     content: '';
     position: absolute;
@@ -149,22 +177,19 @@
     width: 3px; height: 100%;
     background: var(--accent);
   }
-
   .stat-value {
     font-family: var(--display);
     font-size: 40px;
     line-height: 1;
-    color: #fff;
+    color: var(--text);
     margin-bottom: 6px;
   }
-
   .stat-label {
     font-size: 9px;
     letter-spacing: 2px;
     text-transform: uppercase;
     color: var(--text-dim);
   }
-
   .stat-card.green::before { background: var(--green); }
   .stat-card.yellow::before { background: var(--yellow); }
   .stat-card.red::before { background: var(--red); }
@@ -177,11 +202,7 @@
     background: var(--surface);
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
 
   thead {
     position: sticky;
@@ -207,11 +228,10 @@
     vertical-align: top;
   }
 
-  tr:hover td { background: rgba(255,255,255,0.02); }
+  tr:hover td { background: rgba(128,128,128,0.04); }
 
   .code { color: var(--accent); }
 
-  /* Статусы */
   .status {
     display: inline-block;
     font-size: 9px;
@@ -223,16 +243,17 @@
   }
   .status.awaiting_packaging { color: var(--yellow); border-color: rgba(245,166,35,0.3); }
   .status.awaiting_deliver { color: var(--green); border-color: rgba(45,206,137,0.3); }
-  .status.processing { color: #8b9fc0; border-color: var(--border); }
+  .status.processing { color: var(--text-dim); border-color: var(--border); }
   .status.delivered { color: var(--text-dim); border-color: var(--border); }
   .status.cancelled { color: var(--red); border-color: rgba(245,54,92,0.3); }
 
-  /* ===== FILTERS ===== */
+  /* ===== TOOLBAR ===== */
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .toolbar-label {
@@ -242,7 +263,7 @@
     color: var(--text-dim);
   }
 
-  select, input[type="text"] {
+  select, input[type="text"], input[type="date"] {
     background: var(--surface);
     border: 1px solid var(--border);
     color: var(--text);
@@ -252,7 +273,26 @@
     outline: none;
     transition: border-color 0.15s;
   }
-  select:focus, input[type="text"]:focus { border-color: var(--accent); }
+  select:focus, input[type="text"]:focus, input[type="date"]:focus { border-color: var(--accent); }
+
+  /* Убираем стрелку у date input в webkit */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.5);
+    cursor: pointer;
+  }
+  [data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.3);
+  }
+
+  .search-input { width: 220px; }
+  .date-input { width: 140px; }
+
+  .toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
 
   .btn {
     background: transparent;
@@ -268,13 +308,17 @@
   .btn:hover { border-color: var(--accent); color: var(--accent); }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn.primary:hover { background: #c94d1e; }
+  .btn.success { background: var(--green); border-color: var(--green); color: #fff; }
+  .btn.success:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn:disabled:hover { border-color: var(--border); color: var(--text); }
 
-  /* ===== EDIT MODAL ===== */
+  /* ===== MODAL ===== */
   .modal-overlay {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.75);
+    background: rgba(0,0,0,0.65);
     z-index: 100;
     align-items: center;
     justify-content: center;
@@ -288,7 +332,6 @@
     max-width: 95vw;
     position: relative;
   }
-
   .modal::before {
     content: '';
     position: absolute;
@@ -304,24 +347,9 @@
     justify-content: space-between;
     align-items: center;
   }
-
-  .modal-title {
-    font-family: var(--display);
-    font-size: 20px;
-    letter-spacing: 2px;
-  }
-
-  .modal-close {
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    font-size: 20px;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0;
-  }
+  .modal-title { font-family: var(--display); font-size: 20px; letter-spacing: 2px; }
+  .modal-close { background: none; border: none; color: var(--text-dim); font-size: 20px; cursor: pointer; padding: 0; }
   .modal-close:hover { color: var(--red); }
-
   .modal-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
   .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 12px; justify-content: flex-end; }
 
@@ -333,8 +361,7 @@
     color: var(--text-dim);
     margin-bottom: 6px;
   }
-
-  .field-group input, .field-group textarea {
+  .field-group input, .field-group textarea, .field-group select {
     width: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -366,24 +393,11 @@
     transition: border-color 0.15s;
   }
   .queue-card:hover { border-color: var(--text-dim); }
-
   .queue-card.has-sur { border-left: 3px solid var(--green); }
   .queue-card.no-sur { border-left: 3px solid var(--yellow); }
 
-  .queue-posting {
-    font-size: 11px;
-    color: var(--accent);
-    margin-bottom: 8px;
-    letter-spacing: 1px;
-  }
-
-  .queue-meta {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px 16px;
-    margin-bottom: 12px;
-  }
-
+  .queue-posting { font-size: 11px; color: var(--accent); margin-bottom: 8px; letter-spacing: 1px; }
+  .queue-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 12px; }
   .queue-meta-item { font-size: 10px; }
   .queue-meta-key { color: var(--text-dim); }
   .queue-meta-value { color: var(--text); }
@@ -396,24 +410,86 @@
     flex-direction: column;
     gap: 4px;
   }
-
-  .product-item {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    color: var(--text-dim);
-  }
+  .product-item { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); }
   .product-item .qty { color: var(--accent); font-weight: 700; }
 
   /* ===== PAGINATION ===== */
-  .pagination {
+  .pagination { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding-top: 4px; }
+  .page-info { font-size: 11px; color: var(--text-dim); margin: 0 8px; }
+
+  /* ===== USERS PAGE ===== */
+  .users-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    flex: 1;
+    overflow: auto;
+    align-content: start;
+  }
+
+  .users-list {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .users-list-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: var(--surface2);
+  }
+
+  .user-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-    padding-top: 4px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
   }
-  .page-info { font-size: 11px; color: var(--text-dim); margin: 0 8px; }
+  .user-row:last-child { border-bottom: none; }
+
+  .user-avatar {
+    width: 32px;
+    height: 32px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--accent);
+    flex-shrink: 0;
+    font-family: var(--display);
+    letter-spacing: 1px;
+  }
+
+  .user-name { flex: 1; font-size: 12px; }
+  .user-created { font-size: 10px; color: var(--text-dim); }
+
+  .create-user-form {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .create-user-form-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: var(--surface2);
+  }
+  .create-user-form-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
 
   /* ===== LOADING / EMPTY ===== */
   .state-msg {
@@ -452,8 +528,12 @@
     <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
     {% endif %}
     <a href="/queue" class="{{ 'active' if active_tab == 'queue' }}">Очередь сборки</a>
+    {% if user.role == 'admin' %}
+    <a href="/users" class="{{ 'active' if active_tab == 'users' }}">Пользователи</a>
+    {% endif %}
   </nav>
-  <div class="user-info">
+  <div class="header-right">
+    <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему" id="theme-btn">☀️</button>
     <span>{{ user.username }}</span>
     <span class="role-badge {{ user.role }}">{{ user.role }}</span>
     <a href="/logout" class="logout-btn">выйти →</a>
@@ -464,24 +544,19 @@
 
   {# ===== TAB: DASHBOARD ===== #}
   <div class="tab-panel {{ 'active' if active_tab == 'dashboard' }}" id="tab-dashboard">
-    <div class="stats-grid" id="stats-grid">
+    <div class="stats-grid">
       <div class="stat-card"><div class="stat-value" id="s-total">—</div><div class="stat-label">Всего заказов</div></div>
       <div class="stat-card yellow"><div class="stat-value" id="s-packaging">—</div><div class="stat-label">Ждут упаковки</div></div>
       <div class="stat-card red"><div class="stat-value" id="s-no-sur">—</div><div class="stat-label">Без СУР</div></div>
       <div class="stat-card"><div class="stat-value" id="s-virtual">—</div><div class="stat-label">Виртуальных</div></div>
       <div class="stat-card green"><div class="stat-value" id="s-recent">—</div><div class="stat-label">За 7 дней</div></div>
     </div>
-
     <div class="table-container">
-      <table id="recent-table">
+      <table>
         <thead>
           <tr>
-            <th>Отправление</th>
-            <th>Статус</th>
-            <th>Заказ Сима</th>
-            <th>Плановая поставка</th>
-            <th>СУР</th>
-            <th>Добавлен</th>
+            <th>Отправление</th><th>Статус</th><th>Заказ Сима</th>
+            <th>Плановая поставка</th><th>СУР</th><th>Добавлен</th>
           </tr>
         </thead>
         <tbody id="recent-body">
@@ -494,16 +569,34 @@
   {# ===== TAB: ORDERS ===== #}
   <div class="tab-panel {{ 'active' if active_tab == 'orders' }}" id="tab-orders">
     <div class="toolbar">
-      <span class="toolbar-label">Фильтр:</span>
+      <span class="toolbar-label">Статус:</span>
       <select id="status-filter" onchange="loadOrders(1)">
-        <option value="">Все статусы</option>
+        <option value="">Все</option>
         <option value="awaiting_packaging">awaiting_packaging</option>
         <option value="awaiting_deliver">awaiting_deliver</option>
         <option value="processing">processing</option>
         <option value="delivered">delivered</option>
         <option value="cancelled">cancelled</option>
       </select>
-      <button class="btn" onclick="loadOrders(1)">Обновить</button>
+
+      <div class="toolbar-sep"></div>
+
+      <span class="toolbar-label">Поставка:</span>
+      <input type="date" class="date-input" id="date-from" onchange="loadOrders(1)" title="От">
+      <span class="toolbar-label">—</span>
+      <input type="date" class="date-input" id="date-to" onchange="loadOrders(1)" title="До">
+
+      <div class="toolbar-sep"></div>
+
+      <input type="text" class="search-input" id="search-input"
+        placeholder="Поиск: номер / артикул..."
+        oninput="debounceSearch()"
+        title="Поиск по номеру отправления или артикулу товара">
+
+      <div class="toolbar-sep"></div>
+
+      <button class="btn" onclick="clearFilters()">Сбросить</button>
+      <button class="btn success" onclick="exportExcel()" title="Экспорт текущего фильтра в Excel">↓ Excel</button>
       <span class="toolbar-label" id="orders-count" style="margin-left:auto"></span>
     </div>
 
@@ -511,15 +604,9 @@
       <table>
         <thead>
           <tr>
-            <th>Отправление</th>
-            <th>Статус Ozon</th>
-            <th>Заказ Сима</th>
-            <th>Дата Сима</th>
-            <th>Поставка (план)</th>
-            <th>Поставка (ФФ)</th>
-            <th>СУР</th>
-            <th>Комментарий</th>
-            <th></th>
+            <th>Отправление</th><th>Статус Ozon</th><th>Заказ Сима</th>
+            <th>Дата Сима</th><th>Поставка (план)</th><th>Поставка (ФФ)</th>
+            <th>СУР</th><th>Комментарий</th><th></th>
           </tr>
         </thead>
         <tbody id="orders-body">
@@ -547,6 +634,43 @@
     </div>
   </div>
 
+  {# ===== TAB: USERS ===== #}
+  <div class="tab-panel {{ 'active' if active_tab == 'users' }}" id="tab-users">
+    <div class="users-grid">
+      <div>
+        <div class="users-list">
+          <div class="users-list-header">Пользователи системы</div>
+          <div id="users-list-body">
+            <div class="state-msg">ЗАГРУЗКА...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="create-user-form">
+        <div class="create-user-form-header">Создать пользователя</div>
+        <div class="create-user-form-body">
+          <div class="field-group">
+            <label>Логин</label>
+            <input type="text" id="new-username" placeholder="например: ff_operator">
+          </div>
+          <div class="field-group">
+            <label>Пароль</label>
+            <input type="text" id="new-password" placeholder="минимум 6 символов">
+          </div>
+          <div class="field-group">
+            <label>Роль</label>
+            <select id="new-role">
+              <option value="fulfillment">Fulfillment (сборка)</option>
+              <option value="admin">Admin (полный доступ)</option>
+            </select>
+          </div>
+          <button class="btn primary" onclick="createUser()">Создать пользователя</button>
+          <div id="create-user-msg" style="font-size:11px; min-height:16px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 {# ===== EDIT MODAL ===== #}
@@ -558,7 +682,6 @@
     </div>
     <div class="modal-body">
       <div style="font-size:11px; color:var(--text-dim)">Отправление: <span id="modal-posting" style="color:var(--accent)"></span></div>
-
       <div class="field-group">
         <label>СУР (номер от фулфилмента)</label>
         <input type="text" id="modal-sur" placeholder="например: СУР-2024-001">
@@ -587,61 +710,105 @@
 
 <script>
 // =====================================================================
-// 📚 УРОК: JavaScript на странице
-// Вместо перезагрузки страницы мы используем fetch() для запросов к API.
-// fetch() — асинхронная функция, возвращает Promise.
-// async/await — синтаксический сахар для работы с Promise.
+// ТЕМА
 // =====================================================================
+const THEME_KEY = 'sima_theme';
 
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('theme-btn').textContent = theme === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// Применяем сохранённую тему сразу
+(function() {
+  const saved = localStorage.getItem(THEME_KEY) || 'dark';
+  applyTheme(saved);
+})();
+
+// =====================================================================
+// СОСТОЯНИЕ
+// =====================================================================
 let currentPage = 1;
 let totalPages = 1;
 let editingPosting = null;
+let searchTimer = null;
+let allOrdersCache = []; // кэш для Excel экспорта
 
-// Определяем текущую вкладку из серверного рендера
 const activeTab = '{{ active_tab }}';
 const userRole = '{{ user.role }}';
 
-// При загрузке страницы — грузим данные для нужной вкладки
 document.addEventListener('DOMContentLoaded', () => {
   if (activeTab === 'dashboard') loadDashboard();
   if (activeTab === 'orders') loadOrders(1);
   if (activeTab === 'queue') loadQueue();
+  if (activeTab === 'users') loadUsers();
 });
 
-// ===== ДАШБОРД =====
+// =====================================================================
+// ДАШБОРД
+// =====================================================================
 async function loadDashboard() {
   try {
     const [stats, orders] = await Promise.all([
       fetch('/api/stats').then(r => r.json()),
       fetch('/api/orders?per_page=20').then(r => r.json())
     ]);
-
-    // Заполняем карточки статистики
     document.getElementById('s-total').textContent = stats.total ?? '—';
     document.getElementById('s-packaging').textContent = stats.statuses?.awaiting_packaging ?? 0;
     document.getElementById('s-no-sur').textContent = stats.no_sur ?? '—';
     document.getElementById('s-virtual').textContent = stats.virtual ?? '—';
     document.getElementById('s-recent').textContent = stats.recent_7d ?? '—';
-
-    // Заполняем таблицу последних заказов
     renderOrdersTable(orders.orders, 'recent-body', false);
   } catch(e) {
     showToast('Ошибка загрузки дашборда', 'error');
   }
 }
 
-// ===== ЗАКАЗЫ =====
+// =====================================================================
+// ЗАКАЗЫ
+// =====================================================================
+function debounceSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadOrders(1), 400);
+}
+
+function clearFilters() {
+  document.getElementById('status-filter').value = '';
+  document.getElementById('search-input').value = '';
+  document.getElementById('date-from').value = '';
+  document.getElementById('date-to').value = '';
+  loadOrders(1);
+}
+
+function buildOrdersUrl(page, perPage = 50) {
+  const status = document.getElementById('status-filter')?.value || '';
+  const search = document.getElementById('search-input')?.value.trim() || '';
+  const dateFrom = document.getElementById('date-from')?.value || '';
+  const dateTo = document.getElementById('date-to')?.value || '';
+
+  let url = `/api/orders?page=${page}&per_page=${perPage}`;
+  if (status) url += `&status=${encodeURIComponent(status)}`;
+  if (search) url += `&search=${encodeURIComponent(search)}`;
+  if (dateFrom) url += `&date_from=${encodeURIComponent(dateFrom)}`;
+  if (dateTo) url += `&date_to=${encodeURIComponent(dateTo)}`;
+  return url;
+}
+
 async function loadOrders(page) {
   currentPage = page;
-  const status = document.getElementById('status-filter')?.value || '';
-  const url = `/api/orders?page=${page}&per_page=50&status=${encodeURIComponent(status)}`;
-
   document.getElementById('orders-body').innerHTML =
     '<tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
   try {
-    const data = await fetch(url).then(r => r.json());
-    totalPages = Math.ceil(data.total / data.per_page);
+    const data = await fetch(buildOrdersUrl(page)).then(r => r.json());
+    totalPages = Math.ceil(data.total / data.per_page) || 1;
+    allOrdersCache = data.orders;
 
     renderOrdersTable(data.orders, 'orders-body', true);
 
@@ -651,7 +818,6 @@ async function loadOrders(page) {
       `Стр. ${page} / ${totalPages}`;
     document.getElementById('prev-btn').disabled = page <= 1;
     document.getElementById('next-btn').disabled = page >= totalPages;
-
   } catch(e) {
     document.getElementById('orders-body').innerHTML =
       `<tr><td colspan="9" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>`;
@@ -664,7 +830,6 @@ function renderOrdersTable(orders, tbodyId, showActions) {
     tbody.innerHTML = '<tr><td colspan="9" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     return;
   }
-
   tbody.innerHTML = orders.map(o => `
     <tr>
       <td class="code">${o.posting_number}</td>
@@ -675,28 +840,84 @@ function renderOrdersTable(orders, tbodyId, showActions) {
       <td>${o.ff_delivery_date ? o.ff_delivery_date.slice(0,10) : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td>${o.sur_number
         ? `<span style="color:var(--green)">${o.sur_number}</span>`
-        : '<span style="color:var(--yellow)">нет</span>'
-      }</td>
+        : '<span style="color:var(--yellow)">нет</span>'}</td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
         ${o.comment || ''}
       </td>
-      ${showActions ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})'>✎</button></td>` : '<td></td>'}
+      ${showActions
+        ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})'>✎</button></td>`
+        : '<td></td>'}
     </tr>
   `).join('');
 }
 
-// ===== ОЧЕРЕДЬ =====
-async function loadQueue() {
-  document.getElementById('queue-grid').innerHTML =
-    '<div class="state-msg">ЗАГРУЗКА...</div>';
+// =====================================================================
+// ЭКСПОРТ В EXCEL
+// =====================================================================
+async function exportExcel() {
+  showToast('Подготовка экспорта...');
+  try {
+    // Берём все записи с текущим фильтром (до 5000)
+    const data = await fetch(buildOrdersUrl(1, 5000)).then(r => r.json());
+    const orders = data.orders;
 
+    if (!orders || orders.length === 0) {
+      showToast('Нет данных для экспорта', 'error');
+      return;
+    }
+
+    // Заголовки
+    const headers = [
+      'Отправление', 'Статус', 'Заказ Сима', 'Дата Сима',
+      'Поставка (план)', 'Поставка (ФФ)', 'СУР', 'Комментарий', 'Добавлен'
+    ];
+
+    // Строки CSV
+    const rows = orders.map(o => [
+      o.posting_number,
+      o.ozon_status || '',
+      o.sima_order_number || '',
+      o.sima_order_date || '',
+      o.plan_delivery_date || '',
+      o.ff_delivery_date ? o.ff_delivery_date.slice(0,10) : '',
+      o.sur_number || '',
+      (o.comment || '').replace(/"/g, '""'),
+      o.added_at ? o.added_at.slice(0,10) : ''
+    ]);
+
+    // Собираем CSV с BOM для корректного открытия в Excel
+    const BOM = '\uFEFF';
+    const csv = BOM + [headers, ...rows]
+      .map(row => row.map(v => `"${v}"`).join(';'))
+      .join('\n');
+
+    // Скачиваем файл
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0,10);
+    a.download = `sima_orders_${date}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showToast(`✓ Экспортировано ${orders.length} строк`);
+  } catch(e) {
+    showToast('Ошибка экспорта', 'error');
+  }
+}
+
+// =====================================================================
+// ОЧЕРЕДЬ
+// =====================================================================
+async function loadQueue() {
+  document.getElementById('queue-grid').innerHTML = '<div class="state-msg">ЗАГРУЗКА...</div>';
   try {
     const data = await fetch('/api/queue').then(r => r.json());
     document.getElementById('queue-count').textContent = `Итого: ${data.total}`;
 
     if (!data.queue || data.queue.length === 0) {
-      document.getElementById('queue-grid').innerHTML =
-        '<div class="state-msg">✅ ОЧЕРЕДЬ ПУСТА</div>';
+      document.getElementById('queue-grid').innerHTML = '<div class="state-msg">✅ ОЧЕРЕДЬ ПУСТА</div>';
       return;
     }
 
@@ -744,14 +965,91 @@ async function loadQueue() {
         </div>` : ''}
       </div>
     `).join('');
-
   } catch(e) {
     document.getElementById('queue-grid').innerHTML =
       '<div class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</div>';
   }
 }
 
-// ===== МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ =====
+// =====================================================================
+// ПОЛЬЗОВАТЕЛИ
+// =====================================================================
+async function loadUsers() {
+  try {
+    const data = await fetch('/api/users').then(r => r.json());
+    const body = document.getElementById('users-list-body');
+
+    if (!data.users || data.users.length === 0) {
+      body.innerHTML = '<div class="state-msg">Нет пользователей</div>';
+      return;
+    }
+
+    body.innerHTML = data.users.map(u => `
+      <div class="user-row">
+        <div class="user-avatar">${u.username[0].toUpperCase()}</div>
+        <div style="flex:1">
+          <div class="user-name">${u.username}</div>
+          <div class="user-created">Создан: ${u.created_at ? u.created_at.slice(0,10) : '—'}</div>
+        </div>
+        <span class="role-badge ${u.role}">${u.role}</span>
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('users-list-body').innerHTML =
+      '<div class="state-msg" style="color:var(--red)">Ошибка загрузки</div>';
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById('new-username').value.trim();
+  const password = document.getElementById('new-password').value.trim();
+  const role = document.getElementById('new-role').value;
+  const msg = document.getElementById('create-user-msg');
+
+  if (!username || !password) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Заполните логин и пароль';
+    return;
+  }
+  if (password.length < 6) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Пароль минимум 6 символов';
+    return;
+  }
+
+  try {
+    const endpoint = role === 'admin'
+      ? '/api/setup/create-admin'
+      : '/api/setup/create-fulfillment';
+
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = data.detail || 'Ошибка создания';
+      return;
+    }
+
+    msg.style.color = 'var(--green)';
+    msg.textContent = `✓ ${data.message}`;
+    document.getElementById('new-username').value = '';
+    document.getElementById('new-password').value = '';
+    loadUsers();
+    showToast('Пользователь создан');
+  } catch(e) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Ошибка сети';
+  }
+}
+
+// =====================================================================
+// МОДАЛЬНОЕ ОКНО
+// =====================================================================
 function openEdit(order) {
   editingPosting = order.posting_number;
   document.getElementById('modal-posting').textContent = order.posting_number;
@@ -768,48 +1066,41 @@ function closeModal() {
   editingPosting = null;
 }
 
-// Закрываем по клику на оверлей
 document.getElementById('edit-modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
 async function saveOrder() {
   if (!editingPosting) return;
-
   const body = {
     sur_number: document.getElementById('modal-sur').value.trim(),
     ff_delivery_date: document.getElementById('modal-ff-date').value || null,
     plan_delivery_date: document.getElementById('modal-plan-date').value.trim(),
     comment: document.getElementById('modal-comment').value.trim(),
   };
-
   try {
-    // 📚 УРОК: PATCH-запрос с JSON-телом
     const resp = await fetch(`/api/orders/${encodeURIComponent(editingPosting)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-
     if (!resp.ok) {
       const err = await resp.json();
       throw new Error(err.detail || resp.statusText);
     }
-
     closeModal();
     showToast('✓ Сохранено');
-
-    // Обновляем текущую вкладку
     if (activeTab === 'orders') loadOrders(currentPage);
     if (activeTab === 'queue') loadQueue();
     if (activeTab === 'dashboard') loadDashboard();
-
   } catch(e) {
     showToast(`Ошибка: ${e.message}`, 'error');
   }
 }
 
-// ===== TOAST УВЕДОМЛЕНИЯ =====
+// =====================================================================
+// TOAST
+// =====================================================================
 let toastTimer;
 function showToast(msg, type = '') {
   const toast = document.getElementById('toast');
