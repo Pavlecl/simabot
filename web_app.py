@@ -60,8 +60,9 @@ OZON_HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Храним время последней синхронизации
+# Храним время последней синхронизации и статус фоновой задачи
 _last_sync: Optional[datetime] = None
+_sync_status = {"running": False, "progress": "", "synced": 0, "error": ""}
 
 
 async def fetch_ozon_postings(statuses: list) -> list:
@@ -765,150 +766,164 @@ async def fetch_products_prices_offset(offset: int = 0, limit: int = 1000) -> di
 
 
 async def sync_products_catalog() -> dict:
-    """
-    Полная синхронизация каталога — все товары через offset-пагинацию.
-    1. /v5/product/info/prices — цены, комиссии, индексы (батчи по 1000)
-    2. /v3/product/info/list — фото, название, категория, склад (батчи по 100)
-    3. /v4/product/info/attributes — бренд attribute_id=85 (батчи по 100)
-    Синхронизация фоновая — возвращает статус сразу, обновляет в БД.
-    """
-    # ШАГ 1: Получаем все товары с ценами через offset
-    all_items = []
-    offset = 0
-    limit = 1000
-    while True:
-        data = await fetch_products_prices_offset(offset, limit)
-        items = data.get("items", [])
-        if not items:
-            break
-        all_items.extend(items)
-        offset += len(items)
-        if len(items) < limit:
-            break
+    """Полная синхронизация каталога — фоновая задача."""
+    global _sync_status, _last_sync
+    _sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
 
-    if not all_items:
-        return {"synced": 0, "error": "Нет товаров от Ozon"}
+    try:
+        # ШАГ 1: Все товары через offset
+        all_items = []
+        offset = 0
+        limit = 1000
+        while True:
+            data = await fetch_products_prices_offset(offset, limit)
+            items = data.get("items", [])
+            if not items:
+                break
+            all_items.extend(items)
+            offset += len(items)
+            _sync_status["progress"] = f"Цены: {offset} товаров..."
+            if len(items) < limit:
+                break
 
-    total = len(all_items)
+        if not all_items:
+            _sync_status = {"running": False, "progress": "", "synced": 0, "error": "Нет товаров от Ozon"}
+            return {"synced": 0, "error": "Нет товаров от Ozon"}
 
-    # Собираем product_id и offer_id
-    product_ids = [item["product_id"] for item in all_items if item.get("product_id")]
-    offer_ids = [item["offer_id"] for item in all_items if item.get("offer_id")]
+        total = len(all_items)
+        product_ids = [item["product_id"] for item in all_items if item.get("product_id")]
+        offer_ids = [item["offer_id"] for item in all_items if item.get("offer_id")]
 
-    # ШАГ 2: Фото, название, категория, склад — батчи по 100 по product_id
-    info_map = {}  # product_id -> {name, image_url, category_id, warehouse_type}
-    url_info = "https://api-seller.ozon.ru/v3/product/info/list"
-    async with aiohttp.ClientSession() as session:
-        for i in range(0, len(product_ids), 100):
-            batch = product_ids[i:i+100]
-            try:
-                async with session.post(url_info, json={"product_id": batch}, headers=OZON_HEADERS) as resp:
-                    if resp.status == 200:
-                        d = await resp.json()
-                        for it in d.get("items", []):
-                            pid = it.get("id")
-                            images = it.get("primary_image") or it.get("images", [])
-                            img = images[0] if isinstance(images, list) and images else (images or "")
-                            # Склад из sources
-                            sources = it.get("sources", [])
-                            warehouse = ",".join(sorted(set(s.get("source","") for s in sources if s.get("source"))))
-                            info_map[pid] = {
-                                "name": it.get("name", ""),
-                                "image_url": img,
-                                "category_id": it.get("description_category_id"),
-                                "warehouse_type": warehouse,
-                            }
-            except Exception as e:
-                import logging; logging.warning(f"sync info error: {e}")
+        # ШАГ 2: Фото, название, категория, склад
+        _sync_status["progress"] = f"Загружаем инфо о товарах..."
+        info_map = {}
+        url_info = "https://api-seller.ozon.ru/v3/product/info/list"
+        async with aiohttp.ClientSession() as session:
+            for i in range(0, len(product_ids), 100):
+                batch = product_ids[i:i+100]
+                try:
+                    async with session.post(url_info, json={"product_id": batch}, headers=OZON_HEADERS) as resp:
+                        if resp.status == 200:
+                            d = await resp.json()
+                            for it in d.get("items", []):
+                                pid = it.get("id")
+                                images = it.get("primary_image") or it.get("images", [])
+                                img = images[0] if isinstance(images, list) and images else (images or "")
+                                sources = it.get("sources", [])
+                                warehouse = ",".join(sorted(set(s.get("source","") for s in sources if s.get("source"))))
+                                info_map[pid] = {
+                                    "name": it.get("name", ""),
+                                    "image_url": img,
+                                    "category_id": it.get("description_category_id"),
+                                    "warehouse_type": warehouse,
+                                }
+                except Exception as e:
+                    import logging; logging.warning(f"sync info error: {e}")
 
-    # ШАГ 3: Бренд (attribute_id=85) — батчи по 100 по offer_id
-    brand_map = {}  # offer_id -> brand
-    url_attrs = "https://api-seller.ozon.ru/v4/product/info/attributes"
-    async with aiohttp.ClientSession() as session:
-        for i in range(0, len(offer_ids), 100):
-            batch = offer_ids[i:i+100]
-            try:
-                async with session.post(url_attrs,
-                    json={"filter": {"offer_id": batch}, "limit": len(batch)},
-                    headers=OZON_HEADERS) as resp:
-                    if resp.status == 200:
-                        d = await resp.json()
-                        for it in d.get("result", []):
-                            oid = it.get("offer_id")
-                            for attr in it.get("attributes", []):
-                                if attr.get("id") == 85:
-                                    vals = attr.get("values", [])
-                                    if vals:
-                                        brand_map[oid] = vals[0].get("value", "")
-            except Exception as e:
-                import logging; logging.warning(f"sync attrs error: {e}")
+        # ШАГ 3: Бренд (attribute_id=85)
+        _sync_status["progress"] = f"Загружаем бренды..."
+        brand_map = {}
+        url_attrs = "https://api-seller.ozon.ru/v4/product/info/attributes"
+        async with aiohttp.ClientSession() as session:
+            for i in range(0, len(offer_ids), 100):
+                batch = offer_ids[i:i+100]
+                try:
+                    async with session.post(url_attrs,
+                        json={"filter": {"offer_id": batch}, "limit": len(batch)},
+                        headers=OZON_HEADERS) as resp:
+                        if resp.status == 200:
+                            d = await resp.json()
+                            for it in d.get("result", []):
+                                oid = it.get("offer_id")
+                                for attr in it.get("attributes", []):
+                                    if attr.get("id") == 85:
+                                        vals = attr.get("values", [])
+                                        if vals:
+                                            brand_map[oid] = vals[0].get("value", "")
+                except Exception as e:
+                    import logging; logging.warning(f"sync attrs error: {e}")
 
-    # ШАГ 4: Upsert в БД
-    async with AsyncSessionLocal() as db:
-        for item in all_items:
-            offer_id = item.get("offer_id")
-            if not offer_id:
-                continue
+        # ШАГ 4: Upsert в БД
+        _sync_status["progress"] = f"Записываем в БД ({total} товаров)..."
+        async with AsyncSessionLocal() as db:
+            for item in all_items:
+                offer_id = item.get("offer_id")
+                if not offer_id:
+                    continue
+                product_id = item.get("product_id")
+                price_data = item.get("price") or {}
+                comm = item.get("commissions") or {}
+                idx = item.get("price_indexes") or {}
+                info = info_map.get(product_id) or {}
+                ext_data = idx.get("external_index_data") or {}
+                ozon_data = idx.get("ozon_index_data") or {}
+                ext_min = float(ext_data.get("min_price") or 0)
+                ozon_min = float(ozon_data.get("min_price") or 0)
+                competitor_min = int(min(ext_min if ext_min else 999999, ozon_min if ozon_min else 999999))
+                if competitor_min == 999999:
+                    competitor_min = 0
+                fbs_logistics = int(
+                    float(comm.get("fbs_direct_flow_trans_max_amount") or 0) +
+                    float(comm.get("fbs_deliv_to_customer_amount") or 0)
+                )
+                row = dict(
+                    offer_id=offer_id,
+                    product_id=product_id,
+                    name=info.get("name") or "",
+                    image_url=info.get("image_url") or "",
+                    category_id=info.get("category_id"),
+                    warehouse_type=info.get("warehouse_type") or "",
+                    brand=brand_map.get(offer_id) or "",
+                    price=int(float(price_data.get("price") or 0)),
+                    old_price=int(float(price_data.get("old_price") or 0)),
+                    min_price=int(float(price_data.get("min_price") or 0)),
+                    net_price=int(float(price_data.get("net_price") or 0)),
+                    marketing_price=int(float(price_data.get("marketing_seller_price") or 0)),
+                    commission_fbs_percent=int(comm.get("sales_percent_fbs") or 0),
+                    commission_fbs_logistics=fbs_logistics,
+                    price_index_color=idx.get("color_index") or "",
+                    price_index_ozon=str(round(float(ozon_data.get("price_index_value") or 0), 2)),
+                    price_index_external=str(round(float(ext_data.get("price_index_value") or 0), 2)),
+                    competitor_min_price=competitor_min,
+                    updated_at=datetime.now(),
+                )
+                stmt = pg_insert(Product).values(**row)
+                upd = {k: v for k, v in row.items() if k != "offer_id"}
+                stmt = stmt.on_conflict_do_update(index_elements=["offer_id"], set_=upd)
+                await db.execute(stmt)
+            await db.commit()
 
-            product_id = item.get("product_id")
-            price_data = item.get("price") or {}
-            comm = item.get("commissions") or {}
-            idx = item.get("price_indexes") or {}
-            info = info_map.get(product_id) or {}
-            ext_data = idx.get("external_index_data") or {}
-            ozon_data = idx.get("ozon_index_data") or {}
-            ext_min = ext_data.get("min_price") or 0
-            ozon_min = ozon_data.get("min_price") or 0
-            competitor_min = int(min(
-                float(ext_min) if ext_min else 999999,
-                float(ozon_min) if ozon_min else 999999
-            ))
-            if competitor_min == 999999:
-                competitor_min = 0
-            ozon_idx_val = round(float(ozon_data.get("price_index_value") or 0), 2)
-            ext_idx_val = round(float(ext_data.get("price_index_value") or 0), 2)
-            fbs_logistics = int(
-                float(comm.get("fbs_direct_flow_trans_max_amount") or 0) +
-                float(comm.get("fbs_deliv_to_customer_amount") or 0)
-            )
+        _last_sync = datetime.now()
+        _sync_status = {"running": False, "progress": "Готово", "synced": total, "error": ""}
+        return {"synced": total}
 
-            vals = dict(
-                offer_id=offer_id,
-                product_id=product_id,
-                name=info.get("name") or "",
-                image_url=info.get("image_url") or "",
-                category_id=info.get("category_id"),
-                warehouse_type=info.get("warehouse_type") or "",
-                brand=brand_map.get(offer_id) or "",
-                price=int(float(price_data.get("price") or 0)),
-                old_price=int(float(price_data.get("old_price") or 0)),
-                min_price=int(float(price_data.get("min_price") or 0)),
-                net_price=int(float(price_data.get("net_price") or 0)),
-                marketing_price=int(float(price_data.get("marketing_seller_price") or 0)),
-                commission_fbs_percent=int(comm.get("sales_percent_fbs") or 0),
-                commission_fbs_logistics=fbs_logistics,
-                price_index_color=idx.get("color_index") or "",
-                price_index_ozon=str(ozon_idx_val),
-                price_index_external=str(ext_idx_val),
-                competitor_min_price=competitor_min,
-                updated_at=datetime.now(),
-            )
-
-            stmt = pg_insert(Product).values(**vals)
-            update_vals = {k: v for k, v in vals.items() if k != "offer_id"}
-            stmt = stmt.on_conflict_do_update(index_elements=["offer_id"], set_=update_vals)
-            await db.execute(stmt)
-
-        await db.commit()
-
-    return {"synced": total}
+    except Exception as e:
+        import logging, traceback
+        logging.error(f"sync_products error: {traceback.format_exc()}")
+        _sync_status = {"running": False, "progress": "", "synced": 0, "error": str(e)}
+        return {"synced": 0, "error": str(e)}
 
 
 @app.post("/api/repricer/sync")
 async def api_repricer_sync(user: dict = Depends(require_admin)):
-    """Синхронизация каталога товаров с Ozon."""
-    result = await sync_products_catalog()
-    return result
+    """Запускает синхронизацию каталога в фоне и сразу отвечает."""
+    import asyncio
+    if _sync_status.get("running"):
+        return {"started": False, "message": "Синхронизация уже запущена", "status": _sync_status}
+    asyncio.create_task(sync_products_catalog())
+    return {"started": True, "message": "Синхронизация запущена в фоне"}
+
+
+@app.get("/api/repricer/sync/status")
+async def api_repricer_sync_status(user: dict = Depends(require_admin)):
+    """Статус текущей синхронизации."""
+    return {
+        "running": _sync_status.get("running", False),
+        "progress": _sync_status.get("progress", ""),
+        "synced": _sync_status.get("synced", 0),
+        "error": _sync_status.get("error", ""),
+        "last_sync": _last_sync.strftime("%d.%m.%Y %H:%M") if _last_sync else None,
+    }
 
 
 @app.get("/api/repricer/filters")

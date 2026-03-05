@@ -1651,16 +1651,53 @@ async function loadRepricerFilters() {
   } catch(e) {}
 }
 
+let _syncPollTimer = null;
+
 async function syncRepricer() {
   const btn = document.getElementById('repricer-sync-btn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinning">⟳</span> Загрузка...';
+  btn.innerHTML = '<span class="spinning">⟳</span> Запуск...';
+
   try {
     const r = await fetch('/api/repricer/sync', {method:'POST'}).then(r=>r.json());
-    if (r.error) { showToast(`Ошибка: ${r.error}`, 'error'); }
-    else { showToast(`✓ Загружено ${r.synced} товаров`); loadRepricer(1); }
-  } catch(e) { showToast('Ошибка', 'error'); }
-  finally { btn.disabled=false; btn.innerHTML='⟳ Загрузить товары с Ozon'; }
+    if (!r.started) {
+      showToast(r.message || 'Синхронизация уже идёт');
+    }
+    // Начинаем polling статуса
+    pollSyncStatus();
+  } catch(e) {
+    showToast('Ошибка запуска', 'error');
+    btn.disabled = false;
+    btn.innerHTML = '⟳ Загрузить с Ozon';
+  }
+}
+
+async function pollSyncStatus() {
+  const btn = document.getElementById('repricer-sync-btn');
+  clearTimeout(_syncPollTimer);
+
+  try {
+    const s = await fetch('/api/repricer/sync/status').then(r=>r.json());
+    if (s.running) {
+      btn.innerHTML = `<span class="spinning">⟳</span> ${s.progress || 'Загрузка...'} (${s.synced||0})`;
+      _syncPollTimer = setTimeout(pollSyncStatus, 2000);
+    } else if (s.error) {
+      showToast(`Ошибка: ${s.error}`, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '⟳ Загрузить с Ozon';
+    } else if (s.synced > 0) {
+      showToast(`✓ Загружено ${s.synced} товаров`);
+      btn.disabled = false;
+      btn.innerHTML = '⟳ Загрузить с Ozon';
+      loadRepricerFilters();
+      loadRepricer(1);
+    } else {
+      btn.disabled = false;
+      btn.innerHTML = '⟳ Загрузить с Ozon';
+    }
+  } catch(e) {
+    _syncPollTimer = setTimeout(pollSyncStatus, 3000);
+  }
 }
 
 async function loadRepricer(page=1) {
