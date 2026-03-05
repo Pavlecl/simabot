@@ -178,11 +178,11 @@ function renderOrdersTable(orders, tbodyId, showActions) {
           : ''}
         <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px">${productName || '—'}</div>
       </td>
-      <td>
-          <button onclick="toggleNotDelivered('${o.posting_number}', this)"
-            style="background:${o.not_delivered ? 'var(--red)' : 'var(--surface2)'};border:1px solid var(--border);padding:2px 6px;cursor:pointer;border-radius:3px;font-size:11px;color:var(--text)"
-            title="${o.not_delivered ? 'Отменить' : 'Не привезли'}">
-            ${o.not_delivered ? '✗' : '?'}
+
+        <td style="white-space:nowrap">
+          <button onclick="toggleNotDelivered('${o.posting_number}')"
+            style="background:${o.not_delivered ? 'var(--red)' : 'var(--surface2)'};border:1px solid ${o.not_delivered ? 'var(--red)' : 'var(--border)'};padding:3px 8px;cursor:pointer;border-radius:4px;font-size:11px;color:${o.not_delivered ? '#fff' : 'var(--text-dim)'};white-space:nowrap">
+            ${o.not_delivered ? '✗ Не привезли' : 'Не привезли'}
           </button>
         </td>
 
