@@ -374,23 +374,33 @@ async def get_stats(
 
     def to_iso_expr(col):
         """
-        Конвертирует строковую дату из дд.мм.гггг в гггг-мм-дд на уровне SQL (PostgreSQL).
-        Если дата уже в ISO формате или NULL — возвращает как есть.
-        Используем to_date() через func для надёжного сравнения.
+        Конвертирует строковую дату любого формата в DATE через PostgreSQL.
+        Форматы в БД:
+          - '5.03.26'   → d.mm.yy  (короткий, от бота)
+          - '06.03.2026' → dd.mm.yyyy (полный)
+          - '2026-03-05' → ISO (от сайта)
+        Используем to_date() с нужным форматом через CASE по длине строки.
         """
         from sqlalchemy import func as sqlfunc
-        # to_date('06.03.2026', 'DD.MM.YYYY') → date
-        # Пробуем оба формата через CASE
         return sqlfunc.to_date(
             case(
-                # Если содержит точки — формат дд.мм.гггг
-                (col.like('__.__.____'),
+                # ISO формат yyyy-mm-dd (10 символов с дефисами)
+                (col.op('~')(r'^\d{4}-\d{2}-\d{2}$'), col),
+                # Полный дд.мм.гггг (10 символов: 06.03.2026)
+                (col.op('~')(r'^\d{2}\.\d{2}\.\d{4}$'),
                  sqlfunc.concat(
                      sqlfunc.substring(col, 7, 4), '-',
                      sqlfunc.substring(col, 4, 2), '-',
                      sqlfunc.substring(col, 1, 2)
                  )),
-                else_=col
+                # Короткий д.мм.гг или дд.мм.гг (6-8 символов, год 2 цифры)
+                # '5.03.26' → день может быть 1 цифра, год 2 цифры → добавляем '20' к году
+                else_=sqlfunc.concat(
+                    '20',
+                    sqlfunc.split_part(col, '.', 3), '-',
+                    sqlfunc.lpad(sqlfunc.split_part(col, '.', 2), 2, '0'), '-',
+                    sqlfunc.lpad(sqlfunc.split_part(col, '.', 1), 2, '0')
+                )
             ),
             literal('YYYY-MM-DD')
         )

@@ -878,7 +878,17 @@ async function loadDashboard() {
         const p = s.slice(0,10).split('-');
         return p[2] + '.' + p[1] + '.' + p[0];
       }
-      return s; // уже в нужном формате
+      // Короткий д.мм.гг → дд.мм.20гг
+      if (s.includes('.')) {
+        const parts = s.split('.');
+        if (parts.length === 3) {
+          const d = parts[0].padStart(2, '0');
+          const m = parts[1].padStart(2, '0');
+          const y = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+          return d + '.' + m + '.' + y;
+        }
+      }
+      return s;
     }
 
     tbody.innerHTML = stats.overdue_orders.map(o => {
@@ -1157,10 +1167,24 @@ function renderOrdersTable(orders, tbodyId, showActions) {
     'cancelled': 'Отменён'
   };
 
-  function formatDate(iso) {
-    if (!iso) return '—';
-    const d = iso.slice(0,10).split('-');
-    return d[2] + '.' + d[1] + '.' + d[0];
+  function formatDate(s) {
+    if (!s) return '—';
+    // ISO yyyy-mm-dd
+    if (s.length >= 10 && s[4] === '-') {
+      const d = s.slice(0,10).split('-');
+      return d[2] + '.' + d[1] + '.' + d[0];
+    }
+    // Короткий д.мм.гг → дд.мм.20гг
+    if (s.includes('.')) {
+      const parts = s.split('.');
+      if (parts.length === 3) {
+        const d = parts[0].padStart(2, '0');
+        const m = parts[1].padStart(2, '0');
+        const y = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+        return d + '.' + m + '.' + y;
+      }
+    }
+    return s;
   }
 
   function copyCell(text, el) {
@@ -1182,15 +1206,16 @@ function renderOrdersTable(orders, tbodyId, showActions) {
     const totalQty = o.products ? o.products.reduce((s, p) => s + (typeof p === 'object' ? (p.quantity || 0) : 0), 0) : 0;
     const extraCount = (o.products && o.products.length > 1) ? ` +${o.products.length - 1} поз.` : '';
     const acceptedDate = formatDate(o.ozon_accepted_at);
+    const planDate = formatDate(o.plan_delivery_date);
     const statusRu = STATUS_RU[o.ozon_status] || o.ozon_status || '—';
 
     // Поставка - редактируемая ячейка для admin
     const deliveryCell = (userRole === 'admin')
       ? `<td class="editable-cell" data-field="plan_delivery_date" data-posting="${o.posting_number}"
            onclick="editCell(this)" title="Нажмите для редактирования">
-           ${o.plan_delivery_date || '<span style="color:var(--text-dim)">—</span>'}
+           ${planDate !== '—' ? planDate : '<span style="color:var(--text-dim)">—</span>'}
          </td>`
-      : `<td>${o.plan_delivery_date || '—'}</td>`;
+      : `<td>${planDate}</td>`;
 
     // СУР - редактируемый для admin, копируемый для остальных
     const surCell = (userRole === 'admin')
