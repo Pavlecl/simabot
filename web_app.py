@@ -844,14 +844,19 @@ async def sync_products_catalog() -> dict:
             )
 
             # Мин. цена конкурента — берём минимум из внешнего и внутреннего индекса
-            ext_min = idx.get("external_index_data", {}).get("min_price") or 0
-            ozon_min = idx.get("ozon_index_data", {}).get("min_price") or 0
+            ext_data = idx.get("external_index_data") or {}
+            ozon_data = idx.get("ozon_index_data") or {}
+            ext_min = ext_data.get("min_price") or 0
+            ozon_min = ozon_data.get("min_price") or 0
             competitor_min = int(min(
                 float(ext_min) if ext_min else 999999,
                 float(ozon_min) if ozon_min else 999999
             ))
             if competitor_min == 999999:
                 competitor_min = 0
+            # Индексы
+            ozon_idx_val = round(float(ozon_data.get("price_index_value") or 0), 2)
+            ext_idx_val = round(float(ext_data.get("price_index_value") or 0), 2)
 
             stmt = pg_insert(Product).values(
                 offer_id=offer_id,
@@ -866,8 +871,8 @@ async def sync_products_catalog() -> dict:
                 commission_fbs_percent=int(comm.get("sales_percent_fbs") or 0),
                 commission_fbs_logistics=fbs_logistics,
                 price_index_color=idx.get("color_index") or "",
-                price_index_ozon=str(round(float(idx.get("ozon_index_data", {}).get("price_index_value") or 0), 2)),
-                price_index_external=str(round(float(idx.get("external_index_data", {}).get("price_index_value") or 0), 2)),
+                price_index_ozon=str(ozon_idx_val),
+                price_index_external=str(ext_idx_val),
                 competitor_min_price=competitor_min,
                 updated_at=datetime.now(),
             )
@@ -885,8 +890,8 @@ async def sync_products_catalog() -> dict:
                     "commission_fbs_percent": int(comm.get("sales_percent_fbs") or 0),
                     "commission_fbs_logistics": fbs_logistics,
                     "price_index_color": idx.get("color_index") or "",
-                    "price_index_ozon": str(round(float(idx.get("ozon_index_data", {}).get("price_index_value") or 0), 2)),
-                    "price_index_external": str(round(float(idx.get("external_index_data", {}).get("price_index_value") or 0), 2)),
+                    "price_index_ozon": str(ozon_idx_val),
+                    "price_index_external": str(ext_idx_val),
                     "competitor_min_price": competitor_min,
                     "updated_at": datetime.now(),
                 }
