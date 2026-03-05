@@ -1132,6 +1132,15 @@ async def users_page(request: Request, user: dict = Depends(require_admin)):
     })
 
 
+@app.get("/repricer", response_class=HTMLResponse)
+async def repricer_page(request: Request, user: dict = Depends(require_admin)):
+    return templates.TemplateResponse("app.html", {
+        "request": request,
+        "user": user,
+        "active_tab": "repricer"
+    })
+
+
 @app.get("/api/users")
 async def get_users(
     user: dict = Depends(require_admin),
