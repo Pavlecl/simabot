@@ -137,4 +137,4 @@ function sortByAccepted() {
 
 // =====================================================================
 
-document.addEventListener('DOMContentLoaded', () => loadDashboard());
+loadDashboard();

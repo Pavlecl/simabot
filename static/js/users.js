@@ -131,4 +131,4 @@ let toastTimer;
 
 // =====================================================================
 
-document.addEventListener('DOMContentLoaded', () => loadUsers());
+loadUsers();

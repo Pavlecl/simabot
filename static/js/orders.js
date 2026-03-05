@@ -267,4 +267,4 @@ async function syncOzonOrders() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => loadOrders(1));
+loadOrders(1);
