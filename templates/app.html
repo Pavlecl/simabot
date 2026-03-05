@@ -527,6 +527,45 @@
   /* ===== OVERDUE TABLE ===== */
   .overdue-row td { background: rgba(245,54,92,0.04); }
 
+  /* ===== COPY / EDITABLE CELLS ===== */
+  .copy-cell {
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .copy-cell:hover { color: var(--accent) !important; }
+  .copy-cell:active { transform: scale(0.97); }
+
+  .editable-cell {
+    cursor: pointer;
+    position: relative;
+    transition: background 0.15s;
+  }
+  .editable-cell:hover { background: var(--accent-dim) !important; }
+  .editable-cell::after {
+    content: '✎';
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 9px;
+    color: var(--text-dim);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .editable-cell:hover::after { opacity: 1; }
+
+  .inline-input {
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 8px;
+    outline: none;
+    width: 100%;
+    min-width: 80px;
+  }
+
   .toast {
     position: fixed;
     bottom: 24px; right: 24px;
@@ -608,14 +647,16 @@
   {# ===== TAB: ORDERS ===== #}
   <div class="tab-panel {{ 'active' if active_tab == 'orders' }}" id="tab-orders">
     <div class="toolbar">
+      <button class="btn primary" id="orders-sync-btn" onclick="syncOzonOrders()">⟳ Обновить с Ozon</button>
+      <span class="toolbar-sep"></span>
       <span class="toolbar-label">Статус:</span>
       <select id="status-filter" onchange="loadOrders(1)">
         <option value="">Все</option>
-        <option value="awaiting_packaging">awaiting_packaging</option>
-        <option value="awaiting_deliver">awaiting_deliver</option>
-        <option value="processing">processing</option>
-        <option value="delivered">delivered</option>
-        <option value="cancelled">cancelled</option>
+        <option value="awaiting_packaging">Ожидает сборки</option>
+        <option value="awaiting_deliver">Готов к отгрузке</option>
+        <option value="processing">В обработке</option>
+        <option value="delivered">Доставлен</option>
+        <option value="cancelled">Отменён</option>
       </select>
 
       <div class="toolbar-sep"></div>
@@ -643,10 +684,16 @@
       <table>
         <thead>
           <tr>
-            <th>Отправление</th><th>Статус</th><th>Принят</th>
-            <th>Фото</th><th>Артикул / Товар</th>
-            <th>Заказ Сима</th><th>Поставка (план)</th>
-            <th>СУР</th><th>Комментарий</th><th></th>
+            <th>Отправление</th>
+            <th>Статус</th>
+            <th style="cursor:pointer;user-select:none" onclick="sortByAccepted()">Принят <span id="sort-icon">↕</span></th>
+            <th>Фото</th>
+            <th>Артикул / Товар</th>
+            <th>Поставка (план)</th>
+            <th>СУР</th>
+            <th>№ счёта</th>
+            <th>Комментарий</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="orders-body">
@@ -876,6 +923,116 @@ async function syncOzon() {
 }
 
 // =====================================================================
+// КОПИРОВАНИЕ И INLINE-РЕДАКТИРОВАНИЕ
+// =====================================================================
+function copyCell(text, el) {
+  if (!text || text === '—') return;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = el.style.color;
+    el.style.color = 'var(--green)';
+    setTimeout(() => { el.style.color = orig; }, 700);
+    showToast('✓ Скопировано');
+  }).catch(() => {
+    // fallback для старых браузеров
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('✓ Скопировано');
+  });
+}
+
+function editCell(el) {
+  if (el.querySelector('input')) return; // уже редактируется
+  const field = el.dataset.field;
+  const posting = el.dataset.posting;
+
+  // Только comment доступен всем, остальные только admin
+  if (field !== 'comment' && userRole !== 'admin') return;
+
+  const currentText = el.innerText.trim();
+  const displayText = (currentText === '+' || currentText === '—') ? '' : currentText;
+
+  el.innerHTML = '';
+  const input = document.createElement('input');
+  input.type = field === 'plan_delivery_date' ? 'text' : 'text';
+  input.className = 'inline-input';
+  input.value = displayText;
+  el.appendChild(input);
+  input.focus();
+  input.select();
+
+  async function save() {
+    const val = input.value.trim();
+    try {
+      const body = {};
+      body[field] = val;
+      const resp = await fetch(`/api/orders/${encodeURIComponent(posting)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (resp.ok) {
+        el.innerHTML = val || (field === 'comment' ? '<span style="color:var(--border)">+</span>' : '<span style="color:var(--text-dim)">—</span>');
+        showToast('✓ Сохранено');
+        // Обновляем данные в кэше
+        const order = allOrdersCache.find(o => o.posting_number === posting);
+        if (order) order[field] = val;
+      } else {
+        showToast('Ошибка сохранения', 'error');
+        el.innerHTML = displayText || '<span style="color:var(--text-dim)">—</span>';
+      }
+    } catch(e) {
+      showToast('Ошибка', 'error');
+      el.innerHTML = displayText || '<span style="color:var(--text-dim)">—</span>';
+    }
+  }
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') {
+      el.innerHTML = displayText || (field === 'comment' ? '<span style="color:var(--border)">+</span>' : '<span style="color:var(--text-dim)">—</span>');
+    }
+  });
+}
+
+// Сортировка по дате принятия
+let sortAcceptedDir = 'desc';
+function sortByAccepted() {
+  sortAcceptedDir = sortAcceptedDir === 'desc' ? 'asc' : 'desc';
+  document.getElementById('sort-icon').textContent = sortAcceptedDir === 'desc' ? '↓' : '↑';
+  allOrdersCache.sort((a, b) => {
+    const da = a.ozon_accepted_at || '';
+    const db = b.ozon_accepted_at || '';
+    return sortAcceptedDir === 'asc' ? da.localeCompare(db) : db.localeCompare(da);
+  });
+  renderOrdersTable(allOrdersCache, 'orders-body', true);
+}
+
+async function syncOzonOrders() {
+  const btn = document.getElementById('orders-sync-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinning">⟳</span> Синхронизация...';
+  try {
+    const result = await fetch('/api/sync', { method: 'POST' }).then(r => r.json());
+    if (result.error) {
+      showToast(`Ошибка: ${result.error}`, 'error');
+    } else {
+      showToast(`✓ Обновлено ${result.synced} заказов`);
+      loadOrders(currentPage);
+    }
+  } catch(e) {
+    showToast('Ошибка синхронизации', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⟳ Обновить с Ozon';
+  }
+}
+
+// =====================================================================
 // ЗАКАЗЫ
 // =====================================================================
 function debounceSearch() {
@@ -932,49 +1089,108 @@ async function loadOrders(page) {
 function renderOrdersTable(orders, tbodyId, showActions) {
   const tbody = document.getElementById(tbodyId);
   if (!orders || orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">НЕТ ДАННЫХ</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     return;
   }
+
+  const STATUS_RU = {
+    'awaiting_packaging': 'Ожидает сборки',
+    'awaiting_deliver': 'Готов к отгрузке',
+    'processing': 'В обработке',
+    'delivered': 'Доставлен',
+    'cancelled': 'Отменён'
+  };
+
+  function formatDate(iso) {
+    if (!iso) return '—';
+    const d = iso.slice(0,10).split('-');
+    return d[2] + '.' + d[1] + '.' + d[0];
+  }
+
+  function copyCell(text, el) {
+    if (!text || text === '—') return;
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = el.style.color;
+      el.style.color = 'var(--green)';
+      setTimeout(() => { el.style.color = orig; }, 600);
+    });
+  }
+
   tbody.innerHTML = orders.map(o => {
-    // Первый товар для фото и артикула
     const firstProduct = (o.products && o.products.length > 0) ? o.products[0] : null;
-    const imageUrl = (firstProduct && typeof firstProduct === 'object') ? firstProduct.image_url : '';
-    const offerId = (firstProduct && typeof firstProduct === 'object') ? firstProduct.offer_id : '';
+    const imageUrl = (firstProduct && typeof firstProduct === 'object') ? (firstProduct.image_url || '') : '';
+    const offerId = (firstProduct && typeof firstProduct === 'object') ? (firstProduct.offer_id || '') : '';
     const productName = (firstProduct && typeof firstProduct === 'object')
-      ? firstProduct.name
+      ? (firstProduct.name || '')
       : (typeof firstProduct === 'string' ? firstProduct : '');
     const totalQty = o.products ? o.products.reduce((s, p) => s + (typeof p === 'object' ? (p.quantity || 0) : 0), 0) : 0;
-    const extraCount = (o.products && o.products.length > 1) ? ` +${o.products.length - 1}` : '';
+    const extraCount = (o.products && o.products.length > 1) ? ` +${o.products.length - 1} поз.` : '';
+    const acceptedDate = formatDate(o.ozon_accepted_at);
+    const statusRu = STATUS_RU[o.ozon_status] || o.ozon_status || '—';
 
-    const acceptedDate = o.ozon_accepted_at ? o.ozon_accepted_at.slice(0,10) : '—';
+    // Поставка - редактируемая ячейка для admin
+    const deliveryCell = (userRole === 'admin')
+      ? `<td class="editable-cell" data-field="plan_delivery_date" data-posting="${o.posting_number}"
+           onclick="editCell(this)" title="Нажмите для редактирования">
+           ${o.plan_delivery_date || '<span style="color:var(--text-dim)">—</span>'}
+         </td>`
+      : `<td>${o.plan_delivery_date || '—'}</td>`;
+
+    // СУР - копируемый + редактируемый через карандаш
+    const surCell = o.sur_number
+      ? `<td class="copy-cell" onclick="copyCell('${o.sur_number}', this)" title="Нажмите чтобы скопировать">
+           <span style="color:var(--green)">${o.sur_number}</span>
+         </td>`
+      : `<td><span style="color:var(--yellow)">нет</span></td>`;
+
+    // Номер счёта (sima_order_number) - копируемый
+    const invoiceCell = o.sima_order_number
+      ? `<td class="copy-cell" onclick="copyCell('${o.sima_order_number}', this)" title="Нажмите чтобы скопировать">
+           <span style="color:var(--text)">${o.sima_order_number}</span>
+         </td>`
+      : `<td><span style="color:var(--text-dim)">—</span></td>`;
+
+    // Комментарий - редактируемый для всех
+    const commentCell = `<td class="editable-cell comment-cell" data-field="comment" data-posting="${o.posting_number}"
+         onclick="editCell(this)" title="Нажмите для редактирования"
+         style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
+         ${o.comment || '<span style="color:var(--border)">+</span>'}
+       </td>`;
+
+    // Кнопка редактирования - только для admin
+    const editBtn = (showActions && userRole === 'admin')
+      ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})' title="Редактировать">✎</button></td>`
+      : (showActions ? '<td></td>' : '');
 
     return `<tr>
-      <td class="code" style="white-space:nowrap">${o.posting_number}</td>
-      <td><span class="status ${o.ozon_status}">${o.ozon_status || '—'}</span></td>
+      <td class="copy-cell code" style="white-space:nowrap"
+          onclick="copyCell('${o.posting_number}', this)" title="Нажмите чтобы скопировать">
+        ${o.posting_number}
+      </td>
+      <td><span class="status ${o.ozon_status}">${statusRu}</span></td>
       <td style="white-space:nowrap;color:var(--text-dim)">${acceptedDate}</td>
       <td style="width:52px;padding:6px 8px">
         ${imageUrl
-          ? `<img src="${imageUrl}" style="width:44px;height:44px;object-fit:cover;border:1px solid var(--border)" loading="lazy">`
+          ? `<img src="${imageUrl}" style="width:44px;height:44px;object-fit:cover;border:1px solid var(--border);display:block" loading="lazy" onerror="this.style.display='none'">`
           : '<div style="width:44px;height:44px;background:var(--surface2);border:1px solid var(--border)"></div>'}
       </td>
       <td style="max-width:200px">
-        ${offerId ? `<div class="code" style="font-size:11px">${offerId}${totalQty > 1 ? ` ×${totalQty}` : ''}${extraCount}</div>` : ''}
+        ${offerId
+          ? `<div class="copy-cell code" style="font-size:11px;display:inline-block"
+               onclick="copyCell('${offerId}', this)" title="Нажмите чтобы скопировать"
+             >${offerId}${totalQty > 1 ? ` ×${totalQty}` : ''}${extraCount}</div>`
+          : ''}
         <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px">${productName || '—'}</div>
       </td>
-      <td>${o.sima_order_number || '<span style="color:var(--text-dim)">—</span>'}</td>
-      <td>${o.plan_delivery_date || '—'}</td>
-      <td>${o.sur_number
-        ? `<span style="color:var(--green)">${o.sur_number}</span>`
-        : '<span style="color:var(--yellow)">нет</span>'}</td>
-      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
-        ${o.comment || ''}
-      </td>
-      ${showActions
-        ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})'>✎</button></td>`
-        : '<td></td>'}
+      ${deliveryCell}
+      ${surCell}
+      ${invoiceCell}
+      ${commentCell}
+      ${editBtn}
     </tr>`;
   }).join('');
 }
+
 
 // =====================================================================
 // ЭКСПОРТ В EXCEL

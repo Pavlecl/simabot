@@ -96,7 +96,10 @@ async def fetch_ozon_postings(statuses: list) -> list:
 
 
 async def fetch_images_for_skus(skus: list) -> dict:
-    """Батч-запрос фото по SKU через /v3/product/info/list."""
+    """Батч-запрос фото по SKU через /v3/product/info/list.
+    Ответ: {"items": [{..., "sources": [{"sku": 123}], "primary_image": [...]}]}
+    SKU находится в sources[].sku, а не на верхнем уровне.
+    """
     result = {}
     url = "https://api-seller.ozon.ru/v3/product/info/list"
     async with aiohttp.ClientSession() as session:
@@ -106,13 +109,22 @@ async def fetch_images_for_skus(skus: list) -> dict:
                 async with session.post(url, json={"sku": batch}, headers=OZON_HEADERS) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        for item in data.get("result", {}).get("items", []):
-                            sku = item.get("sku") or item.get("fbs_sku")
+                        # Ответ: {"items": [...]} без обёртки result
+                        for item in data.get("items", []):
                             images = item.get("primary_image", [])
-                            if sku and images:
-                                result[int(sku)] = images[0] if isinstance(images, list) else images
-            except Exception:
-                pass
+                            if not images:
+                                images = item.get("images", [])
+                            image_url = images[0] if isinstance(images, list) and images else ""
+                            if not image_url:
+                                continue
+                            # SKU лежит в sources — берём все и маппим
+                            for source in item.get("sources", []):
+                                sku = source.get("sku")
+                                if sku:
+                                    result[int(sku)] = image_url
+            except Exception as e:
+                import logging
+                logging.warning(f"fetch_images_for_skus error: {e}")
     return result
 
 
