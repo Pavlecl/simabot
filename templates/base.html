@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SIMA.CTRL</title>
-<link rel="stylesheet" href="/static/css/app.css?v=1772735513">
+<link rel="stylesheet" href="/static/css/app.css?v=1772735675">
 </head>
 <body>
 
@@ -89,7 +89,39 @@
   const activeTab = "{{ active_tab }}";
   const userRole = "{{ user.role }}";
 </script>
-<script src="/static/js/common.js?v=1772735513"></script>
+<script src="/static/js/common.js?v=1772735675"></script>
 {% block scripts %}{% endblock %}
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">РЕДАКТИРОВАТЬ</div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:11px; color:var(--text-dim)">Отправление: <span id="modal-posting" style="color:var(--accent)"></span></div>
+      <div class="field-group">
+        <label>СУР (номер от фулфилмента)</label>
+        <input type="text" id="modal-sur" placeholder="например: СУР-2024-001">
+      </div>
+      <div class="field-group">
+        <label>Дата поставки на ФФ (факт)</label>
+        <input type="datetime-local" id="modal-ff-date">
+      </div>
+      <div class="field-group">
+        <label>Плановая дата поставки</label>
+        <input type="text" id="modal-plan-date" placeholder="например: 25.10">
+      </div>
+      <div class="field-group">
+        <label>Комментарий</label>
+        <textarea id="modal-comment" rows="3" placeholder="Любые заметки..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">Отмена</button>
+      <button class="btn primary" onclick="saveOrder()">Сохранить</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
 </body>
 </html>
