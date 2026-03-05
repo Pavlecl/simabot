@@ -1,5 +1,6 @@
-// ЗАКАЗЫ
-// =====================================================================
+
+let sortAcceptedDir = 'asc';
+
 function debounceSearch() {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => loadOrders(1), 400);
@@ -157,7 +158,7 @@ function renderOrdersTable(orders, tbodyId, showActions) {
       ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})' title="Редактировать">✎</button></td>`
       : (showActions ? '<td></td>' : '');
 
-    return `<tr>
+    return `<tr style="${o.not_delivered ? 'background:rgba(220,50,50,0.15);' : ''}">
       <td class="copy-cell code" style="white-space:nowrap"
           onclick="copyCell('${o.posting_number}', this)" title="Нажмите чтобы скопировать">
         ${o.posting_number}
@@ -177,6 +178,14 @@ function renderOrdersTable(orders, tbodyId, showActions) {
           : ''}
         <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px">${productName || '—'}</div>
       </td>
+      <td>
+          <button onclick="toggleNotDelivered('${o.posting_number}', this)"
+            style="background:${o.not_delivered ? 'var(--red)' : 'var(--surface2)'};border:1px solid var(--border);padding:2px 6px;cursor:pointer;border-radius:3px;font-size:11px;color:var(--text)"
+            title="${o.not_delivered ? 'Отменить' : 'Не привезли'}">
+            ${o.not_delivered ? '✗' : '?'}
+          </button>
+        </td>
+
       ${deliveryCell}
       ${surCell}
       ${invoiceCell}
@@ -264,6 +273,15 @@ async function syncOzonOrders() {
   } finally {
     btn.disabled = false;
     btn.innerHTML = '⟳ Обновить с Ozon';
+  }
+}
+
+async function toggleNotDelivered(postingNumber) {
+  try {
+    await fetch(`/api/orders/${postingNumber}/not_delivered`, {method: 'POST'});
+    loadOrders(currentPage);
+  } catch(e) {
+    showToast('Ошибка', 'error');
   }
 }
 

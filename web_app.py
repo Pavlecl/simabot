@@ -592,6 +592,7 @@ async def get_orders(
         "orders": [
             {
                 "posting_number": o.posting_number,
+                "not_delivered": bool(o.not_delivered),
                 "ozon_status": o.ozon_status,
                 "sima_order_number": o.sima_order_number,
                 "sima_order_date": o.sima_order_date,
@@ -651,6 +652,19 @@ async def update_order(
     await db.commit()
     return {"ok": True, "posting_number": posting_number}
 
+@app.post("/api/orders/{posting_number}/not_delivered")
+async def toggle_not_delivered(
+    posting_number: str,
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(Order).where(Order.posting_number == posting_number))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Заказ не найден")
+    order.not_delivered = not bool(order.not_delivered)
+    await db.commit()
+    return {"not_delivered": order.not_delivered}
 
 @app.get("/api/queue")
 async def get_queue(
@@ -1395,7 +1409,6 @@ async def lifespan(app: FastAPI):
     yield
 
 app.router.lifespan_context = lifespan
-
 
 if __name__ == "__main__":
     import uvicorn

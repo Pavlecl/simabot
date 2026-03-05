@@ -53,7 +53,7 @@ class Order(Base):
     added_at = Column(DateTime, default=datetime.now)
     ozon_created_at = Column(DateTime, nullable=True)  # Дата создания на стороне Ozon
     ozon_accepted_at = Column(DateTime, nullable=True)  # Дата принятия заказа (in_process_at)
-
+    not_delivered = Column(Boolean, default=False)
 
 class VirtualOrder(Base):
     """
