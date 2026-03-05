@@ -300,6 +300,7 @@ async def get_orders(
                 "comment": o.comment,
                 "added_at": o.added_at.isoformat() if o.added_at else None,
                 "products": json.loads(o.products_json) if o.products_json else [],
+                "ozon_accepted_at": o.ozon_accepted_at.isoformat() if o.ozon_accepted_at else None,
             }
             for o in orders
         ]

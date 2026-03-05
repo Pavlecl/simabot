@@ -604,8 +604,9 @@
       <table>
         <thead>
           <tr>
-            <th>Отправление</th><th>Статус Ozon</th><th>Заказ Сима</th>
-            <th>Дата Сима</th><th>Поставка (план)</th><th>Поставка (ФФ)</th>
+            <th>Отправление</th><th>Статус</th><th>Принят</th>
+            <th>Фото</th><th>Артикул / Товар</th>
+            <th>Заказ Сима</th><th>Поставка (план)</th>
             <th>СУР</th><th>Комментарий</th><th></th>
           </tr>
         </thead>
@@ -830,25 +831,45 @@ function renderOrdersTable(orders, tbodyId, showActions) {
     tbody.innerHTML = '<tr><td colspan="9" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     return;
   }
-  tbody.innerHTML = orders.map(o => `
-    <tr>
-      <td class="code">${o.posting_number}</td>
+  tbody.innerHTML = orders.map(o => {
+    // Первый товар для фото и артикула
+    const firstProduct = (o.products && o.products.length > 0) ? o.products[0] : null;
+    const imageUrl = (firstProduct && typeof firstProduct === 'object') ? firstProduct.image_url : '';
+    const offerId = (firstProduct && typeof firstProduct === 'object') ? firstProduct.offer_id : '';
+    const productName = (firstProduct && typeof firstProduct === 'object')
+      ? firstProduct.name
+      : (typeof firstProduct === 'string' ? firstProduct : '');
+    const totalQty = o.products ? o.products.reduce((s, p) => s + (typeof p === 'object' ? (p.quantity || 0) : 0), 0) : 0;
+    const extraCount = (o.products && o.products.length > 1) ? ` +${o.products.length - 1}` : '';
+
+    const acceptedDate = o.ozon_accepted_at ? o.ozon_accepted_at.slice(0,10) : '—';
+
+    return `<tr>
+      <td class="code" style="white-space:nowrap">${o.posting_number}</td>
       <td><span class="status ${o.ozon_status}">${o.ozon_status || '—'}</span></td>
+      <td style="white-space:nowrap;color:var(--text-dim)">${acceptedDate}</td>
+      <td style="width:52px;padding:6px 8px">
+        ${imageUrl
+          ? `<img src="${imageUrl}" style="width:44px;height:44px;object-fit:cover;border:1px solid var(--border)" loading="lazy">`
+          : '<div style="width:44px;height:44px;background:var(--surface2);border:1px solid var(--border)"></div>'}
+      </td>
+      <td style="max-width:200px">
+        ${offerId ? `<div class="code" style="font-size:11px">${offerId}${totalQty > 1 ? ` ×${totalQty}` : ''}${extraCount}</div>` : ''}
+        <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px">${productName || '—'}</div>
+      </td>
       <td>${o.sima_order_number || '<span style="color:var(--text-dim)">—</span>'}</td>
-      <td>${o.sima_order_date || '—'}</td>
       <td>${o.plan_delivery_date || '—'}</td>
-      <td>${o.ff_delivery_date ? o.ff_delivery_date.slice(0,10) : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td>${o.sur_number
         ? `<span style="color:var(--green)">${o.sur_number}</span>`
         : '<span style="color:var(--yellow)">нет</span>'}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
         ${o.comment || ''}
       </td>
       ${showActions
         ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})'>✎</button></td>`
         : '<td></td>'}
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
 // =====================================================================

@@ -52,6 +52,7 @@ class Order(Base):
 
     added_at = Column(DateTime, default=datetime.now)
     ozon_created_at = Column(DateTime, nullable=True)  # Дата создания на стороне Ozon
+    ozon_accepted_at = Column(DateTime, nullable=True)  # Дата принятия заказа (in_process_at)
 
 
 class VirtualOrder(Base):
@@ -135,31 +136,32 @@ async def clear_virtual_orders():
 
 # --- ФУНКЦИИ ACTIVE ORDERS (META) ---
 
-async def save_order_meta(posting_number, products, sima_num, sima_date, deliv_date):
+async def save_order_meta(posting_number, products, sima_num, sima_date, deliv_date, accepted_at=None):
     """
     Сохраняет или обновляет данные о заказе.
-    Теперь пишет в таблицу Order.
+    products — список dict с offer_id, sku, name, quantity, image_url.
+    accepted_at — datetime in_process_at из Ozon API.
     """
     products_str = json.dumps(products, ensure_ascii=False)
 
     async with AsyncSessionLocal() as session:
-        # Upsert (Вставить или Обновить)
         stmt = insert(Order).values(
             posting_number=posting_number,
             products_json=products_str,
             sima_order_number=sima_num,
             sima_order_date=sima_date,
             plan_delivery_date=deliv_date,
-            ozon_status='processing'  # Временный статус, пока ozon_api не обновит его реально
+            ozon_status='processing',
+            ozon_accepted_at=accepted_at,
         )
-        # Если такой заказ уже есть, обновляем данные симы
         stmt = stmt.on_conflict_do_update(
             index_elements=['posting_number'],
             set_={
                 'products_json': products_str,
                 'sima_order_number': sima_num,
                 'sima_order_date': sima_date,
-                'plan_delivery_date': deliv_date
+                'plan_delivery_date': deliv_date,
+                'ozon_accepted_at': accepted_at,
             }
         )
         await session.execute(stmt)

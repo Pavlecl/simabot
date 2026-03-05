@@ -145,6 +145,8 @@ async def assemble_orders(sima_order_num, supply_date):
     async with aiohttp.ClientSession() as session:
         raw_postings = await fetch_postings(session)
 
+    # Сохраняем сырые postings для доступа к in_process_at
+    raw_by_number = {p['posting_number']: p for p in raw_postings}
     all_new = parse_orders(raw_postings)
     virtual_orders_db = await get_all_virtual_orders()
 
@@ -154,18 +156,52 @@ async def assemble_orders(sima_order_num, supply_date):
 
     sima_date_now = datetime.now().strftime("%d.%m.%Y")
 
+    # Собираем все SKU для батч-запроса фото
+    all_skus = []
+    for order in all_new:
+        for p in order['products']:
+            if p.get('sku'):
+                all_skus.append(int(p['sku']))
+
+    # Получаем фото одним батч-запросом
+    sku_images = {}
+    if all_skus:
+        sku_images = await fetch_product_images(all_skus)
+
     async with aiohttp.ClientSession() as session:
         for order in all_new:
             p_num = order['number']
 
-            product_names = [f"{p['name']} ({p['quantity']} шт.)" for p in order['products']]
+            # Сохраняем полный JSON с артикулом, sku, количеством и фото
+            products_full = []
+            for p in order['products']:
+                sku = int(p['sku']) if p.get('sku') else None
+                products_full.append({
+                    "offer_id": p.get('offer_id'),
+                    "sku": sku,
+                    "name": p.get('name'),
+                    "quantity": p.get('quantity'),
+                    "price": p.get('price', '0'),
+                    "image_url": sku_images.get(sku, '') if sku else ''
+                })
+
+            # Парсим дату принятия заказа (in_process_at)
+            raw = raw_by_number.get(p_num, {})
+            accepted_at = None
+            raw_dt = raw.get('in_process_at')
+            if raw_dt:
+                try:
+                    accepted_at = datetime.fromisoformat(raw_dt.rstrip('Z').split('.')[0])
+                except (ValueError, AttributeError):
+                    accepted_at = None
 
             await save_order_meta(
                 posting_number=p_num,
-                products=product_names,
+                products=products_full,
                 sima_num=sima_order_num,
                 sima_date=sima_date_now,
-                deliv_date=supply_date
+                deliv_date=supply_date,
+                accepted_at=accepted_at,
             )
 
             if p_num in virtual_orders_db:
@@ -264,3 +300,25 @@ async def sync_orders_to_db(postings):
             )
             await db.execute(stmt)
         await db.commit()
+
+async def fetch_product_images(skus: list) -> dict:
+    """Gets primary_image for a list of SKUs via /v3/product/info/list.
+    Returns dict {sku: image_url}. Batches of 100 (API limit).
+    """
+    result = {}
+    url = "https://api-seller.ozon.ru/v3/product/info/list"
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(skus), 100):
+            batch = skus[i:i+100]
+            try:
+                async with session.post(url, json={"sku": batch}, headers=HEADERS) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for item in data.get("result", {}).get("items", []):
+                            sku = item.get("sku") or item.get("fbs_sku")
+                            images = item.get("primary_image", [])
+                            if sku and images:
+                                result[int(sku)] = images[0] if isinstance(images, list) else images
+            except Exception as e:
+                logging.warning(f"fetch_product_images error: {e}")
+    return result
