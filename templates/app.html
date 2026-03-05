@@ -687,7 +687,7 @@
           <tr>
             <th>Отправление</th>
             <th>Статус</th>
-            <th style="cursor:pointer;user-select:none" onclick="sortByAccepted()">Принят <span id="sort-icon">↕</span></th>
+            <th style="cursor:pointer;user-select:none" onclick="sortByAccepted()">Принят <span id="sort-icon">↑</span></th>
             <th>Фото</th>
             <th>Артикул / Товар</th>
             <th>Поставка (план)</th>
@@ -1068,16 +1068,12 @@ function editCell(el) {
 }
 
 // Сортировка по дате принятия
-let sortAcceptedDir = 'desc';
+let sortAcceptedDir = 'asc';
 function sortByAccepted() {
-  sortAcceptedDir = sortAcceptedDir === 'desc' ? 'asc' : 'desc';
-  document.getElementById('sort-icon').textContent = sortAcceptedDir === 'desc' ? '↓' : '↑';
-  allOrdersCache.sort((a, b) => {
-    const da = a.ozon_accepted_at || '';
-    const db = b.ozon_accepted_at || '';
-    return sortAcceptedDir === 'asc' ? da.localeCompare(db) : db.localeCompare(da);
-  });
-  renderOrdersTable(allOrdersCache, 'orders-body', true);
+  sortAcceptedDir = sortAcceptedDir === 'asc' ? 'desc' : 'asc';
+  document.getElementById('sort-icon').textContent = sortAcceptedDir === 'asc' ? '↑' : '↓';
+  // Сортировка серверная — перезагружаем текущую страницу
+  loadOrders(currentPage);
 }
 
 async function syncOzonOrders() {
@@ -1128,6 +1124,7 @@ function buildOrdersUrl(page, perPage = 50) {
   if (search) url += `&search=${encodeURIComponent(search)}`;
   if (dateFrom) url += `&date_from=${encodeURIComponent(dateFrom)}`;
   if (dateTo) url += `&date_to=${encodeURIComponent(dateTo)}`;
+  url += `&sort=${sortAcceptedDir === 'asc' ? 'accepted_asc' : 'accepted_desc'}`;
   return url;
 }
 

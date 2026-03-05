@@ -527,6 +527,7 @@ async def get_orders(
     search: str = "",
     date_from: str = "",
     date_to: str = "",
+    sort: str = "accepted_asc",
 ):
     """
     📚 УРОК: Пагинация + фильтрация
@@ -534,7 +535,13 @@ async def get_orders(
     SQLAlchemy позволяет цепочкой добавлять .where() — они объединяются через AND.
     """
     offset = (page - 1) * per_page
-    query = select(Order).order_by(Order.added_at.desc())
+    # Сортировка
+    if sort == "accepted_asc":
+        query = select(Order).order_by(Order.ozon_accepted_at.asc().nullslast())
+    elif sort == "accepted_desc":
+        query = select(Order).order_by(Order.ozon_accepted_at.desc().nullslast())
+    else:
+        query = select(Order).order_by(Order.added_at.desc())
 
     ACTIVE_STATUSES = ["awaiting_packaging", "awaiting_deliver"]
     if status == "active":
