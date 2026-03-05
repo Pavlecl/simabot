@@ -362,8 +362,57 @@ async def get_stats(
     - Отправка сегодня = plan_delivery_date == сегодня И статус активный
     - Просроченные = plan_delivery_date < сегодня И sur_number пустой И статус активный
     """
-    today = date.today().isoformat()  # "2026-03-05"
+    today = date.today()
+    today_iso = today.isoformat()          # "2026-03-05" для сравнения ISO-дат
+    today_dot = today.strftime("%d.%m.%Y") # "05.03.2026" для сравнения дд.мм.гггг
     active_statuses = ["awaiting_packaging", "awaiting_deliver"]
+
+    # Вспомогательная функция: конвертирует дд.мм.гггг → гггг-мм-дд для корректного сравнения
+    # На уровне SQL используем CASE для обоих форматов
+    from sqlalchemy import case, cast, and_
+    from sqlalchemy.sql.expression import literal
+
+    def to_iso_expr(col):
+        """
+        Конвертирует строковую дату из дд.мм.гггг в гггг-мм-дд на уровне SQL (PostgreSQL).
+        Если дата уже в ISO формате или NULL — возвращает как есть.
+        Используем to_date() через func для надёжного сравнения.
+        """
+        from sqlalchemy import func as sqlfunc
+        # to_date('06.03.2026', 'DD.MM.YYYY') → date
+        # Пробуем оба формата через CASE
+        return sqlfunc.to_date(
+            case(
+                # Если содержит точки — формат дд.мм.гггг
+                (col.like('__.__.____'),
+                 sqlfunc.concat(
+                     sqlfunc.substring(col, 7, 4), '-',
+                     sqlfunc.substring(col, 4, 2), '-',
+                     sqlfunc.substring(col, 1, 2)
+                 )),
+                else_=col
+            ),
+            literal('YYYY-MM-DD')
+        )
+
+    today_date_expr = today  # Python date object для сравнения
+
+    def overdue_filter():
+        return and_(
+            Order.ozon_status.in_(active_statuses),
+            Order.plan_delivery_date != None,
+            Order.plan_delivery_date != "",
+            or_(Order.sur_number == None, Order.sur_number == ""),
+            to_iso_expr(Order.plan_delivery_date) < today_date_expr
+        )
+
+    def today_filter():
+        return and_(
+            Order.ozon_status.in_(active_statuses),
+            Order.plan_delivery_date != None,
+            Order.plan_delivery_date != "",
+            to_iso_expr(Order.plan_delivery_date) == today_date_expr
+        )
 
     # Всего активных заказов
     total_q = await db.execute(
@@ -374,20 +423,13 @@ async def get_stats(
 
     # Отправка сегодня
     today_q = await db.execute(
-        select(func.count(Order.posting_number))
-        .where(Order.ozon_status.in_(active_statuses))
-        .where(Order.plan_delivery_date == today)
+        select(func.count(Order.posting_number)).where(today_filter())
     )
     today_count = today_q.scalar()
 
-    # Просроченные: plan_delivery_date < сегодня И СУР не заполнен
+    # Просроченные: дата поставки < сегодня И СУР не заполнен
     overdue_q = await db.execute(
-        select(func.count(Order.posting_number))
-        .where(Order.ozon_status.in_(active_statuses))
-        .where(Order.plan_delivery_date < today)
-        .where(Order.plan_delivery_date != None)
-        .where(Order.plan_delivery_date != "")
-        .where(or_(Order.sur_number == None, Order.sur_number == ""))
+        select(func.count(Order.posting_number)).where(overdue_filter())
     )
     overdue_count = overdue_q.scalar()
 
@@ -398,12 +440,8 @@ async def get_stats(
     # Просроченные заказы для таблицы на дашборде
     overdue_orders_q = await db.execute(
         select(Order)
-        .where(Order.ozon_status.in_(active_statuses))
-        .where(Order.plan_delivery_date < today)
-        .where(Order.plan_delivery_date != None)
-        .where(Order.plan_delivery_date != "")
-        .where(or_(Order.sur_number == None, Order.sur_number == ""))
-        .order_by(Order.plan_delivery_date.asc())
+        .where(overdue_filter())
+        .order_by(to_iso_expr(Order.plan_delivery_date).asc())
         .limit(50)
     )
     overdue_orders = overdue_orders_q.scalars().all()
