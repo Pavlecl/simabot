@@ -945,7 +945,8 @@ async function syncOzon() {
     if (result.error) {
       showToast(`Ошибка: ${result.error}`, 'error');
     } else {
-      showToast(`✓ Синхронизировано ${result.synced} заказов`);
+      const removed = result.removed ? `, убрано ${result.removed}` : '';
+      showToast(`✓ Обновлено ${result.synced} заказов${removed}`);
       timeEl.textContent = result.last_sync || '—';
       // Перезагружаем текущую вкладку
       if (activeTab === 'dashboard') loadDashboard();
@@ -1087,7 +1088,8 @@ async function syncOzonOrders() {
     if (result.error) {
       showToast(`Ошибка: ${result.error}`, 'error');
     } else {
-      showToast(`✓ Обновлено ${result.synced} заказов`);
+      const removedO = result.removed ? `, убрано ${result.removed}` : '';
+      showToast(`✓ Обновлено ${result.synced} заказов${removedO}`);
       loadOrders(currentPage);
     }
   } catch(e) {

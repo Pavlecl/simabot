@@ -155,23 +155,25 @@ async def sync_from_ozon() -> dict:
     if all_skus:
         sku_images = await fetch_images_for_skus(list(set(all_skus)))
 
+    # Множество актуальных номеров отправлений от Ozon
+    active_posting_numbers = {p.get("posting_number") for p in postings}
+
+    def parse_dt(s):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.rstrip("Z").split(".")[0])
+        except:
+            return None
+
     async with AsyncSessionLocal() as db:
+        # 1. Upsert активных заказов
         for p in postings:
             posting_number = p.get("posting_number")
             ozon_status = p.get("status", "unknown")
             shipment_date = p.get("shipment_date")
             in_process_at = p.get("in_process_at")
 
-            # Парсим даты
-            def parse_dt(s):
-                if not s:
-                    return None
-                try:
-                    return datetime.fromisoformat(s.rstrip("Z").split(".")[0])
-                except:
-                    return None
-
-            # Строим список продуктов с фото
             products = []
             for prod in p.get("products", []):
                 sku = int(prod["sku"]) if prod.get("sku") else None
@@ -191,7 +193,6 @@ async def sync_from_ozon() -> dict:
                 ozon_accepted_at=parse_dt(in_process_at),
                 ozon_created_at=parse_dt(shipment_date),
             )
-            # При конфликте обновляем только данные от Ozon, не трогаем поля фулфилмента
             stmt = stmt.on_conflict_do_update(
                 index_elements=["posting_number"],
                 set_={
@@ -203,10 +204,49 @@ async def sync_from_ozon() -> dict:
             )
             await db.execute(stmt)
 
+        # 2. Заказы которые были активными в нашей БД но пропали у Ozon —
+        #    значит отменены/доставлены. Помечаем их соответствующим статусом.
+        #    Запрашиваем актуальный статус каждого через /v3/posting/fbs/get
+        stale_q = await db.execute(
+            select(Order.posting_number)
+            .where(Order.ozon_status.in_(["awaiting_packaging", "awaiting_deliver"]))
+        )
+        stale_postings = [
+            row[0] for row in stale_q.all()
+            if row[0] not in active_posting_numbers
+        ]
+
+        if stale_postings:
+            url = "https://api-seller.ozon.ru/v3/posting/fbs/get"
+            async with aiohttp.ClientSession() as check_session:
+                for p_num in stale_postings:
+                    try:
+                        async with check_session.post(
+                            url,
+                            json={"posting_number": p_num},
+                            headers=OZON_HEADERS
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                real_status = data.get("result", {}).get("status", "unknown")
+                                await db.execute(
+                                    Order.__table__.update()
+                                    .where(Order.posting_number == p_num)
+                                    .values(ozon_status=real_status)
+                                )
+                    except Exception as e:
+                        import logging
+                        logging.warning(f"sync stale check error {p_num}: {e}")
+
         await db.commit()
 
     _last_sync = datetime.now()
-    return {"synced": len(postings), "last_sync": _last_sync.strftime("%d.%m.%Y %H:%M")}
+    removed = len(stale_postings) if stale_postings else 0
+    return {
+        "synced": len(postings),
+        "removed": removed,
+        "last_sync": _last_sync.strftime("%d.%m.%Y %H:%M")
+    }
 
 
 # --- ЗАВИСИМОСТИ (Dependency Injection) ---
