@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, select, delete, update
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Text, Boolean, select, delete, update
 from sqlalchemy.dialects.postgresql import insert
 
 # --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
@@ -73,7 +73,7 @@ class Product(Base):
     __tablename__ = "products"
 
     offer_id = Column(String, primary_key=True)   # Артикул продавца
-    product_id = Column(Integer, nullable=True)   # ID на Ozon
+    product_id = Column(BigInteger, nullable=True)   # ID на Ozon (может быть > int32)
     name = Column(String, nullable=True)           # Название
     image_url = Column(String, nullable=True)      # Фото
 
