@@ -140,6 +140,7 @@ function editCell(el) {
 }
 
 
+let toastTimer;
 function showToast(msg, type = '') {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
