@@ -542,6 +542,8 @@ async def update_order(
         order.comment = body["comment"]
     if "plan_delivery_date" in body:
         order.plan_delivery_date = body["plan_delivery_date"]
+    if "sima_order_number" in body:
+        order.sima_order_number = body["sima_order_number"]
 
     await db.commit()
     return {"ok": True, "posting_number": posting_number}

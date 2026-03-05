@@ -949,23 +949,41 @@ function editCell(el) {
   const field = el.dataset.field;
   const posting = el.dataset.posting;
 
-  // Только comment доступен всем, остальные только admin
-  if (field !== 'comment' && userRole !== 'admin') return;
+  // comment редактируют все; plan_delivery_date, sur_number, sima_order_number — только admin
+  const adminOnlyFields = ['plan_delivery_date', 'sur_number', 'sima_order_number'];
+  if (adminOnlyFields.includes(field) && userRole !== 'admin') return;
 
   const currentText = el.innerText.trim();
   const displayText = (currentText === '+' || currentText === '—') ? '' : currentText;
 
   el.innerHTML = '';
   const input = document.createElement('input');
-  input.type = field === 'plan_delivery_date' ? 'text' : 'text';
   input.className = 'inline-input';
-  input.value = displayText;
+
+  if (field === 'plan_delivery_date') {
+    input.type = 'date';
+    // Конвертируем формат дд.мм.гггг → гггг-мм-дд для input[type=date]
+    if (displayText && displayText.includes('.')) {
+      const parts = displayText.split('.');
+      if (parts.length === 3) input.value = parts[2] + '-' + parts[1] + '-' + parts[0];
+    } else {
+      input.value = displayText;
+    }
+  } else {
+    input.type = 'text';
+    input.value = displayText;
+  }
   el.appendChild(input);
   input.focus();
   input.select();
 
   async function save() {
-    const val = input.value.trim();
+    let val = input.value.trim();
+    // Для даты конвертируем гггг-мм-дд → дд.мм.гггг (формат бота)
+    if (field === 'plan_delivery_date' && val && val.includes('-') && val.length === 10) {
+      const parts = val.split('-');
+      val = parts[2] + '.' + parts[1] + '.' + parts[0];
+    }
     try {
       const body = {};
       body[field] = val;
@@ -975,7 +993,18 @@ function editCell(el) {
         body: JSON.stringify(body)
       });
       if (resp.ok) {
-        el.innerHTML = val || (field === 'comment' ? '<span style="color:var(--border)">+</span>' : '<span style="color:var(--text-dim)">—</span>');
+        // Для СУР и счёта красим по-своему
+        let displayVal;
+        if (!val) {
+          displayVal = field === 'comment' ? '<span style="color:var(--border)">+</span>' : '<span style="color:var(--text-dim)">—</span>';
+        } else if (field === 'sur_number') {
+          displayVal = `<span style="color:var(--green)">${val}</span>`;
+        } else if (field === 'sima_order_number') {
+          displayVal = `<span style="color:var(--text)">${val}</span>`;
+        } else {
+          displayVal = val;
+        }
+        el.innerHTML = displayVal;
         showToast('✓ Сохранено');
         // Обновляем данные в кэше
         const order = allOrdersCache.find(o => o.posting_number === posting);
@@ -1136,19 +1165,33 @@ function renderOrdersTable(orders, tbodyId, showActions) {
          </td>`
       : `<td>${o.plan_delivery_date || '—'}</td>`;
 
-    // СУР - копируемый + редактируемый через карандаш
-    const surCell = o.sur_number
-      ? `<td class="copy-cell" onclick="copyCell('${o.sur_number}', this)" title="Нажмите чтобы скопировать">
-           <span style="color:var(--green)">${o.sur_number}</span>
+    // СУР - редактируемый для admin, копируемый для остальных
+    const surCell = (userRole === 'admin')
+      ? `<td class="editable-cell" data-field="sur_number" data-posting="${o.posting_number}"
+             onclick="editCell(this)" title="Нажмите для редактирования">
+           ${o.sur_number
+             ? `<span style="color:var(--green)">${o.sur_number}</span>`
+             : '<span style="color:var(--yellow)">нет</span>'}
          </td>`
-      : `<td><span style="color:var(--yellow)">нет</span></td>`;
+      : (o.sur_number
+          ? `<td class="copy-cell" onclick="copyCell('${o.sur_number}', this)" title="Скопировать">
+               <span style="color:var(--green)">${o.sur_number}</span>
+             </td>`
+          : `<td><span style="color:var(--yellow)">нет</span></td>`);
 
-    // Номер счёта (sima_order_number) - копируемый
-    const invoiceCell = o.sima_order_number
-      ? `<td class="copy-cell" onclick="copyCell('${o.sima_order_number}', this)" title="Нажмите чтобы скопировать">
-           <span style="color:var(--text)">${o.sima_order_number}</span>
+    // Номер счёта - редактируемый для admin, копируемый для остальных
+    const invoiceCell = (userRole === 'admin')
+      ? `<td class="editable-cell" data-field="sima_order_number" data-posting="${o.posting_number}"
+             onclick="editCell(this)" title="Нажмите для редактирования">
+           ${o.sima_order_number
+             ? `<span style="color:var(--text)">${o.sima_order_number}</span>`
+             : '<span style="color:var(--border)">+</span>'}
          </td>`
-      : `<td><span style="color:var(--text-dim)">—</span></td>`;
+      : (o.sima_order_number
+          ? `<td class="copy-cell" onclick="copyCell('${o.sima_order_number}', this)" title="Скопировать">
+               <span style="color:var(--text)">${o.sima_order_number}</span>
+             </td>`
+          : `<td><span style="color:var(--text-dim)">—</span></td>`);
 
     // Комментарий - редактируемый для всех
     const commentCell = `<td class="editable-cell comment-cell" data-field="comment" data-posting="${o.posting_number}"
