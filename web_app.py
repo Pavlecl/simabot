@@ -775,14 +775,21 @@ async def sync_products_catalog() -> dict:
         all_items = []
         offset = 0
         limit = 1000
-        while True:
+        # Сначала узнаём total из первого запроса
+        first_data = await fetch_products_prices_offset(0, limit)
+        total_available = first_data.get("total", 0)
+        all_items.extend(first_data.get("items", []))
+        offset = len(all_items)
+        _sync_status["progress"] = f"Цены: {offset}/{total_available}..."
+
+        while offset < total_available:
             data = await fetch_products_prices_offset(offset, limit)
             items = data.get("items", [])
             if not items:
                 break
             all_items.extend(items)
             offset += len(items)
-            _sync_status["progress"] = f"Цены: {offset} товаров..."
+            _sync_status["progress"] = f"Цены: {offset}/{total_available}..."
             if len(items) < limit:
                 break
 
