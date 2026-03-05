@@ -651,7 +651,8 @@
       <span class="toolbar-sep"></span>
       <span class="toolbar-label">Статус:</span>
       <select id="status-filter" onchange="loadOrders(1)">
-        <option value="">Все</option>
+        <option value="active" selected>Активные</option>
+        <option value="">Все статусы</option>
         <option value="awaiting_packaging">Ожидает сборки</option>
         <option value="awaiting_deliver">Готов к отгрузке</option>
         <option value="processing">В обработке</option>

@@ -523,7 +523,7 @@ async def get_orders(
     db: AsyncSession = Depends(get_db),
     page: int = 1,
     per_page: int = 50,
-    status: str = "",
+    status: str = "active",
     search: str = "",
     date_from: str = "",
     date_to: str = "",
@@ -536,7 +536,10 @@ async def get_orders(
     offset = (page - 1) * per_page
     query = select(Order).order_by(Order.added_at.desc())
 
-    if status:
+    ACTIVE_STATUSES = ["awaiting_packaging", "awaiting_deliver"]
+    if status == "active":
+        query = query.where(Order.ozon_status.in_(ACTIVE_STATUSES))
+    elif status:
         query = query.where(Order.ozon_status == status)
     if search:
         # ilike — регистронезависимый LIKE. % — любое количество символов.
@@ -552,7 +555,9 @@ async def get_orders(
 
     # Считаем total с теми же фильтрами
     count_query = select(func.count(Order.posting_number))
-    if status:
+    if status == "active":
+        count_query = count_query.where(Order.ozon_status.in_(ACTIVE_STATUSES))
+    elif status:
         count_query = count_query.where(Order.ozon_status == status)
     if search:
         count_query = count_query.where(
