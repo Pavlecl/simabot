@@ -245,4 +245,26 @@ async function exportExcel() {
 
 // =====================================================================
 
+
+async function syncOzonOrders() {
+  const btn = document.getElementById('orders-sync-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinning">⟳</span> Синхронизация...';
+  try {
+    const result = await fetch('/api/sync', { method: 'POST' }).then(r => r.json());
+    if (result.error) {
+      showToast(`Ошибка: ${result.error}`, 'error');
+    } else {
+      const removedO = result.removed ? `, убрано ${result.removed}` : '';
+      showToast(`✓ Обновлено ${result.synced} заказов${removedO}`);
+      loadOrders(currentPage);
+    }
+  } catch(e) {
+    showToast('Ошибка синхронизации', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⟳ Обновить с Ozon';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => loadOrders(1));
