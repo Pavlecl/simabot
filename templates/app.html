@@ -634,7 +634,7 @@
           <tr>
             <th>Отправление</th><th>Статус</th><th>Принят</th>
             <th>Фото</th><th>Артикул / Товар</th>
-            <th>Заказ Сима</th><th>Поставка (план)</th><th>СУР</th>
+            <th>№ счёта</th><th>Поставка (план)</th><th>СУР</th>
           </tr>
         </thead>
         <tbody id="overdue-body">
@@ -863,31 +863,58 @@ async function loadDashboard() {
       return;
     }
 
+    const STATUS_RU = {
+      'awaiting_packaging': 'Ожидает сборки',
+      'awaiting_deliver': 'Готов к отгрузке',
+      'processing': 'В обработке',
+      'delivered': 'Доставлен',
+      'cancelled': 'Отменён'
+    };
+
+    function fmtDate(s) {
+      if (!s) return '—';
+      // ISO yyyy-mm-dd → дд.мм.гггг
+      if (s.length >= 10 && s[4] === '-') {
+        const p = s.slice(0,10).split('-');
+        return p[2] + '.' + p[1] + '.' + p[0];
+      }
+      return s; // уже в нужном формате
+    }
+
     tbody.innerHTML = stats.overdue_orders.map(o => {
       const firstProduct = (o.products && o.products.length > 0) ? o.products[0] : null;
-      const imageUrl = (firstProduct && typeof firstProduct === 'object') ? firstProduct.image_url : '';
-      const offerId = (firstProduct && typeof firstProduct === 'object') ? firstProduct.offer_id : '';
+      const imageUrl = (firstProduct && typeof firstProduct === 'object') ? (firstProduct.image_url || '') : '';
+      const offerId = (firstProduct && typeof firstProduct === 'object') ? (firstProduct.offer_id || '') : '';
       const productName = (firstProduct && typeof firstProduct === 'object')
-        ? firstProduct.name
+        ? (firstProduct.name || '')
         : (typeof firstProduct === 'string' ? firstProduct : '');
-      const acceptedDate = o.ozon_accepted_at ? o.ozon_accepted_at.slice(0,10) : '—';
+      const acceptedDate = fmtDate(o.ozon_accepted_at);
+      const statusRu = STATUS_RU[o.ozon_status] || o.ozon_status || '—';
 
       return `<tr class="overdue-row">
-        <td class="code" style="white-space:nowrap">${o.posting_number}</td>
-        <td><span class="status ${o.ozon_status}">${o.ozon_status || '—'}</span></td>
+        <td class="copy-cell code" style="white-space:nowrap"
+            onclick="copyCell('${o.posting_number}', this)" title="Скопировать">${o.posting_number}</td>
+        <td><span class="status ${o.ozon_status}">${statusRu}</span></td>
         <td style="white-space:nowrap;color:var(--text-dim)">${acceptedDate}</td>
         <td style="width:52px;padding:6px 8px">
           ${imageUrl
-            ? `<img src="${imageUrl}" style="width:44px;height:44px;object-fit:cover;border:1px solid var(--border)" loading="lazy">`
+            ? `<img src="${imageUrl}" style="width:44px;height:44px;object-fit:cover;border:1px solid var(--border);display:block" loading="lazy" onerror="this.style.display='none'">`
             : '<div style="width:44px;height:44px;background:var(--surface2);border:1px solid var(--border)"></div>'}
         </td>
         <td style="max-width:200px">
-          ${offerId ? `<div class="code" style="font-size:11px">${offerId}</div>` : ''}
+          ${offerId
+            ? `<div class="copy-cell code" style="font-size:11px;display:inline-block"
+                   onclick="copyCell('${offerId}', this)" title="Скопировать">${offerId}</div>`
+            : ''}
           <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${productName || '—'}</div>
         </td>
-        <td>${o.sima_order_number || '<span style="color:var(--text-dim)">—</span>'}</td>
-        <td style="color:var(--red);font-weight:600">${o.plan_delivery_date || '—'}</td>
-        <td><span style="color:var(--yellow)">нет</span></td>
+        <td>${o.sima_order_number
+          ? `<span class="copy-cell" onclick="copyCell('${o.sima_order_number}', this)" title="Скопировать">${o.sima_order_number}</span>`
+          : '<span style="color:var(--text-dim)">—</span>'}</td>
+        <td style="color:var(--red);font-weight:600">${fmtDate(o.plan_delivery_date)}</td>
+        <td>${o.sur_number
+          ? `<span class="copy-cell" style="color:var(--green)" onclick="copyCell('${o.sur_number}', this)" title="Скопировать">${o.sur_number}</span>`
+          : '<span style="color:var(--yellow)">нет</span>'}</td>
       </tr>`;
     }).join('');
 
