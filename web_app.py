@@ -834,7 +834,7 @@ async def sync_products_catalog() -> dict:
             product_id = item.get("product_id")
             price_data = item.get("price", {})
             comm = item.get("commissions", {})
-            idx = item.get("price_indexes", {})
+            idx = item.get("price_indexes") or {}
             info = image_map.get(product_id, {})
 
             # Логистика FBS (берём max)
