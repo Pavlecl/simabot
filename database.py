@@ -65,6 +65,58 @@ class VirtualOrder(Base):
     added_at = Column(DateTime, default=datetime.now)
 
 
+class Product(Base):
+    """
+    Таблица товаров для репрайсера.
+    Хранит себестоимость, правила ценообразования и кэш данных с Ozon.
+    """
+    __tablename__ = "products"
+
+    offer_id = Column(String, primary_key=True)   # Артикул продавца
+    product_id = Column(Integer, nullable=True)   # ID на Ozon
+    name = Column(String, nullable=True)           # Название
+    image_url = Column(String, nullable=True)      # Фото
+
+    # Текущие цены (кэш с Ozon, обновляется при синхронизации)
+    price = Column(Integer, nullable=True)         # Цена продажи
+    old_price = Column(Integer, nullable=True)     # Зачёркнутая цена
+    min_price = Column(Integer, nullable=True)     # Минимальная цена
+    net_price = Column(Integer, nullable=True)     # Чистая выручка (после комиссий)
+    marketing_price = Column(Integer, nullable=True)  # Цена по акции
+
+    # Комиссии FBS (кэш с Ozon)
+    commission_fbs_percent = Column(Integer, nullable=True)   # % комиссии FBS
+    commission_fbs_logistics = Column(Integer, nullable=True) # Логистика FBS (руб)
+
+    # Индексы цен (кэш с Ozon)
+    price_index_color = Column(String, nullable=True)         # RED/YELLOW/GREEN
+    price_index_ozon = Column(String, nullable=True)          # Индекс внутри Ozon
+    price_index_external = Column(String, nullable=True)      # Индекс vs внешние МП
+    competitor_min_price = Column(Integer, nullable=True)     # Мин. цена конкурента
+
+    # Себестоимость и правила (задаёт пользователь)
+    cost_price = Column(Integer, nullable=True)               # Закупочная цена (руб)
+    target_margin_pct = Column(Integer, nullable=True)        # Целевая маржа %
+    auto_reprice_enabled = Column(Boolean, default=False)     # Авто-репрайсинг вкл/выкл
+    auto_rule = Column(String, nullable=True)                 # Правило: "margin" / "competitor"
+    auto_rule_value = Column(Integer, nullable=True)          # Значение правила
+
+    updated_at = Column(DateTime, nullable=True)              # Последнее обновление с Ozon
+
+
+class PriceHistory(Base):
+    """История изменений цены по товару"""
+    __tablename__ = "price_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    offer_id = Column(String, index=True)
+    old_price = Column(Integer)
+    new_price = Column(Integer)
+    reason = Column(String, nullable=True)   # "manual" / "auto_margin" / "auto_competitor"
+    changed_by = Column(String, nullable=True)  # username
+    changed_at = Column(DateTime, default=datetime.now)
+
+
 # --- ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ---
 
 async def init_db():

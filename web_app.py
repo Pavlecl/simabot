@@ -29,7 +29,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from database import AsyncSessionLocal, User, Order, VirtualOrder, init_db
+from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, init_db
 
 # --- КОНФИГУРАЦИЯ ---
 # SECRET_KEY используется для подписи JWT. Если утечёт — злоумышленник сможет
@@ -746,6 +746,362 @@ async def create_fulfillment_user(
     db.add(ff_user)
     await db.commit()
     return {"ok": True, "message": f"Пользователь '{username}' создан"}
+
+
+# =====================================================================
+# РЕПРАЙСЕР — OZON API ФУНКЦИИ
+# =====================================================================
+
+async def fetch_products_prices(last_id: str = "") -> dict:
+    """Получает цены, комиссии и индексы всех товаров через /v5/product/info/prices."""
+    url = "https://api-seller.ozon.ru/v5/product/info/prices"
+    payload = {
+        "filter": {"visibility": "ALL"},
+        "limit": 1000,
+    }
+    if last_id:
+        payload["last_id"] = last_id
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+            if resp.status == 200:
+                return await resp.json()
+    return {}
+
+
+async def sync_products_catalog() -> dict:
+    """
+    Полная синхронизация каталога товаров:
+    - Получает все товары из /v5/product/info/prices (с пагинацией)
+    - Получает фото и названия из /v3/product/info/list
+    - Сохраняет в таблицу products (upsert)
+    """
+    all_items = []
+    last_id = ""
+
+    # Пагинация — получаем все товары
+    while True:
+        data = await fetch_products_prices(last_id)
+        items = data.get("items", [])
+        all_items.extend(items)
+        last_id = data.get("last_id", "")
+        if not last_id or len(items) < 1000:
+            break
+
+    if not all_items:
+        return {"synced": 0, "error": "Нет товаров от Ozon"}
+
+    # Получаем фото и названия по SKU из sources
+    all_skus = []
+    for item in all_items:
+        # product_id используем как SKU для запроса фото
+        pid = item.get("product_id")
+        if pid:
+            all_skus.append(pid)
+
+    # Запрос фото по product_id через /v3/product/info/list
+    image_map = {}  # product_id -> {name, image_url}
+    url_info = "https://api-seller.ozon.ru/v3/product/info/list"
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(all_skus), 100):
+            batch = all_skus[i:i+100]
+            try:
+                async with session.post(
+                    url_info,
+                    json={"product_id": batch},
+                    headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status == 200:
+                        d = await resp.json()
+                        for it in d.get("items", []):
+                            pid = it.get("id")
+                            images = it.get("primary_image") or it.get("images", [])
+                            img = images[0] if isinstance(images, list) and images else (images or "")
+                            image_map[pid] = {
+                                "name": it.get("name", ""),
+                                "image_url": img
+                            }
+            except Exception as e:
+                import logging
+                logging.warning(f"sync_products image fetch error: {e}")
+
+    async with AsyncSessionLocal() as db:
+        for item in all_items:
+            offer_id = item.get("offer_id")
+            if not offer_id:
+                continue
+
+            product_id = item.get("product_id")
+            price_data = item.get("price", {})
+            comm = item.get("commissions", {})
+            idx = item.get("price_indexes", {})
+            info = image_map.get(product_id, {})
+
+            # Логистика FBS (берём max)
+            fbs_logistics = int(
+                float(comm.get("fbs_direct_flow_trans_max_amount", 0) or 0) +
+                float(comm.get("fbs_deliv_to_customer_amount", 0) or 0)
+            )
+
+            # Мин. цена конкурента — берём минимум из внешнего и внутреннего индекса
+            ext_min = idx.get("external_index_data", {}).get("min_price") or 0
+            ozon_min = idx.get("ozon_index_data", {}).get("min_price") or 0
+            competitor_min = int(min(
+                float(ext_min) if ext_min else 999999,
+                float(ozon_min) if ozon_min else 999999
+            ))
+            if competitor_min == 999999:
+                competitor_min = 0
+
+            stmt = pg_insert(Product).values(
+                offer_id=offer_id,
+                product_id=product_id,
+                name=info.get("name") or "",
+                image_url=info.get("image_url") or "",
+                price=int(float(price_data.get("price") or 0)),
+                old_price=int(float(price_data.get("old_price") or 0)),
+                min_price=int(float(price_data.get("min_price") or 0)),
+                net_price=int(float(price_data.get("net_price") or 0)),
+                marketing_price=int(float(price_data.get("marketing_seller_price") or 0)),
+                commission_fbs_percent=int(comm.get("sales_percent_fbs") or 0),
+                commission_fbs_logistics=fbs_logistics,
+                price_index_color=idx.get("color_index") or "",
+                price_index_ozon=str(round(float(idx.get("ozon_index_data", {}).get("price_index_value") or 0), 2)),
+                price_index_external=str(round(float(idx.get("external_index_data", {}).get("price_index_value") or 0), 2)),
+                competitor_min_price=competitor_min,
+                updated_at=datetime.now(),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["offer_id"],
+                set_={
+                    "product_id": product_id,
+                    "name": info.get("name") or "",
+                    "image_url": info.get("image_url") or "",
+                    "price": int(float(price_data.get("price") or 0)),
+                    "old_price": int(float(price_data.get("old_price") or 0)),
+                    "min_price": int(float(price_data.get("min_price") or 0)),
+                    "net_price": int(float(price_data.get("net_price") or 0)),
+                    "marketing_price": int(float(price_data.get("marketing_seller_price") or 0)),
+                    "commission_fbs_percent": int(comm.get("sales_percent_fbs") or 0),
+                    "commission_fbs_logistics": fbs_logistics,
+                    "price_index_color": idx.get("color_index") or "",
+                    "price_index_ozon": str(round(float(idx.get("ozon_index_data", {}).get("price_index_value") or 0), 2)),
+                    "price_index_external": str(round(float(idx.get("external_index_data", {}).get("price_index_value") or 0), 2)),
+                    "competitor_min_price": competitor_min,
+                    "updated_at": datetime.now(),
+                }
+            )
+            await db.execute(stmt)
+
+        await db.commit()
+
+    return {"synced": len(all_items)}
+
+
+@app.post("/api/repricer/sync")
+async def api_repricer_sync(user: dict = Depends(require_admin)):
+    """Синхронизация каталога товаров с Ozon."""
+    result = await sync_products_catalog()
+    return result
+
+
+@app.get("/api/repricer/products")
+async def api_repricer_products(
+    search: str = "",
+    index_filter: str = "",   # RED / YELLOW / GREEN
+    page: int = 1,
+    per_page: int = 50,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Список товаров для репрайсера с фильтрацией."""
+    from sqlalchemy import or_
+
+    query = select(Product)
+    count_q = select(func.count(Product.offer_id))
+
+    if search:
+        like = f"%{search}%"
+        filt = or_(Product.offer_id.ilike(like), Product.name.ilike(like))
+        query = query.where(filt)
+        count_q = count_q.where(filt)
+
+    if index_filter:
+        query = query.where(Product.price_index_color == index_filter.upper())
+        count_q = count_q.where(Product.price_index_color == index_filter.upper())
+
+    query = query.order_by(Product.price_index_color.asc(), Product.offer_id.asc())
+    query = query.limit(per_page).offset((page - 1) * per_page)
+
+    total_r = await db.execute(count_q)
+    total = total_r.scalar()
+    products_r = await db.execute(query)
+    products = products_r.scalars().all()
+
+    def calc_margin(p: Product) -> Optional[float]:
+        if not p.cost_price or not p.price or p.price == 0:
+            return None
+        # Чистая выручка = цена - комиссия% - логистика
+        net = p.price * (1 - (p.commission_fbs_percent or 0) / 100) - (p.commission_fbs_logistics or 0)
+        if net <= 0:
+            return None
+        margin = (net - p.cost_price) / net * 100
+        return round(margin, 1)
+
+    def calc_min_price_for_margin(p: Product, target_pct: int) -> Optional[int]:
+        """Минимальная цена для достижения целевой маржи."""
+        if not p.cost_price:
+            return None
+        # net = price * (1 - comm%) - logistics
+        # margin = (net - cost) / net = target/100
+        # Решаем: price * (1 - comm%) - logistics = cost / (1 - target/100)
+        comm = (p.commission_fbs_percent or 0) / 100
+        logistics = p.commission_fbs_logistics or 0
+        target = target_pct / 100
+        if comm >= 1 or target >= 1:
+            return None
+        needed_net = p.cost_price / (1 - target)
+        price = (needed_net + logistics) / (1 - comm)
+        return int(price) + 1
+
+    return {
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "products": [
+            {
+                "offer_id": p.offer_id,
+                "product_id": p.product_id,
+                "name": p.name,
+                "image_url": p.image_url,
+                "price": p.price,
+                "old_price": p.old_price,
+                "min_price": p.min_price,
+                "net_price": p.net_price,
+                "marketing_price": p.marketing_price,
+                "commission_fbs_percent": p.commission_fbs_percent,
+                "commission_fbs_logistics": p.commission_fbs_logistics,
+                "price_index_color": p.price_index_color,
+                "price_index_ozon": p.price_index_ozon,
+                "competitor_min_price": p.competitor_min_price,
+                "cost_price": p.cost_price,
+                "target_margin_pct": p.target_margin_pct,
+                "auto_reprice_enabled": p.auto_reprice_enabled,
+                "current_margin": calc_margin(p),
+                "suggested_price": calc_min_price_for_margin(p, p.target_margin_pct) if p.target_margin_pct else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in products
+        ]
+    }
+
+
+@app.patch("/api/repricer/products/{offer_id}")
+async def api_update_product(
+    offer_id: str,
+    body: dict,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Обновляет себестоимость, целевую маржу, правило автоприценки."""
+    result = await db.execute(select(Product).where(Product.offer_id == offer_id))
+    product = result.scalars().first()
+
+    if not product:
+        # Создаём запись если нет
+        product = Product(offer_id=offer_id)
+        db.add(product)
+
+    allowed = ["cost_price", "target_margin_pct", "auto_reprice_enabled", "auto_rule", "auto_rule_value", "min_price"]
+    for field in allowed:
+        if field in body:
+            setattr(product, field, body[field])
+
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/repricer/apply-price")
+async def api_apply_price(
+    body: dict,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Применяет новую цену через Ozon API.
+    body: {offer_id, new_price, old_price?, min_price?}
+    """
+    offer_id = body.get("offer_id")
+    new_price = body.get("new_price")
+
+    if not offer_id or not new_price:
+        raise HTTPException(400, "offer_id and new_price required")
+
+    # Получаем текущие данные товара
+    result = await db.execute(select(Product).where(Product.offer_id == offer_id))
+    product = result.scalars().first()
+    old_price_val = product.price if product else 0
+
+    # Применяем через Ozon API
+    url = "https://api-seller.ozon.ru/v1/product/import/prices"
+    payload = {"prices": [{
+        "offer_id": offer_id,
+        "price": str(new_price),
+        "old_price": str(body.get("old_price", 0)),
+        "min_price": str(body.get("min_price", 0)),
+    }]}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+            data = await resp.json()
+            result_item = data.get("result", [{}])[0]
+
+            if result_item.get("updated"):
+                # Обновляем кэш в БД
+                if product:
+                    product.price = new_price
+                    await db.commit()
+
+                # Пишем в историю
+                history = PriceHistory(
+                    offer_id=offer_id,
+                    old_price=old_price_val,
+                    new_price=new_price,
+                    reason=body.get("reason", "manual"),
+                    changed_by=user.get("sub", "unknown"),
+                )
+                db.add(history)
+                await db.commit()
+                return {"ok": True, "updated": True}
+            else:
+                errors = result_item.get("errors", [])
+                return {"ok": False, "errors": errors}
+
+
+@app.get("/api/repricer/history/{offer_id}")
+async def api_price_history(
+    offer_id: str,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """История изменений цены по товару."""
+    result = await db.execute(
+        select(PriceHistory)
+        .where(PriceHistory.offer_id == offer_id)
+        .order_by(PriceHistory.changed_at.desc())
+        .limit(50)
+    )
+    history = result.scalars().all()
+    return {"history": [
+        {
+            "old_price": h.old_price,
+            "new_price": h.new_price,
+            "reason": h.reason,
+            "changed_by": h.changed_by,
+            "changed_at": h.changed_at.isoformat(),
+        }
+        for h in history
+    ]}
 
 
 @app.post("/api/sync")
