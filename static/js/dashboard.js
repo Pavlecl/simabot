@@ -257,3 +257,5 @@ async function syncOzonOrders() {
 }
 
 // =====================================================================
+
+document.addEventListener('DOMContentLoaded', () => loadDashboard());

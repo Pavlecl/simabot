@@ -137,3 +137,5 @@ function showToast(msg, type = '') {
 }
 
 // =====================================================================
+
+document.addEventListener('DOMContentLoaded', () => loadUsers());

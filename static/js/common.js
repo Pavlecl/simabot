@@ -30,11 +30,6 @@ let searchTimer = null;
 let allOrdersCache = []; // кэш для Excel экспорта
 
 
-document.addEventListener('DOMContentLoaded', () => {
-  if (activeTab === 'dashboard') loadDashboard();
-  if (activeTab === 'orders') loadOrders(1);
-  if (activeTab === 'queue') loadQueue();
-  if (activeTab === 'users') loadUsers();
-});
+// Инициализация — в каждом JS файле страницы
 
 // =====================================================================

@@ -62,3 +62,5 @@ async function loadQueue() {
 }
 
 // =====================================================================
+
+document.addEventListener('DOMContentLoaded', () => loadQueue());

@@ -244,3 +244,5 @@ async function exportExcel() {
 }
 
 // =====================================================================
+
+document.addEventListener('DOMContentLoaded', () => loadOrders(1));

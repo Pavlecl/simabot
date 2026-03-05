@@ -293,3 +293,5 @@ window.navigate = function(tab) {
     loadRepricer(1);
   }
 };
+
+document.addEventListener('DOMContentLoaded', () => { loadRepricerFilters(); loadRepricer(1); });
