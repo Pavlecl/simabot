@@ -500,6 +500,33 @@
     letter-spacing: 2px;
   }
 
+  /* ===== SYNC BUTTON ===== */
+  .sync-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    padding: 10px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+  }
+
+  .sync-status {
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    flex: 1;
+  }
+
+  .sync-status .sync-time { color: var(--text); }
+
+  .spinning { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* ===== OVERDUE TABLE ===== */
+  .overdue-row td { background: rgba(245,54,92,0.04); }
+
   .toast {
     position: fixed;
     bottom: 24px; right: 24px;
@@ -544,23 +571,35 @@
 
   {# ===== TAB: DASHBOARD ===== #}
   <div class="tab-panel {{ 'active' if active_tab == 'dashboard' }}" id="tab-dashboard">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-value" id="s-total">—</div><div class="stat-label">Всего заказов</div></div>
-      <div class="stat-card yellow"><div class="stat-value" id="s-packaging">—</div><div class="stat-label">Ждут упаковки</div></div>
-      <div class="stat-card red"><div class="stat-value" id="s-no-sur">—</div><div class="stat-label">Без СУР</div></div>
-      <div class="stat-card"><div class="stat-value" id="s-virtual">—</div><div class="stat-label">Виртуальных</div></div>
-      <div class="stat-card green"><div class="stat-value" id="s-recent">—</div><div class="stat-label">За 7 дней</div></div>
+
+    <div class="sync-bar">
+      <span class="sync-status">Последнее обновление: <span class="sync-time" id="last-sync-time">—</span></span>
+      <button class="btn primary" id="sync-btn" onclick="syncOzon()">⟳ Обновить данные с Ozon</button>
     </div>
+
+    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr)">
+      <div class="stat-card"><div class="stat-value" id="s-total">—</div><div class="stat-label">Активных заказов</div></div>
+      <div class="stat-card yellow"><div class="stat-value" id="s-today">—</div><div class="stat-label">Отправка сегодня</div></div>
+      <div class="stat-card red"><div class="stat-value" id="s-overdue">—</div><div class="stat-label">Просроченных</div></div>
+      <div class="stat-card"><div class="stat-value" id="s-virtual">—</div><div class="stat-label">Ручная сборка</div></div>
+    </div>
+
+    <div class="toolbar" style="flex-shrink:0">
+      <span class="toolbar-label" style="color:var(--red)">⚠ Просроченные заказы</span>
+      <span class="toolbar-label" id="overdue-count" style="margin-left:auto"></span>
+    </div>
+
     <div class="table-container">
       <table>
         <thead>
           <tr>
-            <th>Отправление</th><th>Статус</th><th>Заказ Сима</th>
-            <th>Плановая поставка</th><th>СУР</th><th>Добавлен</th>
+            <th>Отправление</th><th>Статус</th><th>Принят</th>
+            <th>Фото</th><th>Артикул / Товар</th>
+            <th>Заказ Сима</th><th>Поставка (план)</th><th>СУР</th>
           </tr>
         </thead>
-        <tbody id="recent-body">
-          <tr><td colspan="6" class="state-msg">ЗАГРУЗКА...</td></tr>
+        <tbody id="overdue-body">
+          <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
         </tbody>
       </table>
     </div>
@@ -756,18 +795,83 @@ document.addEventListener('DOMContentLoaded', () => {
 // =====================================================================
 async function loadDashboard() {
   try {
-    const [stats, orders] = await Promise.all([
-      fetch('/api/stats').then(r => r.json()),
-      fetch('/api/orders?per_page=20').then(r => r.json())
-    ]);
+    const stats = await fetch('/api/stats').then(r => r.json());
+
     document.getElementById('s-total').textContent = stats.total ?? '—';
-    document.getElementById('s-packaging').textContent = stats.statuses?.awaiting_packaging ?? 0;
-    document.getElementById('s-no-sur').textContent = stats.no_sur ?? '—';
+    document.getElementById('s-today').textContent = stats.today ?? '—';
+    document.getElementById('s-overdue').textContent = stats.overdue ?? '—';
     document.getElementById('s-virtual').textContent = stats.virtual ?? '—';
-    document.getElementById('s-recent').textContent = stats.recent_7d ?? '—';
-    renderOrdersTable(orders.orders, 'recent-body', false);
+
+    if (stats.last_sync) {
+      document.getElementById('last-sync-time').textContent = stats.last_sync;
+    }
+
+    // Таблица просроченных
+    const tbody = document.getElementById('overdue-body');
+    document.getElementById('overdue-count').textContent =
+      stats.overdue_orders?.length ? `${stats.overdue_orders.length} записей` : '';
+
+    if (!stats.overdue_orders || stats.overdue_orders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="state-msg" style="color:var(--green)">✅ ПРОСРОЧЕННЫХ НЕТ</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = stats.overdue_orders.map(o => {
+      const firstProduct = (o.products && o.products.length > 0) ? o.products[0] : null;
+      const imageUrl = (firstProduct && typeof firstProduct === 'object') ? firstProduct.image_url : '';
+      const offerId = (firstProduct && typeof firstProduct === 'object') ? firstProduct.offer_id : '';
+      const productName = (firstProduct && typeof firstProduct === 'object')
+        ? firstProduct.name
+        : (typeof firstProduct === 'string' ? firstProduct : '');
+      const acceptedDate = o.ozon_accepted_at ? o.ozon_accepted_at.slice(0,10) : '—';
+
+      return `<tr class="overdue-row">
+        <td class="code" style="white-space:nowrap">${o.posting_number}</td>
+        <td><span class="status ${o.ozon_status}">${o.ozon_status || '—'}</span></td>
+        <td style="white-space:nowrap;color:var(--text-dim)">${acceptedDate}</td>
+        <td style="width:52px;padding:6px 8px">
+          ${imageUrl
+            ? `<img src="${imageUrl}" style="width:44px;height:44px;object-fit:cover;border:1px solid var(--border)" loading="lazy">`
+            : '<div style="width:44px;height:44px;background:var(--surface2);border:1px solid var(--border)"></div>'}
+        </td>
+        <td style="max-width:200px">
+          ${offerId ? `<div class="code" style="font-size:11px">${offerId}</div>` : ''}
+          <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${productName || '—'}</div>
+        </td>
+        <td>${o.sima_order_number || '<span style="color:var(--text-dim)">—</span>'}</td>
+        <td style="color:var(--red);font-weight:600">${o.plan_delivery_date || '—'}</td>
+        <td><span style="color:var(--yellow)">нет</span></td>
+      </tr>`;
+    }).join('');
+
   } catch(e) {
     showToast('Ошибка загрузки дашборда', 'error');
+  }
+}
+
+async function syncOzon() {
+  const btn = document.getElementById('sync-btn');
+  const timeEl = document.getElementById('last-sync-time');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinning">⟳</span> Синхронизация...';
+  timeEl.textContent = 'получаем данные...';
+
+  try {
+    const result = await fetch('/api/sync', { method: 'POST' }).then(r => r.json());
+    if (result.error) {
+      showToast(`Ошибка: ${result.error}`, 'error');
+    } else {
+      showToast(`✓ Синхронизировано ${result.synced} заказов`);
+      timeEl.textContent = result.last_sync || '—';
+      // Перезагружаем текущую вкладку
+      if (activeTab === 'dashboard') loadDashboard();
+      if (activeTab === 'orders') loadOrders(currentPage);
+    }
+  } catch(e) {
+    showToast('Ошибка синхронизации', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⟳ Обновить данные с Ozon';
   }
 }
 

@@ -14,7 +14,9 @@ FastAPI строится на двух типах маршрутов (routes):
 """
 
 import os
-from datetime import datetime, timedelta
+import json
+import aiohttp
+from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
@@ -23,8 +25,9 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import AsyncSessionLocal, User, Order, VirtualOrder, init_db
 
@@ -42,6 +45,156 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI(title="SimaBot Dashboard")
 templates = Jinja2Templates(directory="templates")
+
+# --- OZON API КОНФИГУРАЦИЯ ---
+OZON_CLIENT_ID = os.getenv("OZON_CLIENT_ID", "")
+OZON_API_KEY = os.getenv("OZON_API_KEY", "")
+try:
+    OZON_WAREHOUSE_ID = int(os.getenv("OZON_WAREHOUSE_ID", "0"))
+except:
+    OZON_WAREHOUSE_ID = 0
+
+OZON_HEADERS = {
+    "Client-Id": OZON_CLIENT_ID,
+    "Api-Key": OZON_API_KEY,
+    "Content-Type": "application/json"
+}
+
+# Храним время последней синхронизации
+_last_sync: Optional[datetime] = None
+
+
+async def fetch_ozon_postings(statuses: list) -> list:
+    """Получает отправления с Ozon по списку статусов."""
+    url = "https://api-seller.ozon.ru/v3/posting/fbs/list"
+    date_to = datetime.now() + timedelta(days=1)
+    date_from = date_to - timedelta(days=60)
+    all_postings = []
+
+    async with aiohttp.ClientSession() as session:
+        for status in statuses:
+            payload = {
+                "dir": "ASC",
+                "filter": {
+                    "status": status,
+                    "warehouse_id": [OZON_WAREHOUSE_ID],
+                    "since": date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "to": date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                },
+                "limit": 1000,
+                "with": {"analytics_data": False, "financial_data": False}
+            }
+            try:
+                async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        all_postings.extend(data.get("result", {}).get("postings", []))
+            except Exception as e:
+                pass
+
+    return all_postings
+
+
+async def fetch_images_for_skus(skus: list) -> dict:
+    """Батч-запрос фото по SKU через /v3/product/info/list."""
+    result = {}
+    url = "https://api-seller.ozon.ru/v3/product/info/list"
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(skus), 100):
+            batch = skus[i:i+100]
+            try:
+                async with session.post(url, json={"sku": batch}, headers=OZON_HEADERS) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for item in data.get("result", {}).get("items", []):
+                            sku = item.get("sku") or item.get("fbs_sku")
+                            images = item.get("primary_image", [])
+                            if sku and images:
+                                result[int(sku)] = images[0] if isinstance(images, list) else images
+            except Exception:
+                pass
+    return result
+
+
+async def sync_from_ozon() -> dict:
+    """
+    Основная функция синхронизации: получает свежие данные с Ozon,
+    обновляет/добавляет заказы в БД, возвращает статистику.
+
+    📚 УРОК: Upsert (INSERT ... ON CONFLICT DO UPDATE)
+    Позволяет одной командой вставить запись или обновить если она уже есть.
+    Это атомарная операция — не нужно делать SELECT перед INSERT.
+    """
+    global _last_sync
+
+    postings = await fetch_ozon_postings(["awaiting_packaging", "awaiting_deliver"])
+
+    if not postings:
+        return {"synced": 0, "error": "Нет данных от Ozon или ошибка API"}
+
+    # Собираем все SKU для батч-запроса фото
+    all_skus = []
+    for p in postings:
+        for prod in p.get("products", []):
+            if prod.get("sku"):
+                all_skus.append(int(prod["sku"]))
+
+    sku_images = {}
+    if all_skus:
+        sku_images = await fetch_images_for_skus(list(set(all_skus)))
+
+    async with AsyncSessionLocal() as db:
+        for p in postings:
+            posting_number = p.get("posting_number")
+            ozon_status = p.get("status", "unknown")
+            shipment_date = p.get("shipment_date")
+            in_process_at = p.get("in_process_at")
+
+            # Парсим даты
+            def parse_dt(s):
+                if not s:
+                    return None
+                try:
+                    return datetime.fromisoformat(s.rstrip("Z").split(".")[0])
+                except:
+                    return None
+
+            # Строим список продуктов с фото
+            products = []
+            for prod in p.get("products", []):
+                sku = int(prod["sku"]) if prod.get("sku") else None
+                products.append({
+                    "offer_id": prod.get("offer_id"),
+                    "sku": sku,
+                    "name": prod.get("name"),
+                    "quantity": prod.get("quantity"),
+                    "price": prod.get("price", "0"),
+                    "image_url": sku_images.get(sku, "") if sku else ""
+                })
+
+            stmt = pg_insert(Order).values(
+                posting_number=posting_number,
+                ozon_status=ozon_status,
+                products_json=json.dumps(products, ensure_ascii=False),
+                ozon_accepted_at=parse_dt(in_process_at),
+                ozon_created_at=parse_dt(shipment_date),
+            )
+            # При конфликте обновляем только данные от Ozon, не трогаем поля фулфилмента
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["posting_number"],
+                set_={
+                    "ozon_status": ozon_status,
+                    "products_json": json.dumps(products, ensure_ascii=False),
+                    "ozon_accepted_at": parse_dt(in_process_at),
+                    "ozon_created_at": parse_dt(shipment_date),
+                }
+            )
+            await db.execute(stmt)
+
+        await db.commit()
+
+    _last_sync = datetime.now()
+    return {"synced": len(postings), "last_sync": _last_sync.strftime("%d.%m.%Y %H:%M")}
 
 
 # --- ЗАВИСИМОСТИ (Dependency Injection) ---
@@ -190,44 +343,77 @@ async def get_stats(
     user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Статистика для дашборда"""
-    # Всего заказов
-    total = await db.execute(select(func.count(Order.posting_number)))
-    total_count = total.scalar()
+    """
+    Статистика для дашборда.
+    Логика:
+    - Всего активных = awaiting_packaging + awaiting_deliver
+    - Отправка сегодня = plan_delivery_date == сегодня И статус активный
+    - Просроченные = plan_delivery_date < сегодня И sur_number пустой И статус активный
+    """
+    today = date.today().isoformat()  # "2026-03-05"
+    active_statuses = ["awaiting_packaging", "awaiting_deliver"]
 
-    # По статусам
-    statuses_q = await db.execute(
-        select(Order.ozon_status, func.count(Order.posting_number))
-        .group_by(Order.ozon_status)
+    # Всего активных заказов
+    total_q = await db.execute(
+        select(func.count(Order.posting_number))
+        .where(Order.ozon_status.in_(active_statuses))
     )
-    statuses = {row[0]: row[1] for row in statuses_q.all()}
+    total_count = total_q.scalar()
 
-    # Виртуальных (ждут ручной сборки)
+    # Отправка сегодня
+    today_q = await db.execute(
+        select(func.count(Order.posting_number))
+        .where(Order.ozon_status.in_(active_statuses))
+        .where(Order.plan_delivery_date == today)
+    )
+    today_count = today_q.scalar()
+
+    # Просроченные: plan_delivery_date < сегодня И СУР не заполнен
+    overdue_q = await db.execute(
+        select(func.count(Order.posting_number))
+        .where(Order.ozon_status.in_(active_statuses))
+        .where(Order.plan_delivery_date < today)
+        .where(Order.plan_delivery_date != None)
+        .where(Order.plan_delivery_date != "")
+        .where(or_(Order.sur_number == None, Order.sur_number == ""))
+    )
+    overdue_count = overdue_q.scalar()
+
+    # Виртуальных (ручная сборка)
     virtual_q = await db.execute(select(func.count(VirtualOrder.posting_number)))
     virtual_count = virtual_q.scalar()
 
-    # Заказов за последние 7 дней
-    week_ago = datetime.now() - timedelta(days=7)
-    recent_q = await db.execute(
-        select(func.count(Order.posting_number))
-        .where(Order.added_at >= week_ago)
+    # Просроченные заказы для таблицы на дашборде
+    overdue_orders_q = await db.execute(
+        select(Order)
+        .where(Order.ozon_status.in_(active_statuses))
+        .where(Order.plan_delivery_date < today)
+        .where(Order.plan_delivery_date != None)
+        .where(Order.plan_delivery_date != "")
+        .where(or_(Order.sur_number == None, Order.sur_number == ""))
+        .order_by(Order.plan_delivery_date.asc())
+        .limit(50)
     )
-    recent_count = recent_q.scalar()
-
-    # Заказы без СУР (не обработаны фулфилментом)
-    no_sur_q = await db.execute(
-        select(func.count(Order.posting_number))
-        .where(Order.sur_number == None)
-        .where(Order.ozon_status.in_(['awaiting_packaging', 'awaiting_deliver', 'processing']))
-    )
-    no_sur_count = no_sur_q.scalar()
+    overdue_orders = overdue_orders_q.scalars().all()
 
     return {
         "total": total_count,
-        "statuses": statuses,
+        "today": today_count,
+        "overdue": overdue_count,
         "virtual": virtual_count,
-        "recent_7d": recent_count,
-        "no_sur": no_sur_count,
+        "last_sync": _last_sync.strftime("%d.%m.%Y %H:%M") if _last_sync else None,
+        "overdue_orders": [
+            {
+                "posting_number": o.posting_number,
+                "ozon_status": o.ozon_status,
+                "plan_delivery_date": o.plan_delivery_date,
+                "sima_order_number": o.sima_order_number,
+                "sur_number": o.sur_number,
+                "ozon_accepted_at": o.ozon_accepted_at.isoformat() if o.ozon_accepted_at else None,
+                "products": json.loads(o.products_json) if o.products_json else [],
+            }
+            for o in overdue_orders
+        ]
     }
 
 
@@ -448,6 +634,24 @@ async def create_fulfillment_user(
     return {"ok": True, "message": f"Пользователь '{username}' создан"}
 
 
+@app.post("/api/sync")
+async def api_sync(user: dict = Depends(require_admin)):
+    """
+    Синхронизация с Ozon API по запросу пользователя.
+    Вызывается кнопкой 'Обновить' на сайте.
+    """
+    result = await sync_from_ozon()
+    return result
+
+
+@app.get("/api/sync/status")
+async def api_sync_status(user: dict = Depends(require_admin)):
+    """Возвращает время последней синхронизации."""
+    return {
+        "last_sync": _last_sync.strftime("%d.%m.%Y %H:%M") if _last_sync else None
+    }
+
+
 @app.get("/users", response_class=HTMLResponse)
 async def users_page(request: Request, user: dict = Depends(require_admin)):
     """Страница управления пользователями — только для admin"""
@@ -491,6 +695,9 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Синхронизируемся с Ozon при старте (в фоне, не блокируем запуск)
+    import asyncio
+    asyncio.create_task(sync_from_ozon())
     yield
 
 app.router.lifespan_context = lifespan
