@@ -23,13 +23,14 @@ from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, init_db
+from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, init_db
 
 # --- КОНФИГУРАЦИЯ ---
 # SECRET_KEY используется для подписи JWT. Если утечёт — злоумышленник сможет
@@ -45,6 +46,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 app = FastAPI(title="SimaBot Dashboard")
 templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- OZON API КОНФИГУРАЦИЯ ---
 OZON_CLIENT_ID = os.getenv("OZON_CLIENT_ID", "")
@@ -360,7 +362,7 @@ async def logout():
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, user: dict = Depends(require_admin)):
     """Главная страница — дашборд для администратора"""
-    return templates.TemplateResponse("app.html", {
+    return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "user": user,
         "active_tab": "dashboard"
@@ -369,7 +371,7 @@ async def dashboard(request: Request, user: dict = Depends(require_admin)):
 
 @app.get("/orders", response_class=HTMLResponse)
 async def orders_page(request: Request, user: dict = Depends(require_admin)):
-    return templates.TemplateResponse("app.html", {
+    return templates.TemplateResponse("orders.html", {
         "request": request,
         "user": user,
         "active_tab": "orders"
@@ -379,7 +381,7 @@ async def orders_page(request: Request, user: dict = Depends(require_admin)):
 @app.get("/queue", response_class=HTMLResponse)
 async def queue_page(request: Request, user: dict = Depends(require_any_role)):
     """Очередь на сборку — доступна и фулфилменту, и администратору"""
-    return templates.TemplateResponse("app.html", {
+    return templates.TemplateResponse("queue.html", {
         "request": request,
         "user": user,
         "active_tab": "queue"
@@ -1168,6 +1170,155 @@ async def api_price_history(
     ]}
 
 
+
+# =====================================================================
+# СЕБЕСТОИМОСТЬ
+# =====================================================================
+
+@app.get("/costs", response_class=HTMLResponse)
+async def costs_page(request: Request, user: dict = Depends(require_admin)):
+    return templates.TemplateResponse("costs.html", {
+        "request": request,
+        "user": user,
+        "active_tab": "costs"
+    })
+
+
+@app.get("/api/costs/products")
+async def api_costs_products(
+    search: str = "",
+    brand: str = "",
+    page: int = 1,
+    per_page: int = 100,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Список товаров с себестоимостью."""
+    from sqlalchemy import or_
+
+    query = select(Product)
+    count_q = select(func.count(Product.offer_id))
+
+    filters = []
+    if search:
+        like = f"%{search}%"
+        filters.append(or_(Product.offer_id.ilike(like), Product.name.ilike(like)))
+    if brand:
+        filters.append(Product.brand == brand)
+
+    for f in filters:
+        query = query.where(f)
+        count_q = count_q.where(f)
+
+    query = query.order_by(Product.offer_id.asc())
+    query = query.limit(per_page).offset((page - 1) * per_page)
+
+    total_r = await db.execute(count_q)
+    total = total_r.scalar()
+    products_r = await db.execute(query)
+    products = products_r.scalars().all()
+
+    def calc_margin(p):
+        if not p.cost_price or not p.price or p.price == 0:
+            return None
+        net = p.price * (1 - (p.commission_fbs_percent or 0) / 100) - (p.commission_fbs_logistics or 0)
+        if net <= 0:
+            return None
+        return round((net - p.cost_price) / net * 100, 1)
+
+    return {
+        "total": total,
+        "products": [
+            {
+                "offer_id": p.offer_id,
+                "name": p.name,
+                "brand": p.brand,
+                "image_url": p.image_url,
+                "cost_price": p.cost_price,
+                "cost_updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                "price": p.price,
+                "net_price": p.net_price,
+                "margin": calc_margin(p),
+            }
+            for p in products
+        ]
+    }
+
+
+@app.post("/api/costs/upload")
+async def api_costs_upload(
+    body: dict,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Массовое обновление себестоимости из Excel.
+    body: {items: [{offer_id, cost_price}]}
+    """
+    items = body.get("items", [])
+    if not items:
+        raise HTTPException(400, "No items")
+
+    updated = 0
+    for item in items:
+        offer_id = item.get("offer_id")
+        cost_price = item.get("cost_price")
+        if not offer_id or not cost_price:
+            continue
+
+        # Получаем текущую себестоимость для истории
+        result = await db.execute(select(Product).where(Product.offer_id == offer_id))
+        product = result.scalars().first()
+
+        if product:
+            old_cost = product.cost_price
+            if old_cost != cost_price:
+                # Пишем в историю
+                history = CostHistory(
+                    offer_id=offer_id,
+                    old_cost=old_cost,
+                    new_cost=cost_price,
+                    source="excel_upload",
+                    changed_by=user.get("sub", "unknown"),
+                )
+                db.add(history)
+            product.cost_price = cost_price
+            updated += 1
+        else:
+            # Создаём минимальную запись если товар ещё не синхронизирован
+            product = Product(offer_id=offer_id, cost_price=cost_price)
+            db.add(product)
+            updated += 1
+
+    await db.commit()
+    return {"updated": updated}
+
+
+@app.get("/api/costs/history/{offer_id}")
+async def api_cost_history(
+    offer_id: str,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """История изменений себестоимости."""
+    result = await db.execute(
+        select(CostHistory)
+        .where(CostHistory.offer_id == offer_id)
+        .order_by(CostHistory.changed_at.desc())
+        .limit(50)
+    )
+    history = result.scalars().all()
+    return {"history": [
+        {
+            "old_cost": h.old_cost,
+            "new_cost": h.new_cost,
+            "source": h.source,
+            "changed_by": h.changed_by,
+            "changed_at": h.changed_at.isoformat(),
+        }
+        for h in history
+    ]}
+
 @app.post("/api/sync")
 async def api_sync(user: dict = Depends(require_admin)):
     """
@@ -1189,7 +1340,7 @@ async def api_sync_status(user: dict = Depends(require_admin)):
 @app.get("/users", response_class=HTMLResponse)
 async def users_page(request: Request, user: dict = Depends(require_admin)):
     """Страница управления пользователями — только для admin"""
-    return templates.TemplateResponse("app.html", {
+    return templates.TemplateResponse("users.html", {
         "request": request,
         "user": user,
         "active_tab": "users"
@@ -1198,7 +1349,7 @@ async def users_page(request: Request, user: dict = Depends(require_admin)):
 
 @app.get("/repricer", response_class=HTMLResponse)
 async def repricer_page(request: Request, user: dict = Depends(require_admin)):
-    return templates.TemplateResponse("app.html", {
+    return templates.TemplateResponse("repricer.html", {
         "request": request,
         "user": user,
         "active_tab": "repricer"

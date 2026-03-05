@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="tab-panel {{ 'active' if active_tab == 'orders' }}" id="tab-orders">
+    <div class="toolbar">
+      <button class="btn primary" id="orders-sync-btn" onclick="syncOzonOrders()">⟳ Обновить с Ozon</button>
+      <span class="toolbar-sep"></span>
+      <span class="toolbar-label">Статус:</span>
+      <select id="status-filter" onchange="loadOrders(1)">
+        <option value="active" selected>Активные</option>
+        <option value="">Все статусы</option>
+        <option value="awaiting_packaging">Ожидает сборки</option>
+        <option value="awaiting_deliver">Готов к отгрузке</option>
+        <option value="processing">В обработке</option>
+        <option value="delivered">Доставлен</option>
+        <option value="cancelled">Отменён</option>
+      </select>
+
+      <div class="toolbar-sep"></div>
+
+      <span class="toolbar-label">Поставка:</span>
+      <input type="date" class="date-input" id="date-from" onchange="loadOrders(1)" title="От">
+      <span class="toolbar-label">—</span>
+      <input type="date" class="date-input" id="date-to" onchange="loadOrders(1)" title="До">
+
+      <div class="toolbar-sep"></div>
+
+      <input type="text" class="search-input" id="search-input"
+        placeholder="Поиск: номер / артикул..."
+        oninput="debounceSearch()"
+        title="Поиск по номеру отправления или артикулу товара">
+
+      <div class="toolbar-sep"></div>
+
+      <button class="btn" onclick="clearFilters()">Сбросить</button>
+      <button class="btn success" onclick="exportExcel()" title="Экспорт текущего фильтра в Excel">↓ Excel</button>
+      <span class="toolbar-label" id="orders-count" style="margin-left:auto"></span>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Отправление</th>
+            <th>Статус</th>
+            <th style="cursor:pointer;user-select:none" onclick="sortByAccepted()">Принят <span id="sort-icon">↑</span></th>
+            <th>Фото</th>
+            <th>Артикул / Товар</th>
+            <th>Поставка (план)</th>
+            <th>СУР</th>
+            <th>№ счёта</th>
+            <th>Комментарий</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="orders-body">
+          <tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <button class="btn" id="prev-btn" onclick="loadOrders(currentPage - 1)">← Назад</button>
+      <span class="page-info" id="page-info"></span>
+      <button class="btn" id="next-btn" onclick="loadOrders(currentPage + 1)">Вперёд →</button>
+    </div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+const activeTab = 'orders';
+const userRole = '{{ user.role }}';
+</script>
+<script src="/static/js/orders.js"></script>
+{% endblock %}

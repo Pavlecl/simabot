@@ -110,6 +110,19 @@ class Product(Base):
     updated_at = Column(DateTime, nullable=True)              # Последнее обновление с Ozon
 
 
+class CostHistory(Base):
+    """История изменений себестоимости."""
+    __tablename__ = "cost_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    offer_id = Column(String, index=True)
+    old_cost = Column(Integer, nullable=True)
+    new_cost = Column(Integer)
+    source = Column(String, nullable=True)    # "excel_upload" / "sima_cart" / "manual"
+    changed_by = Column(String, nullable=True)
+    changed_at = Column(DateTime, default=datetime.now)
+
+
 class PriceHistory(Base):
     """История изменений цены по товару"""
     __tablename__ = "price_history"

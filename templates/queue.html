@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="tab-panel {{ 'active' if active_tab == 'queue' }}" id="tab-queue">
+    <div class="toolbar">
+      <span class="toolbar-label">Очередь ручной сборки</span>
+      <button class="btn" onclick="loadQueue()" style="margin-left:auto">Обновить</button>
+      <span class="toolbar-label" id="queue-count"></span>
+    </div>
+    <div class="queue-grid" id="queue-grid">
+      <div class="state-msg">ЗАГРУЗКА...</div>
+    </div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+const activeTab = 'queue';
+const userRole = '{{ user.role }}';
+</script>
+<script src="/static/js/queue.js"></script>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="tab-panel {{ 'active' if active_tab == 'repricer' }}" id="tab-repricer">
+
+    <div class="toolbar" style="flex-wrap:wrap;gap:6px">
+      <button class="btn primary" id="repricer-sync-btn" onclick="syncRepricer()">⟳ Загрузить с Ozon</button>
+      <span class="toolbar-sep"></span>
+      <input type="text" id="repricer-search" class="search-input" placeholder="Артикул / название..." oninput="debounceRepricer()" style="width:200px">
+      <select id="repricer-index-filter" onchange="loadRepricer(1)">
+        <option value="">Все индексы</option>
+        <option value="RED">🔴 Красный</option>
+        <option value="YELLOW">🟡 Жёлтый</option>
+        <option value="GREEN">🟢 Зелёный</option>
+      </select>
+      <select id="repricer-brand-filter" onchange="loadRepricer(1)">
+        <option value="">Все бренды</option>
+      </select>
+      <select id="repricer-category-filter" onchange="loadRepricer(1)">
+        <option value="">Все категории</option>
+      </select>
+      <select id="repricer-warehouse-filter" onchange="loadRepricer(1)">
+        <option value="">Все склады</option>
+      </select>
+      <span id="repricer-count" class="toolbar-label" style="margin-left:auto"></span>
+    </div>
+
+    <div class="table-container">
+      <table id="repricer-table">
+        <thead>
+          <tr>
+            <th>Фото</th>
+            <th>Артикул / Название</th>
+            <th>Цена</th>
+            <th>Мин. цена</th>
+            <th>Комиссия FBS</th>
+            <th>Чистая выр.</th>
+            <th>Себест.</th>
+            <th>Маржа</th>
+            <th>Цель. маржа</th>
+            <th>Предл. цена</th>
+            <th>Индекс</th>
+            <th>Конкурент</th>
+            <th>Действие</th>
+          </tr>
+        </thead>
+        <tbody id="repricer-body">
+          <tr><td colspan="13" class="state-msg">Нажмите "Загрузить товары с Ozon"</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="repricer-pagination" class="pagination"></div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+const activeTab = 'repricer';
+const userRole = '{{ user.role }}';
+</script>
+<script src="/static/js/repricer.js"></script>
+{% endblock %}

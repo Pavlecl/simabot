@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="tab-panel active" id="tab-costs">
+
+    <div class="toolbar" style="flex-wrap:wrap;gap:6px">
+      <button class="btn primary" onclick="openCostUploadModal()">↑ Загрузить из Excel</button>
+      <button class="btn" onclick="exportCostTemplate()">↓ Скачать шаблон</button>
+      <span class="toolbar-sep"></span>
+      <input type="text" id="cost-search" class="search-input" placeholder="Артикул / название..." oninput="debounceCosts()" style="width:220px">
+      <select id="cost-brand-filter" onchange="loadCosts(1)">
+        <option value="">Все бренды</option>
+      </select>
+      <span id="cost-count" class="toolbar-label" style="margin-left:auto"></span>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Фото</th>
+            <th>Артикул</th>
+            <th>Название</th>
+            <th>Бренд</th>
+            <th>Себест. текущая</th>
+            <th>Обновлена</th>
+            <th>Цена Ozon</th>
+            <th>Чистая выр.</th>
+            <th>Маржа %</th>
+          </tr>
+        </thead>
+        <tbody id="costs-body">
+          <tr><td colspan="9" class="state-msg">Загрузка...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="costs-pagination" class="pagination"></div>
+  </div>
+
+  {# Modal: загрузка Excel #}
+  <div id="cost-upload-modal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="closeCostModal()"></div>
+    <div class="modal-box" style="max-width:520px">
+      <div class="modal-header">
+        <span>Загрузка себестоимости из Excel</span>
+        <button class="modal-close" onclick="closeCostModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--text-dim);margin-bottom:12px">
+          Файл должен содержать колонки: <strong>Артикул</strong> и <strong>Себестоимость</strong>.<br>
+          Также принимается выгрузка корзины Сима-Ленд (колонки: <em>Код</em> и <em>Цена</em>).
+        </p>
+        <div id="cost-drop-zone" style="
+          border: 2px dashed var(--border); border-radius:6px; padding:32px;
+          text-align:center; cursor:pointer; color:var(--text-dim);
+          transition: border-color 0.2s, background 0.2s"
+          onclick="document.getElementById('cost-file-input').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+          ondragleave="this.style.borderColor='var(--border)'"
+          ondrop="handleCostDrop(event)">
+          <div style="font-size:32px;margin-bottom:8px">📂</div>
+          <div>Нажмите или перетащите .xlsx файл</div>
+        </div>
+        <input type="file" id="cost-file-input" accept=".xlsx,.xls" style="display:none" onchange="handleCostFile(this.files[0])">
+        <div id="cost-upload-preview" style="margin-top:16px;display:none">
+          <div id="cost-upload-info" style="color:var(--text-dim);margin-bottom:8px"></div>
+          <div style="max-height:200px;overflow-y:auto">
+            <table style="width:100%">
+              <thead><tr><th>Артикул</th><th>Себестоимость</th></tr></thead>
+              <tbody id="cost-preview-body"></tbody>
+            </table>
+          </div>
+          <button class="btn primary" style="margin-top:12px;width:100%" onclick="submitCostUpload()">
+            Загрузить и обновить
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Modal: история себестоимости #}
+  <div id="cost-history-modal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="closeCostHistoryModal()"></div>
+    <div class="modal-box" style="max-width:480px">
+      <div class="modal-header">
+        <span id="cost-history-title">История себестоимости</span>
+        <button class="modal-close" onclick="closeCostHistoryModal()">✕</button>
+      </div>
+      <div class="modal-body" id="cost-history-body" style="max-height:400px;overflow-y:auto"></div>
+    </div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+const activeTab = 'costs';
+const userRole = '{{ user.role }}';
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/static/js/costs.js"></script>
+{% endblock %}

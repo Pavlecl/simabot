@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIMA.CTRL</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">SIMA<span>.</span>CTRL</div>
+  <nav>
+    {% if user.role == 'admin' %}
+    <a href="/" class="{{ 'active' if active_tab == 'dashboard' }}">Дашборд</a>
+    <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
+    {% endif %}
+    <a href="/queue" class="{{ 'active' if active_tab == 'queue' }}">Очередь сборки</a>
+    {% if user.role == 'admin' %}
+    <a href="/users" class="{{ 'active' if active_tab == 'users' }}">Пользователи</a>
+    <a href="/repricer" class="{{ 'active' if active_tab == 'repricer' }}">Репрайсер</a>
+    <a href="/costs" class="{{ 'active' if active_tab == 'costs' }}">Себестоимость</a>
+    {% endif %}
+  </nav>
+  <div class="header-right">
+    <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему" id="theme-btn">☀️</button>
+    <span>{{ user.username }}</span>
+    <span class="role-badge">{{ user.role }}</span>
+    <a href="/logout" class="logout-link">Выйти →</a>
+  </div>
+</header>
+
+<main>
+  {% block content %}{% endblock %}
+
+{# ===== MODAL: ИСТОРИЯ ЦЕН ===== #}
+  <div id="history-modal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="closeHistoryModal()"></div>
+    <div class="modal-box" style="max-width:500px">
+      <div class="modal-header">
+        <span id="history-modal-title">История цен</span>
+        <button class="modal-close" onclick="closeHistoryModal()">✕</button>
+      </div>
+      <div class="modal-body" id="history-modal-body" style="max-height:400px;overflow-y:auto">
+        <div class="state-msg">Загрузка...</div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== TAB: USERS ===== #}
+  <div class="tab-panel {{ 'active' if active_tab == 'users' }}" id="tab-users">
+    <div class="users-grid">
+      <div>
+        <div class="users-list">
+          <div class="users-list-header">Пользователи системы</div>
+          <div id="users-list-body">
+            <div class="state-msg">ЗАГРУЗКА...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="create-user-form">
+        <div class="create-user-form-header">Создать пользователя</div>
+        <div class="create-user-form-body">
+          <div class="field-group">
+            <label>Логин</label>
+            <input type="text" id="new-username" placeholder="например: ff_operator">
+          </div>
+          <div class="field-group">
+            <label>Пароль</label>
+            <input type="text" id="new-password" placeholder="минимум 6 символов">
+          </div>
+          <div class="field-group">
+            <label>Роль</label>
+            <select id="new-role">
+              <option value="fulfillment">Fulfillment (сборка)</option>
+              <option value="admin">Admin (полный доступ)</option>
+            </select>
+          </div>
+          <button class="btn primary" onclick="createUser()">Создать пользователя</button>
+          <div id="create-user-msg" style="font-size:11px; min-height:16px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/static/js/common.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

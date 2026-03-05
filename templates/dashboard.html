@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="tab-panel {{ 'active' if active_tab == 'dashboard' }}" id="tab-dashboard">
+
+    <div class="sync-bar">
+      <span class="sync-status">Последнее обновление: <span class="sync-time" id="last-sync-time">—</span></span>
+      <button class="btn primary" id="sync-btn" onclick="syncOzon()">⟳ Обновить данные с Ozon</button>
+    </div>
+
+    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr)">
+      <div class="stat-card"><div class="stat-value" id="s-total">—</div><div class="stat-label">Активных заказов</div></div>
+      <div class="stat-card yellow"><div class="stat-value" id="s-today">—</div><div class="stat-label">Отправка сегодня</div></div>
+      <div class="stat-card red"><div class="stat-value" id="s-overdue">—</div><div class="stat-label">Просроченных</div></div>
+      <div class="stat-card"><div class="stat-value" id="s-virtual">—</div><div class="stat-label">Ручная сборка</div></div>
+    </div>
+
+    <div class="toolbar" style="flex-shrink:0">
+      <span class="toolbar-label" style="color:var(--red)">⚠ Просроченные заказы</span>
+      <span class="toolbar-label" id="overdue-count" style="margin-left:auto"></span>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Отправление</th><th>Статус</th><th>Принят</th>
+            <th>Фото</th><th>Артикул / Товар</th>
+            <th>№ счёта</th><th>Поставка (план)</th><th>СУР</th>
+          </tr>
+        </thead>
+        <tbody id="overdue-body">
+          <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+{% block scripts %}
+<script>
+const activeTab = 'dashboard';
+const userRole = '{{ user.role }}';
+</script>
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}
