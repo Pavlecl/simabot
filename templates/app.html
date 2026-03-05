@@ -726,17 +726,24 @@
   {# ===== TAB: REPRICER ===== #}
   <div class="tab-panel {{ 'active' if active_tab == 'repricer' }}" id="tab-repricer">
 
-    <div class="toolbar">
-      <button class="btn primary" id="repricer-sync-btn" onclick="syncRepricer()">⟳ Загрузить товары с Ozon</button>
+    <div class="toolbar" style="flex-wrap:wrap;gap:6px">
+      <button class="btn primary" id="repricer-sync-btn" onclick="syncRepricer()">⟳ Загрузить с Ozon</button>
       <span class="toolbar-sep"></span>
-      <input type="text" id="repricer-search" class="search-input" placeholder="Поиск по артикулу / названию..." oninput="loadRepricer(1)" style="width:260px">
-      <span class="toolbar-sep"></span>
-      <span class="toolbar-label">Индекс:</span>
+      <input type="text" id="repricer-search" class="search-input" placeholder="Артикул / название..." oninput="debounceRepricer()" style="width:200px">
       <select id="repricer-index-filter" onchange="loadRepricer(1)">
-        <option value="">Все</option>
+        <option value="">Все индексы</option>
         <option value="RED">🔴 Красный</option>
         <option value="YELLOW">🟡 Жёлтый</option>
         <option value="GREEN">🟢 Зелёный</option>
+      </select>
+      <select id="repricer-brand-filter" onchange="loadRepricer(1)">
+        <option value="">Все бренды</option>
+      </select>
+      <select id="repricer-category-filter" onchange="loadRepricer(1)">
+        <option value="">Все категории</option>
+      </select>
+      <select id="repricer-warehouse-filter" onchange="loadRepricer(1)">
+        <option value="">Все склады</option>
       </select>
       <span id="repricer-count" class="toolbar-label" style="margin-left:auto"></span>
     </div>
@@ -1612,6 +1619,38 @@ function showToast(msg, type = '') {
 // =====================================================================
 let repricerPage = 1;
 
+let repricerSearchTimer = null;
+function debounceRepricer() {
+  clearTimeout(repricerSearchTimer);
+  repricerSearchTimer = setTimeout(() => loadRepricer(1), 400);
+}
+
+async function loadRepricerFilters() {
+  try {
+    const r = await fetch('/api/repricer/filters').then(r=>r.json());
+
+    const brandSel = document.getElementById('repricer-brand-filter');
+    const catSel = document.getElementById('repricer-category-filter');
+    const whSel = document.getElementById('repricer-warehouse-filter');
+
+    (r.brands||[]).forEach(b => {
+      const o = document.createElement('option');
+      o.value = b; o.textContent = b;
+      brandSel.appendChild(o);
+    });
+    (r.categories||[]).forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = c.name;
+      catSel.appendChild(o);
+    });
+    (r.warehouses||[]).forEach(w => {
+      const o = document.createElement('option');
+      o.value = w; o.textContent = w.toUpperCase();
+      whSel.appendChild(o);
+    });
+  } catch(e) {}
+}
+
 async function syncRepricer() {
   const btn = document.getElementById('repricer-sync-btn');
   btn.disabled = true;
@@ -1628,14 +1667,18 @@ async function loadRepricer(page=1) {
   repricerPage = page;
   const search = document.getElementById('repricer-search')?.value || '';
   const idx = document.getElementById('repricer-index-filter')?.value || '';
+  const brand = document.getElementById('repricer-brand-filter')?.value || '';
+  const category = document.getElementById('repricer-category-filter')?.value || '';
+  const warehouse = document.getElementById('repricer-warehouse-filter')?.value || '';
   const tbody = document.getElementById('repricer-body');
   tbody.innerHTML = '<tr><td colspan="13" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
   try {
-    const r = await fetch(`/api/repricer/products?page=${page}&per_page=50&search=${encodeURIComponent(search)}&index_filter=${idx}`).then(r=>r.json());
+    const params = new URLSearchParams({page, per_page: 100, search, index_filter: idx, brand, category_id: category, warehouse});
+    const r = await fetch(`/api/repricer/products?${params}`).then(r=>r.json());
     document.getElementById('repricer-count').textContent = r.total ? `${r.total} товаров` : '';
     renderRepricer(r.products || []);
-    renderRepricerPagination(r.total, page, 50);
+    renderRepricerPagination(r.total, page, 100);
   } catch(e) {
     tbody.innerHTML = '<tr><td colspan="13" class="state-msg error">ОШИБКА ЗАГРУЗКИ</td></tr>';
   }
@@ -1825,7 +1868,10 @@ function closeHistoryModal() {
 const origNavigate = window.navigate;
 window.navigate = function(tab) {
   origNavigate(tab);
-  if (tab === 'repricer') loadRepricer(1);
+  if (tab === 'repricer') {
+    loadRepricerFilters();
+    loadRepricer(1);
+  }
 };
 </script>
 </body>

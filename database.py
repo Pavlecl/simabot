@@ -101,6 +101,12 @@ class Product(Base):
     auto_rule = Column(String, nullable=True)                 # Правило: "margin" / "competitor"
     auto_rule_value = Column(Integer, nullable=True)          # Значение правила
 
+    # Категория, бренд, склад (из Ozon)
+    brand = Column(String, nullable=True)                     # Бренд (attribute_id=85)
+    category_id = Column(BigInteger, nullable=True)           # ID категории Ozon
+    category_name = Column(String, nullable=True)             # Название категории
+    warehouse_type = Column(String, nullable=True)            # fbs/fbo/sds
+
     updated_at = Column(DateTime, nullable=True)              # Последнее обновление с Ozon
 
 
