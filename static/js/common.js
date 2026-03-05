@@ -29,8 +29,6 @@ let editingPosting = null;
 let searchTimer = null;
 let allOrdersCache = []; // кэш для Excel экспорта
 
-const activeTab = '{{ active_tab }}';
-const userRole = '{{ user.role }}';
 
 document.addEventListener('DOMContentLoaded', () => {
   if (activeTab === 'dashboard') loadDashboard();
