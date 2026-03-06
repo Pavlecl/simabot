@@ -818,6 +818,24 @@ async def sync_products_catalog() -> dict:
         offer_ids = [item["offer_id"] for item in all_items if item.get("offer_id")]
 
         # ШАГ 2: Фото, название, категория, склад
+        warehouse_name_map = {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                        "https://api-seller.ozon.ru/v1/warehouse/list",
+                        json={},
+                        headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status == 200:
+                        wh_data = await resp.json()
+                        for wh in wh_data.get("result", []):
+                            wh_id = wh.get("warehouse_id")
+                            wh_name = wh.get("name", "")
+                            if wh_id and wh_name:
+                                warehouse_name_map[wh_id] = wh_name
+        except Exception as e:
+            import logging
+            logging.warning(f"warehouse list error: {e}")
         _sync_status["progress"] = f"Загружаем инфо о товарах..."
         info_map = {}
         url_info = "https://api-seller.ozon.ru/v3/product/info/list"
@@ -833,7 +851,13 @@ async def sync_products_catalog() -> dict:
                                 images = it.get("primary_image") or it.get("images", [])
                                 img = images[0] if isinstance(images, list) and images else (images or "")
                                 sources = it.get("sources", [])
-                                warehouse = ",".join(sorted(set(s.get("source","") for s in sources if s.get("source"))))
+                                warehouse_names = []
+                                for s in sources:
+                                    wh_id = s.get("warehouse_id")
+                                    wh_name = warehouse_name_map.get(wh_id, s.get("source", ""))
+                                    if wh_name and wh_name not in warehouse_names:
+                                        warehouse_names.append(wh_name)
+                                warehouse = ", ".join(warehouse_names)
                                 info_map[pid] = {
                                     "name": it.get("name", ""),
                                     "image_url": img,
