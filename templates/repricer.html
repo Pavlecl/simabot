@@ -1,57 +1,111 @@
 {% extends "base.html" %}
 {% block content %}
-  <div class="tab-panel {{ 'active' if active_tab == 'repricer' }}" id="tab-repricer">
+<div class="tab-panel {{ 'active' if active_tab == 'repricer' }}" id="tab-repricer">
 
-    <div class="toolbar" style="flex-wrap:wrap;gap:6px">
-      <button class="btn primary" id="repricer-sync-btn" onclick="syncRepricer()">⟳ Загрузить с Ozon</button>
-      <span class="toolbar-sep"></span>
-      <input type="text" id="repricer-search" class="search-input" placeholder="Артикул / название..." oninput="debounceRepricer()" style="width:200px">
-      <select id="repricer-index-filter" onchange="loadRepricer(1)">
-        <option value="">Все индексы</option>
-        <option value="RED">🔴 Красный</option>
-        <option value="YELLOW">🟡 Жёлтый</option>
-        <option value="GREEN">🟢 Зелёный</option>
-      </select>
-      <select id="repricer-brand-filter" onchange="loadRepricer(1)">
-        <option value="">Все бренды</option>
-      </select>
-      <select id="repricer-category-filter" onchange="loadRepricer(1)">
-        <option value="">Все категории</option>
-      </select>
-      <select id="repricer-warehouse-filter" onchange="loadRepricer(1)">
-        <option value="">Все склады</option>
-      </select>
-      <span id="repricer-count" class="toolbar-label" style="margin-left:auto"></span>
-    </div>
-
-    <div class="table-container">
-      <table id="repricer-table">
-        <thead>
-          <tr>
-            <th>Фото</th>
-            <th>Артикул / Название</th>
-            <th>Цена</th>
-            <th>Мин. цена</th>
-            <th>Комиссия FBS</th>
-            <th>Чистая выр.</th>
-            <th>Себест.</th>
-            <th>Маржа</th>
-            <th>Цель. маржа</th>
-            <th>Предл. цена</th>
-            <th>Индекс</th>
-            <th>Конкурент</th>
-            <th>Действие</th>
-          </tr>
-        </thead>
-        <tbody id="repricer-body">
-          <tr><td colspan="13" class="state-msg">Нажмите "Загрузить товары с Ozon"</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div id="repricer-pagination" class="pagination"></div>
+  {# ── Тулбар фильтров ── #}
+  <div class="toolbar" style="flex-wrap:wrap;gap:6px">
+    <button class="btn primary" id="repricer-sync-btn" onclick="syncRepricer()">⟳ Загрузить с Ozon</button>
+    <span class="toolbar-sep"></span>
+    <input type="text" id="repricer-search" class="search-input"
+           placeholder="Артикул / название..." oninput="debounceRepricer()" style="width:200px">
+    <select id="repricer-index-filter" onchange="loadRepricer(1)">
+      <option value="">Все индексы</option>
+      <option value="RED">🔴 Красный</option>
+      <option value="YELLOW">🟡 Жёлтый</option>
+      <option value="GREEN">🟢 Зелёный</option>
+    </select>
+    <select id="repricer-brand-filter" onchange="loadRepricer(1)">
+      <option value="">Все бренды</option>
+    </select>
+    <select id="repricer-category-filter" onchange="loadRepricer(1)">
+      <option value="">Все категории</option>
+    </select>
+    <select id="repricer-warehouse-filter" onchange="loadRepricer(1)">
+      <option value="">Все склады</option>
+    </select>
+    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-dim);cursor:pointer;white-space:nowrap">
+      <input type="checkbox" id="repricer-demand-filter" onchange="loadRepricer(1)">
+      Только demand
+    </label>
+    <span id="repricer-count" class="toolbar-label" style="margin-left:auto"></span>
   </div>
+
+  {# ── Панель массовых действий (видна когда выбраны товары) ── #}
+  <div id="bulk-panel" style="
+    display:none;
+    background:var(--surface2);
+    border:1px solid var(--accent);
+    border-left:3px solid var(--accent);
+    padding:12px 16px;
+    flex-shrink:0;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:10px;
+  ">
+    <span style="font-size:11px;color:var(--accent);font-weight:600;white-space:nowrap"
+          id="bulk-count-label">Выбрано: 0</span>
+    <span class="toolbar-sep"></span>
+
+    <span style="font-size:10px;color:var(--text-dim);letter-spacing:1px;
+                 text-transform:uppercase;white-space:nowrap">Demand-правило:</span>
+
+    <label style="font-size:11px;color:var(--text-dim);white-space:nowrap">
+      Порог зак./нед.
+      <input type="number" id="bulk-min-orders" value="3" min="1" max="999"
+        style="width:52px;margin-left:6px;background:var(--bg);border:1px solid var(--border);
+               color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 8px;outline:none">
+    </label>
+
+    <label style="font-size:11px;color:var(--text-dim);white-space:nowrap">
+      Шаг %
+      <input type="number" id="bulk-step-pct" value="5" min="1" max="50"
+        style="width:52px;margin-left:6px;background:var(--bg);border:1px solid var(--border);
+               color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 8px;outline:none">
+    </label>
+
+    <span class="toolbar-sep"></span>
+
+    <button class="btn primary" onclick="bulkApplyDemandRule(true)">✓ Включить правило</button>
+    <button class="btn" onclick="bulkApplyDemandRule(false)"
+            style="border-color:var(--red);color:var(--red)">✕ Выключить</button>
+    <button class="btn" onclick="clearSelection()" style="margin-left:auto">Снять выделение</button>
+  </div>
+
+  {# ── Таблица товаров ── #}
+  <div class="table-container">
+    <table id="repricer-table">
+      <thead>
+        <tr>
+          <th style="width:32px;padding:10px 8px">
+            <input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this.checked)"
+                   style="cursor:pointer;width:14px;height:14px;accent-color:var(--accent)">
+          </th>
+          <th>Фото</th>
+          <th>Артикул / Название</th>
+          <th>Цена</th>
+          <th>Мин. цена</th>
+          <th>Комиссия FBS</th>
+          <th>Чистая выр.</th>
+          <th>Себест.</th>
+          <th>Маржа</th>
+          <th>Цель. маржа</th>
+          <th>Предл. цена</th>
+          <th>Индекс</th>
+          <th>Конкурент</th>
+          <th>Спрос / неделя</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody id="repricer-body">
+        <tr><td colspan="15" class="state-msg">Нажмите "Загрузить товары с Ozon"</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="repricer-pagination" class="pagination"></div>
+</div>
 {% endblock %}
+
 {% block scripts %}
-<script src="/static/js/repricer.js?v=1772735279"></script>
+<script src="/static/js/repricer.js?v=1772800000"></script>
 {% endblock %}

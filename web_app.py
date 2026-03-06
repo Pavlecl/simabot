@@ -1075,6 +1075,148 @@ async def api_repricer_products(
         ]
     }
 
+@app.get("/api/repricer/demand")
+async def api_repricer_demand(
+    offer_ids: str = "",          # comma-separated, пустой = все товары с demand_rule_enabled
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Считает спрос за последние 7 дней по каждому артикулу.
+    Источник 1: таблица orders (products_json)
+    Источник 2: price_history (косвенно — если нет заказов в orders)
+
+    Возвращает: {offer_id: {orders_7d, trend, recommended_action, recommended_price}}
+    """
+    import json
+    from datetime import timedelta
+    from sqlalchemy import text
+
+    ids = [i.strip() for i in offer_ids.split(",") if i.strip()] if offer_ids else []
+
+    week_ago = datetime.now() - timedelta(days=7)
+    two_weeks_ago = datetime.now() - timedelta(days=14)
+
+    # --- Считаем заказы из таблицы orders за 7 и 14 дней ---
+    # products_json хранит список объектов с offer_id
+    # Используем PostgreSQL JSON-операторы для эффективного поиска
+    raw = await db.execute(
+        text("""
+            SELECT
+                prod->>'offer_id' AS offer_id,
+                COUNT(*) FILTER (WHERE o.added_at >= :week_ago) AS orders_7d,
+                COUNT(*) FILTER (WHERE o.added_at >= :two_weeks_ago AND o.added_at < :week_ago) AS orders_prev_7d
+            FROM orders o,
+                 jsonb_array_elements(o.products_json::jsonb) AS prod
+            WHERE o.added_at >= :two_weeks_ago
+              AND o.ozon_status NOT IN ('cancelled')
+            GROUP BY prod->>'offer_id'
+        """),
+        {"week_ago": week_ago, "two_weeks_ago": two_weeks_ago}
+    )
+    demand_from_orders = {row.offer_id: {"orders_7d": row.orders_7d, "orders_prev_7d": row.orders_prev_7d}
+                         for row in raw.all() if row.offer_id}
+
+    # --- Получаем настройки товаров ---
+    if ids:
+        prod_q = await db.execute(select(Product).where(Product.offer_id.in_(ids)))
+    else:
+        prod_q = await db.execute(select(Product).where(Product.demand_rule_enabled == True))
+    products = prod_q.scalars().all()
+
+    result = {}
+    for p in products:
+        d = demand_from_orders.get(p.offer_id, {"orders_7d": 0, "orders_prev_7d": 0})
+        orders_7d = int(d["orders_7d"])
+        orders_prev = int(d["orders_prev_7d"])
+
+        # Тренд: сравниваем текущую и прошлую неделю
+        if orders_prev == 0 and orders_7d == 0:
+            trend = "flat"
+        elif orders_prev == 0:
+            trend = "up"
+        elif orders_7d > orders_prev * 1.1:
+            trend = "up"
+        elif orders_7d < orders_prev * 0.9:
+            trend = "down"
+        else:
+            trend = "flat"
+
+        min_orders = p.demand_min_orders or 3
+        step_pct = p.demand_step_pct or 5
+
+        # Рекомендация
+        if not p.price:
+            recommended_action = None
+            recommended_price = None
+        elif orders_7d >= min_orders:
+            # Спрос достаточный — можно поднять цену
+            recommended_action = "raise"
+            recommended_price = int(p.price * (1 + step_pct / 100))
+        else:
+            # Спрос низкий — снизить цену
+            recommended_action = "lower"
+            new_price = int(p.price * (1 - step_pct / 100))
+            # Не опускаем ниже min_price и не ниже цены с минимальной маржой 10%
+            floor = p.min_price or 0
+            if p.cost_price:
+                # Минимум: себестоимость / 0.9 (маржа не ниже 10%)
+                margin_floor = int(p.cost_price / 0.9)
+                floor = max(floor, margin_floor)
+            recommended_price = max(new_price, floor) if floor else new_price
+
+        result[p.offer_id] = {
+            "orders_7d": orders_7d,
+            "orders_prev_7d": orders_prev,
+            "trend": trend,
+            "min_orders": min_orders,
+            "step_pct": step_pct,
+            "recommended_action": recommended_action,
+            "recommended_price": recommended_price,
+            "demand_rule_enabled": bool(p.demand_rule_enabled),
+        }
+
+    return {"demand": result}
+
+
+@app.patch("/api/repricer/bulk-demand-settings")
+async def api_bulk_demand_settings(
+    body: dict,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Массовое назначение настроек demand-репрайсера для выбранных артикулов.
+    body: {
+        offer_ids: ["art1", "art2", ...],
+        demand_rule_enabled: bool,
+        demand_min_orders: int,   # порог заказов/неделю
+        demand_step_pct: int,     # шаг % изменения цены
+    }
+    """
+    offer_ids = body.get("offer_ids", [])
+    if not offer_ids:
+        raise HTTPException(400, "offer_ids required")
+
+    updates = {}
+    if "demand_rule_enabled" in body:
+        updates["demand_rule_enabled"] = bool(body["demand_rule_enabled"])
+    if "demand_min_orders" in body and body["demand_min_orders"]:
+        updates["demand_min_orders"] = int(body["demand_min_orders"])
+    if "demand_step_pct" in body and body["demand_step_pct"]:
+        updates["demand_step_pct"] = int(body["demand_step_pct"])
+
+    if not updates:
+        raise HTTPException(400, "no fields to update")
+
+    from sqlalchemy import update as sa_update
+    await db.execute(
+        sa_update(Product)
+        .where(Product.offer_id.in_(offer_ids))
+        .values(**updates)
+    )
+    await db.commit()
+    return {"ok": True, "updated": len(offer_ids)}
 
 @app.patch("/api/repricer/products/{offer_id}")
 async def api_update_product(
