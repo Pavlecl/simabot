@@ -101,6 +101,11 @@ class Product(Base):
     auto_rule = Column(String, nullable=True)                 # Правило: "margin" / "competitor"
     auto_rule_value = Column(Integer, nullable=True)          # Значение правила
 
+    # Demand-репрайсинг (динамика спроса)
+    demand_rule_enabled = Column(Boolean, default=False)       # Включён ли demand-репрайсинг
+    demand_min_orders   = Column(Integer, nullable=True)       # Порог заказов/нед (default=3)
+    demand_step_pct     = Column(Integer, nullable=True)       # Шаг изменения цены % (default=5)
+
     # Категория, бренд, склад (из Ozon)
     brand = Column(String, nullable=True)                     # Бренд (attribute_id=85)
     category_id = Column(BigInteger, nullable=True)           # ID категории Ozon

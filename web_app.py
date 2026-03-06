@@ -982,6 +982,7 @@ async def api_repricer_products(
     brand: str = "",
     category_id: str = "",
     warehouse: str = "",
+    demand_only: str = "",
     page: int = 1,
     per_page: int = 100,
     user: dict = Depends(require_admin),
@@ -1005,6 +1006,8 @@ async def api_repricer_products(
         filters.append(Product.category_id == int(category_id))
     if warehouse:
         filters.append(Product.warehouse_type.ilike(f"%{warehouse}%"))
+    if demand_only == "1":
+        filters.append(Product.demand_rule_enabled == True)
 
     for f in filters:
         query = query.where(f)
@@ -1070,6 +1073,9 @@ async def api_repricer_products(
                 "current_margin": calc_margin(p),
                 "suggested_price": calc_min_price_for_margin(p, p.target_margin_pct) if p.target_margin_pct else None,
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                "demand_rule_enabled": bool(p.demand_rule_enabled) if p.demand_rule_enabled is not None else False,
+                "demand_min_orders": p.demand_min_orders or 3,
+                "demand_step_pct": p.demand_step_pct or 5,
             }
             for p in products
         ]
