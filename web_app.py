@@ -851,6 +851,9 @@ async def sync_products_catalog() -> dict:
                                 images = it.get("primary_image") or it.get("images", [])
                                 img = images[0] if isinstance(images, list) and images else (images or "")
                                 sources = it.get("sources", [])
+                                if sources:
+                                    import logging
+                                    logging.info(f"SOURCES SAMPLE: {sources[:2]}")
                                 warehouse_names = []
                                 for s in sources:
                                     wh_id = s.get("warehouse_id")
