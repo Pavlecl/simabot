@@ -835,11 +835,9 @@ async def sync_products_catalog() -> dict:
                             wh_name = wh.get("name", "")
                             if wh_id and wh_name:
                                 warehouse_name_map[wh_id] = wh_name
-        print(f"STEP 2.0 DONE: {warehouse_name_map}", flush=True)
+            print(f"STEP 2.0 DONE: {warehouse_name_map}", flush=True)
         except Exception as e:
-            import logging, traceback
-            print(f"SYNC ERROR: {traceback.format_exc()}", flush=True)
-            logging.error(f"sync_products error: {traceback.format_exc()}")
+            import logging
             logging.warning(f"warehouse list error: {e}")
         _sync_status["progress"] = f"Загружаем инфо о товарах..."
         info_map = {}
