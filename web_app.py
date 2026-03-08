@@ -782,8 +782,8 @@ async def fetch_products_prices_offset(offset: int = 0, limit: int = 1000) -> di
 
 
 async def sync_products_catalog() -> dict:
-    """Полная синхронизация каталога — фоновая задача."""
     global _sync_status, _last_sync
+    print("SYNC STARTED", flush=True)
     _sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
 
     try:
@@ -834,7 +834,9 @@ async def sync_products_catalog() -> dict:
                             if wh_id and wh_name:
                                 warehouse_name_map[wh_id] = wh_name
         except Exception as e:
-            import logging
+            import logging, traceback
+            print(f"SYNC ERROR: {traceback.format_exc()}", flush=True)
+            logging.error(f"sync_products error: {traceback.format_exc()}")
             logging.warning(f"warehouse list error: {e}")
         _sync_status["progress"] = f"Загружаем инфо о товарах..."
         info_map = {}
