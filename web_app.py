@@ -788,6 +788,7 @@ async def sync_products_catalog() -> dict:
 
     try:
         # ШАГ 1: Все товары через offset
+        print("STEP 1: fetching prices", flush=True)
         all_items = []
         offset = 0
         limit = 1000
@@ -818,6 +819,7 @@ async def sync_products_catalog() -> dict:
         offer_ids = [item["offer_id"] for item in all_items if item.get("offer_id")]
 
         # ШАГ 2: Фото, название, категория, склад
+        print("STEP 2.0: fetching warehouses", flush=True)
         warehouse_name_map = {}
         try:
             async with aiohttp.ClientSession() as session:
@@ -833,6 +835,7 @@ async def sync_products_catalog() -> dict:
                             wh_name = wh.get("name", "")
                             if wh_id and wh_name:
                                 warehouse_name_map[wh_id] = wh_name
+        print(f"STEP 2.0 DONE: {warehouse_name_map}", flush=True)
         except Exception as e:
             import logging, traceback
             print(f"SYNC ERROR: {traceback.format_exc()}", flush=True)
@@ -872,6 +875,8 @@ async def sync_products_catalog() -> dict:
                 except Exception as e:
                     import logging; logging.warning(f"sync info error: {e}")
 
+
+        print(f"STEP 2 DONE: {len(info_map)} items", flush=True)
         # ШАГ 3: Бренд (attribute_id=85)
         _sync_status["progress"] = f"Загружаем бренды..."
         brand_map = {}
