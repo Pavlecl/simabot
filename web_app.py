@@ -347,7 +347,7 @@ async def login_submit(
         perms = _json.loads(raw)
     else:
         perms = ["dashboard", "orders", "queue", "users", "repricer", "costs"] if user.role == "admin" else ["queue"]
-
+    token = create_access_token({"sub": user.username, "role": user.role, "permissions": perms})
     # Редиректим на нужную страницу в зависимости от роли
     redirect_url = "/" if user.role == "admin" else "/queue"
     response = RedirectResponse(redirect_url, status_code=302)
