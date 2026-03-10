@@ -842,7 +842,8 @@ async def sync_products_catalog() -> dict:
         _sync_status["progress"] = f"Загружаем инфо о товарах..."
         info_map = {}
         url_info = "https://api-seller.ozon.ru/v3/product/info/list"
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             for i in range(0, len(product_ids), 100):
                 batch = product_ids[i:i+100]
                 try:
@@ -879,8 +880,9 @@ async def sync_products_catalog() -> dict:
         _sync_status["progress"] = f"Загружаем бренды..."
         brand_map = {}
         url_attrs = "https://api-seller.ozon.ru/v4/product/info/attributes"
-        async with aiohttp.ClientSession() as session:
-            for i in range(0, len(offer_ids), 100):
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for i in range(0, len(product_ids), 100):
                 batch = offer_ids[i:i+100]
                 try:
                     async with session.post(url_attrs,
