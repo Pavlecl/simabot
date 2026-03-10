@@ -74,13 +74,6 @@ async function createUser() {
 }
 
 
-// =====================================================================
-// TOAST
-// =====================================================================
-let toastTimer;
-
-// =====================================================================
-
 loadUsers();
 
 document.getElementById('create-user-btn').addEventListener('click', createUser);
