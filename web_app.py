@@ -274,10 +274,6 @@ def create_access_token(data: dict) -> str:
 
 
 def get_current_user(request: Request) -> Optional[dict]:
-    """
-    Читает JWT из cookie и возвращает данные пользователя.
-    Возвращает None если токена нет или он невалидный.
-    """
     token = request.cookies.get("access_token")
     if not token:
         return None
@@ -285,8 +281,19 @@ def get_current_user(request: Request) -> Optional[dict]:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return {"username": payload.get("sub"), "role": payload.get("role"), "permissions": payload.get("permissions", [])}
     except JWTError:
-        # Токен поддельный, истёкший или повреждённый
         return None
+
+async def get_current_user_db(request: Request, db: AsyncSession = Depends(get_db)) -> Optional[dict]:
+    """Читает permissions из БД — актуальные данные без перелогина"""
+    user = get_current_user(request)
+    if not user:
+        return None
+    result = await db.execute(select(User).where(User.username == user["username"]))
+    u = result.scalars().first()
+    if not u:
+        return None
+    perms = u.permissions if isinstance(u.permissions, list) else (json.loads(u.permissions) if u.permissions else [])
+    return {"username": u.username, "role": u.role, "permissions": perms}
 
 
 def require_admin(request: Request) -> dict:
@@ -299,12 +306,17 @@ def require_admin(request: Request) -> dict:
     return user
 
 
-def require_any_role(request: Request) -> dict:
-    """Depends-функция: требует любую авторизацию (admin или fulfillment)"""
+async def require_any_role(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    """Depends-функция: читает permissions из БД при каждом запросе"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
-    return user
+    result = await db.execute(select(User).where(User.username == user["username"]))
+    u = result.scalars().first()
+    if not u:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    perms = u.permissions if isinstance(u.permissions, list) else (json.loads(u.permissions) if u.permissions else [])
+    return {"username": u.username, "role": u.role, "permissions": perms}
 
 
 # --- СТРАНИЦЫ (HTML) ---
