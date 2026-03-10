@@ -1601,9 +1601,14 @@ async def update_user_permissions(
     u = result.scalars().first()
     if not u:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
-    u.permissions = _json.dumps(permissions)
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB
+    await db.execute(
+        update(User).where(User.id == user_id).values(permissions=cast(_json.dumps(permissions), JSONB))
+    )
     await db.commit()
     return {"ok": True, "permissions": permissions}
+
 
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
