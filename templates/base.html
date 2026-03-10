@@ -11,16 +11,23 @@
 <header>
   <div class="logo">SIMA<span>.</span>CTRL</div>
   <nav>
-    {% if user.role == 'admin' %}
-    <a href="/" class="{{ 'active' if active_tab == 'dashboard' }}">Дашборд</a>
-    <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
-    {% endif %}
-    <a href="/queue" class="{{ 'active' if active_tab == 'queue' }}">Очередь сборки</a>
-    {% if user.role == 'admin' %}
-    <a href="/users" class="{{ 'active' if active_tab == 'users' }}">Пользователи</a>
-    <a href="/repricer" class="{{ 'active' if active_tab == 'repricer' }}">Репрайсер</a>
-    <a href="/costs" class="{{ 'active' if active_tab == 'costs' }}">Себестоимость</a>
-    {% endif %}
+      {% set perms = user.permissions if user.permissions is defined else [] %}
+      {% if user.role == 'admin' or 'dashboard' in perms %}
+      <a href="/" class="{{ 'active' if active_tab == 'dashboard' }}">Дашборд</a>
+      {% endif %}
+      {% if user.role == 'admin' or 'orders' in perms %}
+      <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
+      {% endif %}
+      <a href="/queue" class="{{ 'active' if active_tab == 'queue' }}">Очередь сборки</a>
+      {% if user.role == 'admin' or 'users' in perms %}
+      <a href="/users" class="{{ 'active' if active_tab == 'users' }}">Пользователи</a>
+      {% endif %}
+      {% if user.role == 'admin' or 'repricer' in perms %}
+      <a href="/repricer" class="{{ 'active' if active_tab == 'repricer' }}">Репрайсер</a>
+      {% endif %}
+      {% if user.role == 'admin' or 'costs' in perms %}
+      <a href="/costs" class="{{ 'active' if active_tab == 'costs' }}">Себестоимость</a>
+      {% endif %}
   </nav>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему" id="theme-btn">☀️</button>

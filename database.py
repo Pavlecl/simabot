@@ -29,6 +29,7 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     password_hash = Column(String)
     role = Column(String)  # 'admin' или 'fulfillment'
+    permissions = Column(String, nullable=True)  # JSON-список страниц: '["dashboard","orders","queue"]'
 
 
 class Order(Base):

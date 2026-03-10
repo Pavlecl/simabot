@@ -283,7 +283,7 @@ def get_current_user(request: Request) -> Optional[dict]:
         return None
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return {"username": payload.get("sub"), "role": payload.get("role")}
+        return {"username": payload.get("sub"), "role": payload.get("role"), "permissions": payload.get("permissions", [])}
     except JWTError:
         # Токен поддельный, истёкший или повреждённый
         return None
@@ -339,7 +339,10 @@ async def login_submit(
             "error": "Неверный логин или пароль"
         })
 
-    token = create_access_token({"sub": user.username, "role": user.role})
+    import json as _json
+    perms = _json.loads(user.permissions) if user.permissions else (
+        ["dashboard", "orders", "queue", "users", "repricer", "costs"] if user.role == "admin" else ["queue"])
+    token = create_access_token({"sub": user.username, "role": user.role, "permissions": perms})
 
     # Редиректим на нужную страницу в зависимости от роли
     redirect_url = "/" if user.role == "admin" else "/queue"
@@ -360,7 +363,9 @@ async def logout():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, user: dict = Depends(require_admin)):
+async def dashboard(request: Request, user: dict = Depends(require_any_role)):
+    if "dashboard" not in user.get("permissions", []) and user["role"] != "admin":
+        return RedirectResponse("/queue", status_code=302)
     """Главная страница — дашборд для администратора"""
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
@@ -370,7 +375,9 @@ async def dashboard(request: Request, user: dict = Depends(require_admin)):
 
 
 @app.get("/orders", response_class=HTMLResponse)
-async def orders_page(request: Request, user: dict = Depends(require_admin)):
+async def orders_page(request: Request, user: dict = Depends(require_any_role)):
+    if "orders" not in user.get("permissions", []) and user["role"] != "admin":
+        return RedirectResponse("/queue", status_code=302)
     return templates.TemplateResponse("orders.html", {
         "request": request,
         "user": user,
@@ -1570,11 +1577,29 @@ async def get_users(
                 "role": u.role,
                 # created_at нет в модели — добавим None, фронт обработает
                 "created_at": None,
+                "permissions": json.loads(u.permissions) if u.permissions else (["dashboard","orders","queue","users","repricer","costs"] if u.role == "admin" else ["queue"]),
             }
             for u in users
         ]
     }
 
+@app.patch("/api/users/{user_id}/permissions")
+async def update_user_permissions(
+    user_id: int,
+    request: Request,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    body = await request.json()
+    permissions = body.get("permissions", [])
+    import json as _json
+    result = await db.execute(select(User).where(User.id == user_id))
+    u = result.scalars().first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    u.permissions = _json.dumps(permissions)
+    await db.commit()
+    return {"ok": True, "permissions": permissions}
 
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
