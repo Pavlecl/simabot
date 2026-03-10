@@ -73,56 +73,6 @@ async function createUser() {
   }
 }
 
-// =====================================================================
-// МОДАЛЬНОЕ ОКНО
-// =====================================================================
-function openEdit(order) {
-  editingPosting = order.posting_number;
-  document.getElementById('modal-posting').textContent = order.posting_number;
-  document.getElementById('modal-sur').value = order.sur_number || '';
-  document.getElementById('modal-ff-date').value = order.ff_delivery_date
-    ? order.ff_delivery_date.slice(0, 16) : '';
-  document.getElementById('modal-plan-date').value = order.plan_delivery_date || '';
-  document.getElementById('modal-comment').value = order.comment || '';
-  document.getElementById('edit-modal').classList.add('open');
-}
-
-function closeModal() {
-  document.getElementById('edit-modal').classList.remove('open');
-  editingPosting = null;
-}
-
-document.getElementById('edit-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeModal();
-});
-
-async function saveOrder() {
-  if (!editingPosting) return;
-  const body = {
-    sur_number: document.getElementById('modal-sur').value.trim(),
-    ff_delivery_date: document.getElementById('modal-ff-date').value || null,
-    plan_delivery_date: document.getElementById('modal-plan-date').value.trim(),
-    comment: document.getElementById('modal-comment').value.trim(),
-  };
-  try {
-    const resp = await fetch(`/api/orders/${encodeURIComponent(editingPosting)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.detail || resp.statusText);
-    }
-    closeModal();
-    showToast('✓ Сохранено');
-    if (activeTab === 'orders') loadOrders(currentPage);
-    if (activeTab === 'queue') loadQueue();
-    if (activeTab === 'dashboard') loadDashboard();
-  } catch(e) {
-    showToast(`Ошибка: ${e.message}`, 'error');
-  }
-}
 
 // =====================================================================
 // TOAST
