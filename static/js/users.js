@@ -82,3 +82,5 @@ let toastTimer;
 // =====================================================================
 
 loadUsers();
+
+document.getElementById('create-user-btn').addEventListener('click', createUser);
