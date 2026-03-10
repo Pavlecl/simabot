@@ -340,9 +340,13 @@ async def login_submit(
         })
 
     import json as _json
-    perms = _json.loads(user.permissions) if user.permissions else (
-        ["dashboard", "orders", "queue", "users", "repricer", "costs"] if user.role == "admin" else ["queue"])
-    token = create_access_token({"sub": user.username, "role": user.role, "permissions": perms})
+    raw = user.permissions
+    if isinstance(raw, list):
+        perms = raw
+    elif isinstance(raw, str):
+        perms = _json.loads(raw)
+    else:
+        perms = ["dashboard", "orders", "queue", "users", "repricer", "costs"] if user.role == "admin" else ["queue"]
 
     # Редиректим на нужную страницу в зависимости от роли
     redirect_url = "/" if user.role == "admin" else "/queue"
@@ -1577,7 +1581,7 @@ async def get_users(
                 "role": u.role,
                 # created_at нет в модели — добавим None, фронт обработает
                 "created_at": None,
-                "permissions": json.loads(u.permissions) if u.permissions else (["dashboard","orders","queue","users","repricer","costs"] if u.role == "admin" else ["queue"]),
+                "permissions": (u.permissions if isinstance(u.permissions, list) else json.loads(u.permissions)) if u.permissions else (["dashboard","orders","queue","users","repricer","costs"] if u.role == "admin" else ["queue"]),
             }
             for u in users
         ]
