@@ -46,43 +46,6 @@
       </div>
     </div>
   </div>
-
-  {# ===== TAB: USERS ===== #}
-  <div class="tab-panel {{ 'active' if active_tab == 'users' }}" id="tab-users">
-    <div class="users-grid">
-      <div>
-        <div class="users-list">
-          <div class="users-list-header">Пользователи системы</div>
-          <div id="users-list-body">
-            <div class="state-msg">ЗАГРУЗКА...</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="create-user-form">
-        <div class="create-user-form-header">Создать пользователя</div>
-        <div class="create-user-form-body">
-          <div class="field-group">
-            <label>Логин</label>
-            <input type="text" id="new-username" placeholder="например: ff_operator">
-          </div>
-          <div class="field-group">
-            <label>Пароль</label>
-            <input type="text" id="new-password" placeholder="минимум 6 символов">
-          </div>
-          <div class="field-group">
-            <label>Роль</label>
-            <select id="new-role">
-              <option value="fulfillment">Fulfillment (сборка)</option>
-              <option value="admin">Admin (полный доступ)</option>
-            </select>
-          </div>
-          <button class="btn primary" onclick="createUser()">Создать пользователя</button>
-          <div id="create-user-msg" style="font-size:11px; min-height:16px;"></div>
-        </div>
-      </div>
-    </div>
-  </div>
 </main>
 
 <script>
