@@ -281,7 +281,7 @@ async function toggleNotDelivered(postingNumber) {
     const scrollY = window.scrollY;
     await fetch(`/api/orders/${postingNumber}/not_delivered`, {method: 'POST'});
     await loadOrders(currentPage);
-    window.scrollTo(0, scrollY);
+    requestAnimationFrame(() => window.scrollTo(0, scrollY));
   } catch(e) {
     showToast('Ошибка', 'error');
   }
