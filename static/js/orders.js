@@ -278,8 +278,10 @@ async function syncOzonOrders() {
 
 async function toggleNotDelivered(postingNumber) {
   try {
+    const scrollY = window.scrollY;
     await fetch(`/api/orders/${postingNumber}/not_delivered`, {method: 'POST'});
-    loadOrders(currentPage);
+    await loadOrders(currentPage);
+    window.scrollTo(0, scrollY);
   } catch(e) {
     showToast('Ошибка', 'error');
   }
