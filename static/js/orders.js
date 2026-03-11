@@ -278,10 +278,20 @@ async function syncOzonOrders() {
 
 async function toggleNotDelivered(postingNumber) {
   try {
-    const scrollY = window.scrollY;
     await fetch(`/api/orders/${postingNumber}/not_delivered`, {method: 'POST'});
-    await loadOrders(currentPage);
-    requestAnimationFrame(() => window.scrollTo(0, scrollY));
+
+    // Находим кнопку в DOM и обновляем только её строку
+    const btn = document.querySelector(`button[onclick="toggleNotDelivered('${postingNumber}')"]`);
+    if (btn) {
+      const tr = btn.closest('tr');
+      const isNowNotDelivered = !tr.style.background.includes('220,50,50');
+
+      tr.style.background = isNowNotDelivered ? 'rgba(220,50,50,0.15)' : '';
+      btn.style.background = isNowNotDelivered ? 'var(--red)' : 'var(--surface2)';
+      btn.style.borderColor = isNowNotDelivered ? 'var(--red)' : 'var(--border)';
+      btn.style.color = isNowNotDelivered ? '#fff' : 'var(--text-dim)';
+      btn.textContent = isNowNotDelivered ? '✗ Не привезли' : 'Не привезли';
+    }
   } catch(e) {
     showToast('Ошибка', 'error');
   }
