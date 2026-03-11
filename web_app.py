@@ -418,7 +418,7 @@ async def queue_page(request: Request, user: dict = Depends(require_any_role)):
 
 @app.get("/api/stats")
 async def get_stats(
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_any_role),
     db: AsyncSession = Depends(get_db)
 ):
     """
