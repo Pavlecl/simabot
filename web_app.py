@@ -545,7 +545,7 @@ async def get_stats(
 
 @app.get("/api/orders")
 async def get_orders(
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_any_role),
     db: AsyncSession = Depends(get_db),
     page: int = 1,
     per_page: int = 50,
