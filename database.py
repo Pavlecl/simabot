@@ -141,6 +141,24 @@ class PriceHistory(Base):
     changed_by = Column(String, nullable=True)  # username
     changed_at = Column(DateTime, default=datetime.now)
 
+class SalesHistory(Base):
+    """Накопительная история продаж и отмен по позициям"""
+    __tablename__ = "sales_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    posting_number = Column(String, nullable=False, index=True)
+    offer_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=True)
+    brand = Column(String, nullable=True)
+    category_id = Column(BigInteger, nullable=True)
+    category_name = Column(String, nullable=True)
+    quantity = Column(Integer, default=1)
+    price = Column(Integer, default=0)
+    revenue = Column(BigInteger, default=0)
+    status = Column(String, nullable=False)   # "sale" / "cancel"
+    event_date = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
 
 # --- ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ---
 
@@ -302,3 +320,4 @@ async def get_all_virtual_articles():
 
 async def clear_all_virtual_orders():
     await clear_virtual_orders()
+

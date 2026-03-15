@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="analytics-wrap">
+
+  <!-- TOOLBAR -->
+  <div class="analytics-toolbar">
+    <div class="toolbar-left">
+      <div class="field-group inline">
+        <label>От</label>
+        <input type="date" id="date-from" onchange="loadAnalytics()">
+      </div>
+      <div class="field-group inline">
+        <label>До</label>
+        <input type="date" id="date-to" onchange="loadAnalytics()">
+      </div>
+      <select id="status-filter" onchange="loadAnalytics()">
+        <option value="">Все</option>
+        <option value="sale">Продажи</option>
+        <option value="cancel">Отмены</option>
+      </select>
+      <select id="brand-filter" onchange="loadAnalytics()">
+        <option value="">Все бренды</option>
+      </select>
+      <select id="category-filter" onchange="loadAnalytics()">
+        <option value="">Все категории</option>
+      </select>
+      <input type="text" id="search-input" placeholder="Артикул / название..." oninput="debounceAnalytics()" style="width:180px">
+      <button class="btn" onclick="clearAnalyticsFilters()">Сбросить</button>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn primary" id="sync-btn" onclick="syncAnalytics()">⟳ Загрузить с Ozon</button>
+    </div>
+  </div>
+
+  <!-- SUMMARY CARDS -->
+  <div class="analytics-cards" id="summary-cards">
+    <div class="analytics-card">
+      <div class="card-value" id="card-orders">—</div>
+      <div class="card-label">Заказов (продажи)</div>
+    </div>
+    <div class="analytics-card">
+      <div class="card-value" id="card-qty">—</div>
+      <div class="card-label">Единиц продано</div>
+    </div>
+    <div class="analytics-card">
+      <div class="card-value" id="card-revenue">—</div>
+      <div class="card-label">Выручка</div>
+    </div>
+    <div class="analytics-card red">
+      <div class="card-value" id="card-cancels">—</div>
+      <div class="card-label">Отмен</div>
+    </div>
+  </div>
+
+  <!-- CHART -->
+  <div class="analytics-chart-wrap">
+    <div class="section-header">
+      <span>Динамика продаж</span>
+      <div class="chart-toggle">
+        <button class="chart-btn active" id="btn-qty" onclick="setChartMode('qty')">Штуки</button>
+        <button class="chart-btn" id="btn-revenue" onclick="setChartMode('revenue')">Выручка</button>
+      </div>
+    </div>
+    <canvas id="sales-chart" height="80"></canvas>
+  </div>
+
+  <!-- TABLE -->
+  <div class="analytics-table-wrap">
+    <div class="section-header">
+      <span>Топ товаров</span>
+      <span id="table-count" style="color:var(--text-dim);font-size:11px"></span>
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:52px">Фото</th>
+          <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
+          <th>Название</th>
+          <th>Бренд</th>
+          <th>Категория</th>
+          <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
+          <th onclick="sortTable('total_qty')" class="sortable">Штук ↕</th>
+          <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
+        </tr>
+      </thead>
+      <tbody id="analytics-tbody">
+        <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/js/analytics.js?v=1773222000"></script>
+{% endblock %}

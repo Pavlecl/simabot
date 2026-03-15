@@ -30,7 +30,7 @@ from sqlalchemy import select, func, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, init_db
+from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory, init_db
 
 # --- КОНФИГУРАЦИЯ ---
 # SECRET_KEY используется для подписи JWT. Если утечёт — злоумышленник сможет
@@ -1621,6 +1621,204 @@ async def update_user_permissions(
     await db.commit()
     return {"ok": True, "permissions": permissions}
 
+# =====================================================================
+# АНАЛИТИКА ПРОДАЖ
+# =====================================================================
+
+async def sync_sales_from_ozon():
+    """Синхронизирует историю продаж из Ozon API (delivered + cancelled)"""
+    url = "https://api-seller.ozon.ru/v3/posting/fbs/list"
+    date_to = datetime.now()
+    date_from = date_to - timedelta(days=180)
+
+    # Подтягиваем бренды и категории из таблицы products
+    async with AsyncSessionLocal() as db:
+        prod_res = await db.execute(select(Product.offer_id, Product.brand, Product.category_id, Product.category_name))
+        prod_map = {r[0]: {"brand": r[1], "category_id": r[2], "category_name": r[3]} for r in prod_res.all()}
+
+    statuses_map = {"delivered": "sale", "cancelled": "cancel"}
+
+    async with aiohttp.ClientSession() as session:
+        for ozon_status, sale_status in statuses_map.items():
+            offset = 0
+            while True:
+                payload = {
+                    "dir": "DESC",
+                    "filter": {
+                        "status": ozon_status,
+                        "since": date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                        "to": date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    },
+                    "limit": 1000,
+                    "offset": offset,
+                    "with": {"analytics_data": False, "financial_data": False}
+                }
+                try:
+                    async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+                        if resp.status != 200:
+                            break
+                        data = await resp.json()
+                        postings = data.get("result", {}).get("postings", [])
+                        if not postings:
+                            break
+
+                        async with AsyncSessionLocal() as db:
+                            for posting in postings:
+                                pnum = posting.get("posting_number")
+                                event_date = None
+                                in_process = posting.get("in_process_at") or posting.get("shipment_date")
+                                if in_process:
+                                    try:
+                                        event_date = datetime.fromisoformat(in_process.replace("Z", "+00:00")).replace(tzinfo=None)
+                                    except:
+                                        pass
+
+                                for prod in posting.get("products", []):
+                                    oid = prod.get("offer_id", "")
+                                    qty = int(prod.get("quantity", 1))
+                                    price = int(float(prod.get("price", 0)))
+                                    pinfo = prod_map.get(oid, {})
+
+                                    stmt = pg_insert(SalesHistory).values(
+                                        posting_number=pnum,
+                                        offer_id=oid,
+                                        name=prod.get("name", ""),
+                                        brand=pinfo.get("brand"),
+                                        category_id=pinfo.get("category_id"),
+                                        category_name=pinfo.get("category_name"),
+                                        quantity=qty,
+                                        price=price,
+                                        revenue=price * qty,
+                                        status=sale_status,
+                                        event_date=event_date,
+                                    ).on_conflict_do_nothing(index_elements=["posting_number", "offer_id"])
+                                    await db.execute(stmt)
+                            await db.commit()
+
+                        if len(postings) < 1000:
+                            break
+                        offset += 1000
+                except Exception as e:
+                    print(f"sync_sales error: {e}", flush=True)
+                    break
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request, user: dict = Depends(require_any_role)):
+    if "analytics" not in user.get("permissions", []) and user["role"] != "admin":
+        return RedirectResponse("/queue", status_code=302)
+    return templates.TemplateResponse("analytics.html", {
+        "request": request,
+        "user": user,
+        "active_tab": "analytics"
+    })
+
+
+@app.post("/api/analytics/sync")
+async def api_analytics_sync(user: dict = Depends(require_admin)):
+    import asyncio
+    asyncio.create_task(sync_sales_from_ozon())
+    return {"ok": True}
+
+
+@app.get("/api/analytics/sales")
+async def api_analytics_sales(
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db),
+    date_from: str = "",
+    date_to: str = "",
+    status: str = "",
+    brand: str = "",
+    category_id: str = "",
+    search: str = "",
+):
+    filters = []
+    if date_from:
+        try:
+            filters.append(SalesHistory.event_date >= datetime.fromisoformat(date_from))
+        except: pass
+    if date_to:
+        try:
+            filters.append(SalesHistory.event_date <= datetime.fromisoformat(date_to + "T23:59:59"))
+        except: pass
+    if status in ("sale", "cancel"):
+        filters.append(SalesHistory.status == status)
+    if brand:
+        filters.append(SalesHistory.brand.ilike(f"%{brand}%"))
+    if category_id:
+        try:
+            filters.append(SalesHistory.category_id == int(category_id))
+        except: pass
+    if search:
+        filters.append(or_(
+            SalesHistory.offer_id.ilike(f"%{search}%"),
+            SalesHistory.name.ilike(f"%{search}%")
+        ))
+
+    # Топ товаров
+    from sqlalchemy import func as sqlfunc
+    top_q = select(
+        SalesHistory.offer_id,
+        SalesHistory.name,
+        SalesHistory.brand,
+        SalesHistory.category_name,
+        sqlfunc.sum(SalesHistory.quantity).label("total_qty"),
+        sqlfunc.sum(SalesHistory.revenue).label("total_revenue"),
+        sqlfunc.count(SalesHistory.id).label("orders_count"),
+    ).where(*filters).group_by(
+        SalesHistory.offer_id, SalesHistory.name, SalesHistory.brand, SalesHistory.category_name
+    ).order_by(sqlfunc.sum(SalesHistory.quantity).desc()).limit(200)
+
+    top_res = await db.execute(top_q)
+    top_items = top_res.all()
+
+    # График по дням
+    chart_q = select(
+        sqlfunc.date_trunc('day', SalesHistory.event_date).label("day"),
+        SalesHistory.status,
+        sqlfunc.sum(SalesHistory.quantity).label("qty"),
+        sqlfunc.sum(SalesHistory.revenue).label("revenue"),
+    ).where(*filters).group_by("day", SalesHistory.status).order_by("day")
+
+    chart_res = await db.execute(chart_q)
+    chart_rows = chart_res.all()
+
+    # Фильтры — бренды и категории
+    brands_res = await db.execute(
+        select(SalesHistory.brand).where(SalesHistory.brand.isnot(None)).distinct()
+    )
+    cats_res = await db.execute(
+        select(SalesHistory.category_id, SalesHistory.category_name)
+        .where(SalesHistory.category_id.isnot(None)).distinct()
+    )
+
+    return {
+        "top": [
+            {
+                "offer_id": r.offer_id,
+                "name": r.name or "",
+                "brand": r.brand or "",
+                "category_name": r.category_name or "",
+                "total_qty": int(r.total_qty or 0),
+                "total_revenue": int(r.total_revenue or 0),
+                "orders_count": int(r.orders_count or 0),
+            }
+            for r in top_items
+        ],
+        "chart": [
+            {
+                "day": r.day.strftime("%Y-%m-%d") if r.day else None,
+                "status": r.status,
+                "qty": int(r.qty or 0),
+                "revenue": int(r.revenue or 0),
+            }
+            for r in chart_rows
+        ],
+        "filters": {
+            "brands": sorted([r[0] for r in brands_res.all() if r[0]]),
+            "categories": [{"id": r[0], "name": r[1]} for r in cats_res.all()],
+        }
+    }
 
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
