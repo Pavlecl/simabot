@@ -7,7 +7,7 @@ let chartInstance = null;
 let chartMode = 'qty';
 let sortField = 'total_qty';
 let sortDir = 'desc';
-let searchTimer = null;
+let analyticsSearchTimer = null;
 
 // Устанавливаем дефолтный период — последние 30 дней
 (function setDefaultDates() {
@@ -19,8 +19,8 @@ let searchTimer = null;
 })();
 
 function debounceAnalytics() {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(loadAnalytics, 400);
+  clearTimeout(analyticsSearchTimer);
+  analyticsSearchTimer = setTimeout(loadAnalytics, 400);
 }
 
 function clearAnalyticsFilters() {
