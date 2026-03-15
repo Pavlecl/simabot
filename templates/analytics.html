@@ -54,14 +54,17 @@
 
   <!-- CHART -->
   <div class="analytics-chart-wrap">
-    <div class="section-header">
-      <span>Динамика продаж</span>
+      <div class="section-header">
+        <span>Динамика продаж</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="chart-btn" id="toggle-chart-btn" onclick="toggleChart()">▲ Свернуть</button>
       <div class="chart-toggle">
         <button class="chart-btn active" id="btn-qty" onclick="setChartMode('qty')">Штуки</button>
         <button class="chart-btn" id="btn-revenue" onclick="setChartMode('revenue')">Выручка</button>
       </div>
-    </div>
-    <canvas id="sales-chart" height="80"></canvas>
+  </div>
+  <div id="chart-container">
+  <canvas id="sales-chart" height="80"></canvas>
   </div>
 
   <!-- TABLE -->
@@ -70,7 +73,7 @@
       <span>Топ товаров</span>
       <span id="table-count" style="color:var(--text-dim);font-size:11px"></span>
     </div>
-    <div style="max-height:500px;overflow-y:auto;">
+    <div style="max-height:calc(100vh - 420px);overflow-y:auto;">
     <table class="data-table">
       <thead>
         <tr>

@@ -265,6 +265,14 @@ async function syncAnalytics() {
   }
 }
 
+function toggleChart() {
+  const container = document.getElementById('chart-container');
+  const btn = document.getElementById('toggle-chart-btn');
+  const isHidden = container.style.display === 'none';
+  container.style.display = isHidden ? 'block' : 'none';
+  btn.textContent = isHidden ? '▲ Свернуть' : '▼ Развернуть';
+}
+
 // Стили для таблицы
 const style = document.createElement('style');
 style.textContent = `
