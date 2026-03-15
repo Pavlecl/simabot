@@ -54,17 +54,19 @@
 
   <!-- CHART -->
   <div class="analytics-chart-wrap">
-      <div class="section-header">
-        <span>Динамика продаж</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="chart-btn" id="toggle-chart-btn" onclick="toggleChart()">▲ Свернуть</button>
-      <div class="chart-toggle">
-        <button class="chart-btn active" id="btn-qty" onclick="setChartMode('qty')">Штуки</button>
-        <button class="chart-btn" id="btn-revenue" onclick="setChartMode('revenue')">Выручка</button>
+    <div class="section-header">
+      <span>Динамика продаж</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="chart-btn" id="toggle-chart-btn" onclick="toggleChart()">▲ Свернуть</button>
+        <div class="chart-toggle">
+          <button class="chart-btn active" id="btn-qty" onclick="setChartMode('qty')">Штуки</button>
+          <button class="chart-btn" id="btn-revenue" onclick="setChartMode('revenue')">Выручка</button>
+        </div>
       </div>
-  </div>
-  <div id="chart-container">
-  <canvas id="sales-chart" height="80"></canvas>
+    </div>
+    <div id="chart-container">
+      <canvas id="sales-chart" height="80"></canvas>
+    </div>
   </div>
 
   <!-- TABLE -->
@@ -74,23 +76,23 @@
       <span id="table-count" style="color:var(--text-dim);font-size:11px"></span>
     </div>
     <div style="max-height:calc(100vh - 420px);overflow-y:auto;">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th style="width:52px">Фото</th>
-          <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
-          <th>Название</th>
-          <th>Бренд</th>
-          <th>Категория</th>
-          <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
-          <th onclick="sortTable('total_qty')" class="sortable">Штук ↕</th>
-          <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
-        </tr>
-      </thead>
-      <tbody id="analytics-tbody">
-        <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
-      </tbody>
-    </table>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:52px">Фото</th>
+            <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
+            <th>Название</th>
+            <th>Бренд</th>
+            <th>Категория</th>
+            <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
+            <th onclick="sortTable('total_qty')" class="sortable">Штук ↕</th>
+            <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
+          </tr>
+        </thead>
+        <tbody id="analytics-tbody">
+          <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -98,5 +100,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/analytics.js?v=1773588000"></script>
+<script src="/static/js/analytics.js?v=1773589000"></script>
 {% endblock %}
