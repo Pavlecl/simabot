@@ -288,6 +288,10 @@ style.textContent = `
 .chart-btn.active { background:var(--accent); border-color:var(--accent); color:#000; }
 .sortable { cursor:pointer; }
 .sortable:hover { color:var(--accent); }
+.analytics-table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.data-table thead th { position: sticky; top: 0; background: var(--surface); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
 `;
 document.head.appendChild(style);
 
