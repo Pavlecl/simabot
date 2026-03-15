@@ -887,10 +887,12 @@ async def sync_products_catalog() -> dict:
                                     if wh_name and wh_name not in warehouse_names:
                                         warehouse_names.append(wh_name)
                                 warehouse = ", ".join(warehouse_names)
+                                cat_id = it.get("description_category_id")
                                 info_map[pid] = {
                                     "name": it.get("name", ""),
                                     "image_url": img,
-                                    "category_id": it.get("description_category_id"),
+                                    "category_id": cat_id,
+                                    "category_name": category_name_map.get(cat_id, ""),
                                     "warehouse_type": warehouse,
                                 }
                 except Exception as e:
@@ -898,6 +900,31 @@ async def sync_products_catalog() -> dict:
 
 
         print(f"STEP 2 DONE: {len(info_map)} items", flush=True)
+
+        # ШАГ 2.1: Загружаем дерево категорий для маппинга id → название
+        category_name_map = {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                        "https://api-seller.ozon.ru/v1/description-category/tree",
+                        json={"language": "RU"},
+                        headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status == 200:
+                        cat_data = await resp.json()
+
+                        def flatten_cats(nodes):
+                            for node in nodes:
+                                cid = node.get("description_category_id")
+                                cname = node.get("category_name", "")
+                                if cid and cname:
+                                    category_name_map[cid] = cname
+                                flatten_cats(node.get("children", []))
+
+                        flatten_cats(cat_data.get("result", []))
+            print(f"STEP 2.1 DONE: {len(category_name_map)} categories", flush=True)
+        except Exception as e:
+            print(f"category tree error: {e}", flush=True)
         # ШАГ 3: Бренд (attribute_id=85)
         _sync_status["progress"] = f"Загружаем бренды..."
         brand_map = {}
@@ -951,6 +978,7 @@ async def sync_products_catalog() -> dict:
                     name=info.get("name") or "",
                     image_url=info.get("image_url") or "",
                     category_id=info.get("category_id"),
+                    category_name=info.get("category_name") or "",
                     warehouse_type=info.get("warehouse_type") or "",
                     brand=brand_map.get(offer_id) or "",
                     price=int(float(price_data.get("price") or 0)),
