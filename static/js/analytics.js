@@ -292,3 +292,5 @@ style.textContent = `
 document.head.appendChild(style);
 
 loadAnalytics();
+
+document.getElementById('sync-btn').addEventListener('click', syncAnalytics);
