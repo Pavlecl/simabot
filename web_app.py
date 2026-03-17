@@ -841,6 +841,8 @@ async def sync_products_catalog() -> dict:
         product_ids = [item["product_id"] for item in all_items if item.get("product_id")]
         offer_ids = [item["offer_id"] for item in all_items if item.get("offer_id")]
 
+
+
         # ШАГ 2: Фото, название, категория, склад
         print("STEP 2.0: fetching warehouses", flush=True)
         warehouse_name_map = {}
@@ -863,9 +865,35 @@ async def sync_products_catalog() -> dict:
             import logging
             logging.warning(f"warehouse list error: {e}")
         _sync_status["progress"] = f"Загружаем инфо о товарах..."
+
+        # ШАГ 2.1: Загружаем дерево категорий для маппинга id → название
+        category_name_map = {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                        "https://api-seller.ozon.ru/v1/description-category/tree",
+                        json={"language": "RU"},
+                        headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status == 200:
+                        cat_data = await resp.json()
+
+                        def flatten_cats(nodes):
+                            for node in nodes:
+                                cid = node.get("description_category_id")
+                                cname = node.get("category_name", "")
+                                if cid and cname:
+                                    category_name_map[cid] = cname
+                                flatten_cats(node.get("children", []))
+
+                        flatten_cats(cat_data.get("result", []))
+            print(f"STEP 2.1 DONE: {len(category_name_map)} categories", flush=True)
+        except Exception as e:
+            print(f"category tree error: {e}", flush=True)
+
         info_map = {}
         url_info = "https://api-seller.ozon.ru/v3/product/info/list"
-        timeout = aiohttp.ClientTimeout(total=30)
+        timeout = aiohttp.ClientTimeout(total=120)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for i in range(0, len(product_ids), 100):
                 batch = product_ids[i:i+100]
@@ -901,30 +929,7 @@ async def sync_products_catalog() -> dict:
 
         print(f"STEP 2 DONE: {len(info_map)} items", flush=True)
 
-        # ШАГ 2.1: Загружаем дерево категорий для маппинга id → название
-        category_name_map = {}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                        "https://api-seller.ozon.ru/v1/description-category/tree",
-                        json={"language": "RU"},
-                        headers=OZON_HEADERS
-                ) as resp:
-                    if resp.status == 200:
-                        cat_data = await resp.json()
 
-                        def flatten_cats(nodes):
-                            for node in nodes:
-                                cid = node.get("description_category_id")
-                                cname = node.get("category_name", "")
-                                if cid and cname:
-                                    category_name_map[cid] = cname
-                                flatten_cats(node.get("children", []))
-
-                        flatten_cats(cat_data.get("result", []))
-            print(f"STEP 2.1 DONE: {len(category_name_map)} categories", flush=True)
-        except Exception as e:
-            print(f"category tree error: {e}", flush=True)
         # ШАГ 3: Бренд (attribute_id=85)
         _sync_status["progress"] = f"Загружаем бренды..."
         brand_map = {}
