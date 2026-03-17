@@ -171,7 +171,62 @@ function setChartMode(mode) {
   document.getElementById('btn-chart-qty').classList.toggle('active', mode === 'qty');
   document.getElementById('btn-chart-revenue').classList.toggle('active', mode === 'revenue');
   document.getElementById('btn-chart-orders').classList.toggle('active', mode === 'orders');
-  if (analyticsData) renderChart(analyticsData.chart);
+  if (mode === 'orders') {
+    loadOrdersChart();
+  } else {
+    if (analyticsData) renderChart(analyticsData.chart);
+  }
+}
+
+async function loadOrdersChart() {
+  const dateFrom = document.getElementById('date-from').value;
+  const dateTo = document.getElementById('date-to').value;
+  let url = '/api/analytics/orders-chart?';
+  if (dateFrom) url += `date_from=${dateFrom}&`;
+  if (dateTo) url += `date_to=${dateTo}&`;
+
+  try {
+    const data = await fetch(url).then(r => r.json());
+    renderOrdersChart(data.orders_chart);
+  } catch(e) {
+    showToast('Ошибка загрузки графика заказов', 'error');
+  }
+}
+
+function renderOrdersChart(chartData) {
+  const days = chartData.map(r => r.day).sort();
+  const countByDay = {};
+  chartData.forEach(r => { countByDay[r.day] = r.count; });
+  const labels = days.map(d => { const p = d.split('-'); return p[2] + '.' + p[1]; });
+
+  if (chartInstance) chartInstance.destroy();
+
+  const ctx = document.getElementById('sales-chart').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Заказов принято',
+        data: days.map(d => countByDay[d] || 0),
+        backgroundColor: 'rgba(255,106,0,0.7)',
+        borderColor: 'rgba(255,106,0,1)',
+        borderWidth: 1,
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#aaa', font: { family: 'monospace' } } },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw} шт.` } }
+      },
+      scales: {
+        x: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } },
+        y: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } }
+      }
+    }
+  });
 }
 
 function setTableMode(mode) {

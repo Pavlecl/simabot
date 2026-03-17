@@ -1848,6 +1848,35 @@ async def api_analytics_sales(
         }
     }
 
+@app.get("/api/analytics/orders-chart")
+async def api_analytics_orders_chart(
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db),
+    date_from: str = "",
+    date_to: str = "",
+):
+    from sqlalchemy import func as sqlfunc, cast, Date
+    filters = [Order.ozon_accepted_at.isnot(None)]
+    if date_from:
+        try: filters.append(Order.ozon_accepted_at >= datetime.fromisoformat(date_from))
+        except: pass
+    if date_to:
+        try: filters.append(Order.ozon_accepted_at <= datetime.fromisoformat(date_to + "T23:59:59"))
+        except: pass
+
+    q = select(
+        sqlfunc.date_trunc('day', Order.ozon_accepted_at).label("day"),
+        sqlfunc.count(Order.posting_number).label("orders_count"),
+    ).where(*filters).group_by("day").order_by("day")
+
+    res = await db.execute(q)
+    return {
+        "orders_chart": [
+            {"day": r.day.strftime("%Y-%m-%d"), "count": int(r.orders_count)}
+            for r in res.all()
+        ]
+    }
+
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
 # Вместо @app.on_event("startup") используем async context manager.
