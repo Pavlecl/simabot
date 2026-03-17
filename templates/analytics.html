@@ -73,13 +73,19 @@
   <div class="analytics-table-wrap">
     <div class="section-header">
       <span>Топ товаров</span>
-      <span id="table-count" style="color:var(--text-dim);font-size:11px"></span>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span id="table-count" style="color:var(--text-dim);font-size:11px"></span>
+        <div class="chart-toggle">
+          <button class="chart-btn active" id="btn-table-orders" onclick="setTableMode('orders')">Заказы</button>
+          <button class="chart-btn" id="btn-table-revenue" onclick="setTableMode('revenue')">Выручка</button>
+        </div>
+      </div>
     </div>
     <div style="max-height:calc(100vh - 420px);overflow-y:auto;">
       <table class="data-table">
-        <thead>
+        <thead id="table-head">
           <tr>
-            <th style="width:52px">Фото</th>
+            <th style="width:36px">#</th>
             <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
             <th>Название</th>
             <th>Бренд</th>
@@ -100,5 +106,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/analytics.js?v=1773589000"></script>
+<script src="/static/js/analytics.js?v=1773600000"></script>
 {% endblock %}

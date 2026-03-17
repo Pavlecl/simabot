@@ -5,11 +5,11 @@
 let analyticsData = null;
 let chartInstance = null;
 let chartMode = 'qty';
+let tableMode = 'orders'; // 'orders' или 'revenue'
 let sortField = 'total_qty';
 let sortDir = 'desc';
 let analyticsSearchTimer = null;
 
-// Устанавливаем дефолтный период — последние 30 дней
 (function setDefaultDates() {
   const to = new Date();
   const from = new Date();
@@ -62,14 +62,9 @@ async function loadAnalytics() {
     const data = await fetch(buildAnalyticsUrl()).then(r => r.json());
     analyticsData = data;
 
-    // Заполняем фильтры при первой загрузке
     fillFilters(data.filters);
 
-    // Summary cards
-    const sales = data.top.filter ? data.top : data.top;
-    const chartSales = data.chart.filter(r => r.status === 'sale');
     const chartCancels = data.chart.filter(r => r.status === 'cancel');
-
     const totalOrders = data.top.reduce((s, r) => s + r.orders_count, 0);
     const totalQty = data.top.reduce((s, r) => s + r.total_qty, 0);
     const totalRevenue = data.top.reduce((s, r) => s + r.total_revenue, 0);
@@ -80,10 +75,7 @@ async function loadAnalytics() {
     document.getElementById('card-revenue').textContent = formatMoney(totalRevenue);
     document.getElementById('card-cancels').textContent = totalCancels.toLocaleString('ru');
 
-    // Chart
     renderChart(data.chart);
-
-    // Table
     renderTable(data.top);
 
   } catch(e) {
@@ -100,8 +92,7 @@ function fillFilters(filters) {
   if (brandSel.options.length <= 1) {
     filters.brands.forEach(b => {
       const opt = document.createElement('option');
-      opt.value = b;
-      opt.textContent = b;
+      opt.value = b; opt.textContent = b;
       brandSel.appendChild(opt);
     });
     brandSel.value = currentBrand;
@@ -112,8 +103,7 @@ function fillFilters(filters) {
   if (catSel.options.length <= 1) {
     filters.categories.forEach(c => {
       const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.name || c.id;
+      opt.value = c.id; opt.textContent = c.name || c.id;
       catSel.appendChild(opt);
     });
     catSel.value = currentCat;
@@ -122,24 +112,17 @@ function fillFilters(filters) {
 
 function renderChart(chartData) {
   const days = [...new Set(chartData.map(r => r.day))].sort();
-
-  const salesByDay = {};
-  const cancelsByDay = {};
+  const salesByDay = {}, cancelsByDay = {};
   days.forEach(d => { salesByDay[d] = 0; cancelsByDay[d] = 0; });
 
   chartData.forEach(r => {
     if (!r.day) return;
-    if (r.status === 'sale') salesByDay[r.day] = (salesByDay[r.day] || 0) + (chartMode === 'qty' ? r.qty : r.revenue);
-    if (r.status === 'cancel') cancelsByDay[r.day] = (cancelsByDay[r.day] || 0) + (chartMode === 'qty' ? r.qty : r.revenue);
+    const val = chartMode === 'qty' ? r.qty : r.revenue;
+    if (r.status === 'sale') salesByDay[r.day] = (salesByDay[r.day] || 0) + val;
+    if (r.status === 'cancel') cancelsByDay[r.day] = (cancelsByDay[r.day] || 0) + val;
   });
 
-  const labels = days.map(d => {
-    const parts = d.split('-');
-    return parts[2] + '.' + parts[1];
-  });
-
-  const salesValues = days.map(d => salesByDay[d] || 0);
-  const cancelValues = days.map(d => cancelsByDay[d] || 0);
+  const labels = days.map(d => { const p = d.split('-'); return p[2] + '.' + p[1]; });
 
   if (chartInstance) chartInstance.destroy();
 
@@ -149,46 +132,19 @@ function renderChart(chartData) {
     data: {
       labels,
       datasets: [
-        {
-          label: 'Продажи',
-          data: salesValues,
-          backgroundColor: 'rgba(255, 106, 0, 0.7)',
-          borderColor: 'rgba(255, 106, 0, 1)',
-          borderWidth: 1,
-          borderRadius: 3,
-        },
-        {
-          label: 'Отмены',
-          data: cancelValues,
-          backgroundColor: 'rgba(220, 50, 50, 0.5)',
-          borderColor: 'rgba(220, 50, 50, 0.8)',
-          borderWidth: 1,
-          borderRadius: 3,
-        }
+        { label: 'Продажи', data: days.map(d => salesByDay[d] || 0), backgroundColor: 'rgba(255,106,0,0.7)', borderColor: 'rgba(255,106,0,1)', borderWidth: 1, borderRadius: 3 },
+        { label: 'Отмены', data: days.map(d => cancelsByDay[d] || 0), backgroundColor: 'rgba(220,50,50,0.5)', borderColor: 'rgba(220,50,50,0.8)', borderWidth: 1, borderRadius: 3 }
       ]
     },
     options: {
       responsive: true,
       plugins: {
         legend: { labels: { color: '#aaa', font: { family: 'monospace' } } },
-        tooltip: {
-          callbacks: {
-            label: ctx => chartMode === 'revenue'
-              ? `${ctx.dataset.label}: ${formatMoney(ctx.raw)}`
-              : `${ctx.dataset.label}: ${ctx.raw} шт.`
-          }
-        }
+        tooltip: { callbacks: { label: ctx => chartMode === 'revenue' ? `${ctx.dataset.label}: ${formatMoney(ctx.raw)}` : `${ctx.dataset.label}: ${ctx.raw} шт.` } }
       },
       scales: {
         x: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } },
-        y: {
-          ticks: {
-            color: '#666',
-            font: { family: 'monospace', size: 10 },
-            callback: v => chartMode === 'revenue' ? formatMoney(v) : v
-          },
-          grid: { color: '#222' }
-        }
+        y: { ticks: { color: '#666', font: { family: 'monospace', size: 10 }, callback: v => chartMode === 'revenue' ? formatMoney(v) : v }, grid: { color: '#222' } }
       }
     }
   });
@@ -201,14 +157,54 @@ function setChartMode(mode) {
   if (analyticsData) renderChart(analyticsData.chart);
 }
 
-function sortTable(field) {
-  if (sortField === field) {
-    sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+function setTableMode(mode) {
+  tableMode = mode;
+  document.getElementById('btn-table-orders').classList.toggle('active', mode === 'orders');
+  document.getElementById('btn-table-revenue').classList.toggle('active', mode === 'revenue');
+
+  // Обновляем заголовки таблицы
+  const thead = document.getElementById('table-head');
+  if (mode === 'orders') {
+    thead.innerHTML = `<tr>
+      <th style="width:36px">#</th>
+      <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
+      <th>Название</th>
+      <th>Бренд</th>
+      <th>Категория</th>
+      <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
+      <th onclick="sortTable('total_qty')" class="sortable">Штук ↕</th>
+      <th onclick="sortTable('cancel_qty')" class="sortable">Отмен (шт) ↕</th>
+    </tr>`;
+    sortField = 'total_qty';
   } else {
-    sortField = field;
-    sortDir = 'desc';
+    thead.innerHTML = `<tr>
+      <th style="width:36px">#</th>
+      <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
+      <th>Название</th>
+      <th>Бренд</th>
+      <th>Категория</th>
+      <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
+      <th onclick="sortTable('avg_price')" class="sortable">Средняя цена ↕</th>
+      <th onclick="sortTable('cancel_revenue')" class="sortable">Отмены (руб) ↕</th>
+    </tr>`;
+    sortField = 'total_revenue';
   }
+
   if (analyticsData) renderTable(analyticsData.top);
+}
+
+function sortTable(field) {
+  if (sortField === field) sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+  else { sortField = field; sortDir = 'desc'; }
+  if (analyticsData) renderTable(analyticsData.top);
+}
+
+function copyCell(el, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = el.style.color;
+    el.style.color = 'var(--green)';
+    setTimeout(() => { el.style.color = orig; }, 600);
+  });
 }
 
 function renderTable(items) {
@@ -217,6 +213,12 @@ function renderTable(items) {
     tbody.innerHTML = '<tr><td colspan="8" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     document.getElementById('table-count').textContent = '';
     return;
+  }
+
+  // Считаем cancel данные из chart
+  const cancelMap = {};
+  if (analyticsData && analyticsData.chart) {
+    // cancel данные агрегируем по offer_id — их нет в top, поэтому используем общие суммы
   }
 
   const sorted = [...items].sort((a, b) => {
@@ -230,16 +232,33 @@ function renderTable(items) {
 
   tbody.innerHTML = sorted.map((r, i) => {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
-    return `<tr>
-      <td style="text-align:center;font-size:16px">${medal}</td>
-      <td class="code" style="font-size:11px;color:var(--accent)">${r.offer_id}</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${r.name || '—'}</td>
-      <td style="font-size:11px;color:var(--text-dim)">${r.brand || '—'}</td>
-      <td style="font-size:11px;color:var(--text-dim)">${r.category_name || '—'}</td>
-      <td style="text-align:right">${r.orders_count.toLocaleString('ru')}</td>
-      <td style="text-align:right;font-weight:bold">${r.total_qty.toLocaleString('ru')}</td>
-      <td style="text-align:right;color:var(--green)">${formatMoney(r.total_revenue)}</td>
-    </tr>`;
+    const avgPrice = r.total_qty > 0 ? Math.round(r.total_revenue / r.total_qty) : 0;
+
+    if (tableMode === 'orders') {
+      return `<tr>
+        <td style="text-align:center;font-size:14px">${medal}</td>
+        <td class="code copy-cell" style="font-size:11px;color:var(--accent);cursor:pointer"
+            onclick="copyCell(this,'${r.offer_id}')" title="Скопировать">${r.offer_id}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${r.name || '—'}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${r.brand || '—'}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${r.category_name || '—'}</td>
+        <td style="text-align:right">${r.orders_count.toLocaleString('ru')}</td>
+        <td style="text-align:right;font-weight:bold;color:var(--accent)">${r.total_qty.toLocaleString('ru')}</td>
+        <td style="text-align:right;color:var(--red,#dc3232)">${(r.cancel_qty || 0).toLocaleString('ru')}</td>
+      </tr>`;
+    } else {
+      return `<tr>
+        <td style="text-align:center;font-size:14px">${medal}</td>
+        <td class="code copy-cell" style="font-size:11px;color:var(--accent);cursor:pointer"
+            onclick="copyCell(this,'${r.offer_id}')" title="Скопировать">${r.offer_id}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${r.name || '—'}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${r.brand || '—'}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${r.category_name || '—'}</td>
+        <td style="text-align:right;font-weight:bold;color:var(--green)">${formatMoney(r.total_revenue)}</td>
+        <td style="text-align:right;color:var(--text-dim)">${avgPrice.toLocaleString('ru')} ₽</td>
+        <td style="text-align:right;color:var(--red,#dc3232)">${formatMoney(r.cancel_revenue || 0)}</td>
+      </tr>`;
+    }
   }).join('');
 }
 
@@ -273,7 +292,6 @@ function toggleChart() {
   btn.textContent = isHidden ? '▲ Свернуть' : '▼ Развернуть';
 }
 
-// Стили для таблицы
 const style = document.createElement('style');
 style.textContent = `
 .analytics-wrap { padding: 20px; }
@@ -289,20 +307,18 @@ style.textContent = `
 .analytics-card.red .card-value { color: var(--red, #dc3232); }
 .analytics-card .card-label { font-size:11px; color:var(--text-dim); margin-top:4px; text-transform:uppercase; letter-spacing:1px; }
 .analytics-chart-wrap { background:var(--surface); border:1px solid var(--border); padding:16px; margin-bottom:20px; }
-.analytics-table-wrap { background:var(--surface); border:1px solid var(--border); padding:16px; }
+.analytics-table-wrap { background:var(--surface); border:1px solid var(--border); padding:16px; overflow-x:auto; }
 .section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); }
 .chart-toggle { display:flex; gap:4px; }
 .chart-btn { background:var(--surface2); border:1px solid var(--border); padding:3px 10px; cursor:pointer; font-size:11px; color:var(--text-dim); font-family:monospace; }
 .chart-btn.active { background:var(--accent); border-color:var(--accent); color:#000; }
 .sortable { cursor:pointer; }
 .sortable:hover { color:var(--accent); }
-.analytics-table-wrap { overflow-x: auto; }
-.data-table { width: 100%; border-collapse: collapse; }
-.data-table th, .data-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
-.data-table thead th { position: sticky; top: 0; background: var(--surface); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+.data-table { width:100%; border-collapse:collapse; }
+.data-table th, .data-table td { padding:8px 12px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+.data-table thead th { position:sticky; top:0; background:var(--surface); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); }
 `;
 document.head.appendChild(style);
 
 loadAnalytics();
-
 document.getElementById('sync-btn').addEventListener('click', syncAnalytics);
