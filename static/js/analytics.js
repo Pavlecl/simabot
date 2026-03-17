@@ -172,10 +172,10 @@ function setTableMode(mode) {
       <th>Бренд</th>
       <th>Категория</th>
       <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
-      <th onclick="sortTable('total_qty')" class="sortable">Штук ↕</th>
-      <th onclick="sortTable('cancel_qty')" class="sortable">Отмен (шт) ↕</th>
+      <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
+      <th onclick="sortTable('cancel_revenue')" class="sortable">Отмены (руб) ↕</th>
     </tr>`;
-    sortField = 'total_qty';
+    sortField = 'orders_count';
   } else {
     thead.innerHTML = `<tr>
       <th style="width:36px">#</th>
@@ -243,8 +243,8 @@ function renderTable(items) {
         <td style="font-size:11px;color:var(--text-dim)">${r.brand || '—'}</td>
         <td style="font-size:11px;color:var(--text-dim)">${r.category_name || '—'}</td>
         <td style="text-align:right">${r.orders_count.toLocaleString('ru')}</td>
-        <td style="text-align:right;font-weight:bold;color:var(--accent)">${r.total_qty.toLocaleString('ru')}</td>
-        <td style="text-align:right;color:var(--red,#dc3232)">${(r.cancel_qty || 0).toLocaleString('ru')}</td>
+        <td style="text-align:right;font-weight:bold;color:var(--accent)">${formatMoney(r.total_revenue)}</td>
+        <td style="text-align:right;color:var(--red,#dc3232)">${formatMoney(r.cancel_revenue || 0)}</td>
       </tr>`;
     } else {
       return `<tr>
