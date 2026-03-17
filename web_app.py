@@ -1877,6 +1877,47 @@ async def api_analytics_orders_chart(
         ]
     }
 
+@app.get("/api/analytics/ozon-chart")
+async def api_analytics_ozon_chart(
+    user: dict = Depends(require_any_role),
+    date_from: str = "",
+    date_to: str = "",
+):
+    if not date_from:
+        date_from = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    if not date_to:
+        date_to = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api-seller.ozon.ru/v1/analytics/data",
+                json={
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "metrics": ["ordered_units", "revenue"],
+                    "dimension": ["day"],
+                    "limit": 1000,
+                    "offset": 0
+                },
+                headers=OZON_HEADERS
+            ) as resp:
+                if resp.status != 200:
+                    return {"chart": []}
+                data = await resp.json()
+
+        chart = [
+            {
+                "day": row["dimensions"][0]["id"],
+                "ordered_units": row["metrics"][0],
+                "revenue": row["metrics"][1],
+            }
+            for row in data.get("result", {}).get("data", [])
+        ]
+        return {"chart": chart}
+    except Exception as e:
+        return {"chart": [], "error": str(e)}
+
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
 # Вместо @app.on_event("startup") используем async context manager.
