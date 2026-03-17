@@ -59,8 +59,9 @@
       <div style="display:flex;gap:8px;align-items:center">
         <button class="chart-btn" id="toggle-chart-btn" onclick="toggleChart()">▲ Свернуть</button>
         <div class="chart-toggle">
-          <button class="chart-btn active" id="btn-qty" onclick="setChartMode('qty')">Штуки</button>
-          <button class="chart-btn" id="btn-revenue" onclick="setChartMode('revenue')">Выручка</button>
+          <button class="chart-btn active" id="btn-chart-qty" onclick="setChartMode('qty')">Штуки</button>
+          <button class="chart-btn" id="btn-chart-revenue" onclick="setChartMode('revenue')">Выручка</button>
+          <button class="chart-btn" id="btn-chart-orders" onclick="setChartMode('orders')">Заказы</button>
         </div>
       </div>
     </div>
@@ -79,6 +80,7 @@
           <button class="chart-btn active" id="btn-table-orders" onclick="setTableMode('orders')">Заказы</button>
           <button class="chart-btn" id="btn-table-revenue" onclick="setTableMode('revenue')">Выручка</button>
         </div>
+        <button class="btn" id="export-btn">↓ CSV</button>
       </div>
     </div>
     <div style="max-height:calc(100vh - 420px);overflow-y:auto;">
@@ -91,8 +93,8 @@
             <th>Бренд</th>
             <th>Категория</th>
             <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
-            <th onclick="sortTable('total_qty')" class="sortable">Штук ↕</th>
             <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
+            <th onclick="sortTable('cancel_revenue')" class="sortable">Отмены (руб) ↕</th>
           </tr>
         </thead>
         <tbody id="analytics-tbody">
@@ -106,5 +108,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/analytics.js?v=1773744000"></script>
+<script src="/static/js/analytics.js?v=1773745000"></script>
 {% endblock %}

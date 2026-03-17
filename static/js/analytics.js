@@ -5,8 +5,8 @@
 let analyticsData = null;
 let chartInstance = null;
 let chartMode = 'qty';
-let tableMode = 'orders'; // 'orders' или 'revenue'
-let sortField = 'total_qty';
+let tableMode = 'orders';
+let sortField = 'orders_count';
 let sortDir = 'desc';
 let analyticsSearchTimer = null;
 
@@ -117,7 +117,10 @@ function renderChart(chartData) {
 
   chartData.forEach(r => {
     if (!r.day) return;
-    const val = chartMode === 'qty' ? r.qty : r.revenue;
+    let val;
+    if (chartMode === 'qty') val = r.qty;
+    else if (chartMode === 'revenue') val = r.revenue;
+    else val = r.qty; // orders — тоже qty (кол-во заказов нет в chart, используем qty)
     if (r.status === 'sale') salesByDay[r.day] = (salesByDay[r.day] || 0) + val;
     if (r.status === 'cancel') cancelsByDay[r.day] = (cancelsByDay[r.day] || 0) + val;
   });
@@ -140,11 +143,24 @@ function renderChart(chartData) {
       responsive: true,
       plugins: {
         legend: { labels: { color: '#aaa', font: { family: 'monospace' } } },
-        tooltip: { callbacks: { label: ctx => chartMode === 'revenue' ? `${ctx.dataset.label}: ${formatMoney(ctx.raw)}` : `${ctx.dataset.label}: ${ctx.raw} шт.` } }
+        tooltip: {
+          callbacks: {
+            label: ctx => chartMode === 'revenue'
+              ? `${ctx.dataset.label}: ${formatMoney(ctx.raw)}`
+              : `${ctx.dataset.label}: ${ctx.raw} шт.`
+          }
+        }
       },
       scales: {
         x: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } },
-        y: { ticks: { color: '#666', font: { family: 'monospace', size: 10 }, callback: v => chartMode === 'revenue' ? formatMoney(v) : v }, grid: { color: '#222' } }
+        y: {
+          ticks: {
+            color: '#666',
+            font: { family: 'monospace', size: 10 },
+            callback: v => chartMode === 'revenue' ? formatMoney(v) : v
+          },
+          grid: { color: '#222' }
+        }
       }
     }
   });
@@ -152,8 +168,9 @@ function renderChart(chartData) {
 
 function setChartMode(mode) {
   chartMode = mode;
-  document.getElementById('btn-qty').classList.toggle('active', mode === 'qty');
-  document.getElementById('btn-revenue').classList.toggle('active', mode === 'revenue');
+  document.getElementById('btn-chart-qty').classList.toggle('active', mode === 'qty');
+  document.getElementById('btn-chart-revenue').classList.toggle('active', mode === 'revenue');
+  document.getElementById('btn-chart-orders').classList.toggle('active', mode === 'orders');
   if (analyticsData) renderChart(analyticsData.chart);
 }
 
@@ -162,7 +179,6 @@ function setTableMode(mode) {
   document.getElementById('btn-table-orders').classList.toggle('active', mode === 'orders');
   document.getElementById('btn-table-revenue').classList.toggle('active', mode === 'revenue');
 
-  // Обновляем заголовки таблицы
   const thead = document.getElementById('table-head');
   if (mode === 'orders') {
     thead.innerHTML = `<tr>
@@ -215,12 +231,6 @@ function renderTable(items) {
     return;
   }
 
-  // Считаем cancel данные из chart
-  const cancelMap = {};
-  if (analyticsData && analyticsData.chart) {
-    // cancel данные агрегируем по offer_id — их нет в top, поэтому используем общие суммы
-  }
-
   const sorted = [...items].sort((a, b) => {
     const av = a[sortField] ?? 0;
     const bv = b[sortField] ?? 0;
@@ -266,6 +276,43 @@ function formatMoney(v) {
   if (v >= 1000000) return (v / 1000000).toFixed(1) + ' млн ₽';
   if (v >= 1000) return (v / 1000).toFixed(0) + ' тыс ₽';
   return v.toLocaleString('ru') + ' ₽';
+}
+
+function exportTable() {
+  if (!analyticsData || !analyticsData.top) return;
+  const items = analyticsData.top;
+
+  const BOM = '\uFEFF';
+  const headers = tableMode === 'orders'
+    ? ['#', 'Артикул', 'Название', 'Бренд', 'Категория', 'Заказов', 'Выручка', 'Отмены (руб)']
+    : ['#', 'Артикул', 'Название', 'Бренд', 'Категория', 'Выручка', 'Средняя цена', 'Отмены (руб)'];
+
+  const sorted = [...items].sort((a, b) => {
+    const av = a[sortField] ?? 0; const bv = b[sortField] ?? 0;
+    if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return sortDir === 'asc' ? av - bv : bv - av;
+  });
+
+  const rows = sorted.map((r, i) => {
+    const avgPrice = r.total_qty > 0 ? Math.round(r.total_revenue / r.total_qty) : 0;
+    if (tableMode === 'orders') {
+      return [i+1, r.offer_id, r.name || '', r.brand || '', r.category_name || '',
+        r.orders_count, r.total_revenue, r.cancel_revenue || 0];
+    } else {
+      return [i+1, r.offer_id, r.name || '', r.brand || '', r.category_name || '',
+        r.total_revenue, avgPrice, r.cancel_revenue || 0];
+    }
+  });
+
+  const csv = BOM + [headers, ...rows].map(row => row.map(v => `"${v}"`).join(';')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `analytics_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✓ Таблица скачана');
 }
 
 async function syncAnalytics() {
@@ -322,3 +369,4 @@ document.head.appendChild(style);
 
 loadAnalytics();
 document.getElementById('sync-btn').addEventListener('click', syncAnalytics);
+document.getElementById('export-btn').addEventListener('click', exportTable);
