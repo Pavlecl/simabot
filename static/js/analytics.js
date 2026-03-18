@@ -4,7 +4,7 @@
 
 let analyticsData = null;
 let chartInstance = null;
-let chartMode = 'qty';
+let chartMode = 'orders'; // По умолчанию — Заказы
 let tableMode = 'orders';
 let sortField = 'orders_count';
 let sortDir = 'desc';
@@ -30,6 +30,7 @@ function clearAnalyticsFilters() {
   document.getElementById('date-to').value = to.toISOString().slice(0, 10);
   document.getElementById('date-from').value = from.toISOString().slice(0, 10);
   document.getElementById('status-filter').value = '';
+  document.getElementById('direction-filter').value = '';
   document.getElementById('brand-filter').value = '';
   document.getElementById('category-filter').value = '';
   document.getElementById('search-input').value = '';
@@ -40,6 +41,7 @@ function buildAnalyticsUrl() {
   const dateFrom = document.getElementById('date-from').value;
   const dateTo = document.getElementById('date-to').value;
   const status = document.getElementById('status-filter').value;
+  const direction = document.getElementById('direction-filter').value;
   const brand = document.getElementById('brand-filter').value;
   const categoryId = document.getElementById('category-filter').value;
   const search = document.getElementById('search-input').value.trim();
@@ -51,6 +53,11 @@ function buildAnalyticsUrl() {
   if (brand) url += `brand=${encodeURIComponent(brand)}&`;
   if (categoryId) url += `category_id=${categoryId}&`;
   if (search) url += `search=${encodeURIComponent(search)}&`;
+
+  // Фильтр направления — добавляем к поиску по бренду
+  if (direction === 'uzspace') url += `brand=${encodeURIComponent('UZSPACE')}&`;
+  else if (direction === 'sima') url += `exclude_brand=${encodeURIComponent('UZSPACE')}&`;
+
   return url;
 }
 
@@ -75,7 +82,12 @@ async function loadAnalytics() {
     document.getElementById('card-revenue').textContent = formatMoney(totalRevenue);
     document.getElementById('card-cancels').textContent = totalCancels.toLocaleString('ru');
 
-    renderChart(data.chart);
+    // По умолчанию показываем режим Заказы
+    if (chartMode === 'orders') {
+      loadOrdersChart();
+    } else {
+      renderChart(data.chart);
+    }
     renderTable(data.top);
 
   } catch(e) {
@@ -117,10 +129,7 @@ function renderChart(chartData) {
 
   chartData.forEach(r => {
     if (!r.day) return;
-    let val;
-    if (chartMode === 'qty') val = r.qty;
-    else if (chartMode === 'revenue') val = r.revenue;
-    else val = r.qty; // orders — тоже qty (кол-во заказов нет в chart, используем qty)
+    const val = chartMode === 'qty' ? r.qty : r.revenue;
     if (r.status === 'sale') salesByDay[r.day] = (salesByDay[r.day] || 0) + val;
     if (r.status === 'cancel') cancelsByDay[r.day] = (cancelsByDay[r.day] || 0) + val;
   });
@@ -143,39 +152,14 @@ function renderChart(chartData) {
       responsive: true,
       plugins: {
         legend: { labels: { color: '#aaa', font: { family: 'monospace' } } },
-        tooltip: {
-          callbacks: {
-            label: ctx => chartMode === 'revenue'
-              ? `${ctx.dataset.label}: ${formatMoney(ctx.raw)}`
-              : `${ctx.dataset.label}: ${ctx.raw} шт.`
-          }
-        }
+        tooltip: { callbacks: { label: ctx => chartMode === 'revenue' ? `${ctx.dataset.label}: ${formatMoney(ctx.raw)}` : `${ctx.dataset.label}: ${ctx.raw} шт.` } }
       },
       scales: {
         x: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } },
-        y: {
-          ticks: {
-            color: '#666',
-            font: { family: 'monospace', size: 10 },
-            callback: v => chartMode === 'revenue' ? formatMoney(v) : v
-          },
-          grid: { color: '#222' }
-        }
+        y: { ticks: { color: '#666', font: { family: 'monospace', size: 10 }, callback: v => chartMode === 'revenue' ? formatMoney(v) : v }, grid: { color: '#222' } }
       }
     }
   });
-}
-
-function setChartMode(mode) {
-  chartMode = mode;
-  document.getElementById('btn-chart-qty').classList.toggle('active', mode === 'qty');
-  document.getElementById('btn-chart-revenue').classList.toggle('active', mode === 'revenue');
-  document.getElementById('btn-chart-orders').classList.toggle('active', mode === 'orders');
-  if (mode === 'orders') {
-    loadOrdersChart();
-  } else {
-    if (analyticsData) renderChart(analyticsData.chart);
-  }
 }
 
 async function loadOrdersChart() {
@@ -219,11 +203,17 @@ function renderOrdersChart(chartData) {
           label: 'Выручка (руб)',
           data: revenueData,
           backgroundColor: 'rgba(100,200,100,0.3)',
-          borderColor: 'rgba(100,200,100,0.8)',
-          borderWidth: 1,
+          borderColor: 'rgba(100,200,100,0.9)',
+          borderWidth: 2,
           borderRadius: 3,
           type: 'line',
           yAxisID: 'y2',
+          pointRadius: 6,
+          pointHoverRadius: 9,
+          pointBackgroundColor: 'rgba(100,200,100,0.9)',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          tension: 0.3,
         }
       ]
     },
@@ -242,10 +232,22 @@ function renderOrdersChart(chartData) {
       scales: {
         x: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } },
         y: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' }, position: 'left' },
-        y2: { ticks: { color: '#444', font: { family: 'monospace', size: 10 }, callback: v => formatMoney(v) }, grid: { display: false }, position: 'right' }
+        y2: { ticks: { color: '#4a4', font: { family: 'monospace', size: 10 }, callback: v => formatMoney(v) }, grid: { display: false }, position: 'right' }
       }
     }
   });
+}
+
+function setChartMode(mode) {
+  chartMode = mode;
+  document.getElementById('btn-chart-qty').classList.toggle('active', mode === 'qty');
+  document.getElementById('btn-chart-revenue').classList.toggle('active', mode === 'revenue');
+  document.getElementById('btn-chart-orders').classList.toggle('active', mode === 'orders');
+  if (mode === 'orders') {
+    loadOrdersChart();
+  } else {
+    if (analyticsData) renderChart(analyticsData.chart);
+  }
 }
 
 function setTableMode(mode) {
@@ -305,7 +307,16 @@ function renderTable(items) {
     return;
   }
 
-  const sorted = [...items].sort((a, b) => {
+  // Фильтр направления на фронте
+  const direction = document.getElementById('direction-filter').value;
+  let filtered = items;
+  if (direction === 'uzspace') {
+    filtered = items.filter(r => (r.brand || '').toUpperCase() === 'UZSPACE');
+  } else if (direction === 'sima') {
+    filtered = items.filter(r => (r.brand || '').toUpperCase() !== 'UZSPACE');
+  }
+
+  const sorted = [...filtered].sort((a, b) => {
     const av = a[sortField] ?? 0;
     const bv = b[sortField] ?? 0;
     if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
@@ -354,7 +365,11 @@ function formatMoney(v) {
 
 function exportTable() {
   if (!analyticsData || !analyticsData.top) return;
-  const items = analyticsData.top;
+
+  const direction = document.getElementById('direction-filter').value;
+  let items = analyticsData.top;
+  if (direction === 'uzspace') items = items.filter(r => (r.brand || '').toUpperCase() === 'UZSPACE');
+  else if (direction === 'sima') items = items.filter(r => (r.brand || '').toUpperCase() !== 'UZSPACE');
 
   const BOM = '\uFEFF';
   const headers = tableMode === 'orders'
@@ -369,13 +384,8 @@ function exportTable() {
 
   const rows = sorted.map((r, i) => {
     const avgPrice = r.total_qty > 0 ? Math.round(r.total_revenue / r.total_qty) : 0;
-    if (tableMode === 'orders') {
-      return [i+1, r.offer_id, r.name || '', r.brand || '', r.category_name || '',
-        r.orders_count, r.total_revenue, r.cancel_revenue || 0];
-    } else {
-      return [i+1, r.offer_id, r.name || '', r.brand || '', r.category_name || '',
-        r.total_revenue, avgPrice, r.cancel_revenue || 0];
-    }
+    if (tableMode === 'orders') return [i+1, r.offer_id, r.name||'', r.brand||'', r.category_name||'', r.orders_count, r.total_revenue, r.cancel_revenue||0];
+    else return [i+1, r.offer_id, r.name||'', r.brand||'', r.category_name||'', r.total_revenue, avgPrice, r.cancel_revenue||0];
   });
 
   const csv = BOM + [headers, ...rows].map(row => row.map(v => `"${v}"`).join(';')).join('\n');
