@@ -2002,8 +2002,52 @@ async def api_analytics_top_by_orders(
                 "cancellations": int(r["metrics"][2]),
             })
 
-        top.sort(key=lambda x: x["ordered_units"], reverse=True)
-        return {"top": top}
+            # Для неизвестных SKU — подтягиваем offer_id из Ozon
+            unknown_skus = [int(r["dimensions"][0]["id"]) for r in all_items
+                            if int(r["dimensions"][0]["id"]) not in sku_map]
+
+            if unknown_skus:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        for i in range(0, len(unknown_skus), 100):
+                            batch = unknown_skus[i:i + 100]
+                            async with session.post(
+                                    "https://api-seller.ozon.ru/v3/product/info/list",
+                                    json={"sku": batch},
+                                    headers=OZON_HEADERS
+                            ) as resp:
+                                if resp.status == 200:
+                                    d = await resp.json()
+                                    for it in d.get("items", []):
+                                        for src in it.get("sources", []):
+                                            s = src.get("sku")
+                                            if s in unknown_skus:
+                                                sku_map[s] = {
+                                                    "offer_id": it.get("offer_id", f"sku:{s}"),
+                                                    "name": it.get("name", ""),
+                                                    "brand": "",
+                                                    "category_name": ""
+                                                }
+                except Exception:
+                    pass
+
+            top = []
+            for r in all_items:
+                sku = int(r["dimensions"][0]["id"])
+                name_from_ozon = r["dimensions"][0]["name"]
+                prod = sku_map.get(sku, {})
+                top.append({
+                    "offer_id": prod.get("offer_id", f"sku:{sku}"),
+                    "name": prod.get("name") or name_from_ozon,
+                    "brand": prod.get("brand", ""),
+                    "category_name": prod.get("category_name", ""),
+                    "ordered_units": int(r["metrics"][0]),
+                    "revenue": int(r["metrics"][1]),
+                    "cancellations": int(r["metrics"][2]),
+                })
+
+            top.sort(key=lambda x: x["ordered_units"], reverse=True)
+            return {"top": top}
 
     except Exception as e:
         return {"top": [], "error": str(e)}
