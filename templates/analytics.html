@@ -18,6 +18,11 @@
         <option value="sale">Продажи</option>
         <option value="cancel">Отмены</option>
       </select>
+      <select id="direction-filter" onchange="loadAnalytics()">
+        <option value="">Все направления</option>
+        <option value="uzspace">UZSPACE</option>
+        <option value="sima">Сима</option>
+      </select>
       <select id="brand-filter" onchange="loadAnalytics()">
         <option value="">Все бренды</option>
       </select>
@@ -59,9 +64,9 @@
       <div style="display:flex;gap:8px;align-items:center">
         <button class="chart-btn" id="toggle-chart-btn" onclick="toggleChart()">▲ Свернуть</button>
         <div class="chart-toggle">
-          <button class="chart-btn active" id="btn-chart-qty" onclick="setChartMode('qty')">Штуки</button>
+          <button class="chart-btn" id="btn-chart-qty" onclick="setChartMode('qty')">Штуки</button>
           <button class="chart-btn" id="btn-chart-revenue" onclick="setChartMode('revenue')">Выручка</button>
-          <button class="chart-btn" id="btn-chart-orders" onclick="setChartMode('orders')">Заказы</button>
+          <button class="chart-btn active" id="btn-chart-orders" onclick="setChartMode('orders')">Заказы</button>
         </div>
       </div>
     </div>
@@ -108,5 +113,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="/static/js/analytics.js?v=1773746000"></script>
+<script src="/static/js/analytics.js?v=1773866000"></script>
 {% endblock %}
