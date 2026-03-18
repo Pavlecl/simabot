@@ -906,6 +906,8 @@ async def sync_products_catalog() -> dict:
                                 images = it.get("primary_image") or it.get("images", [])
                                 img = images[0] if isinstance(images, list) and images else (images or "")
                                 sources = it.get("sources", [])
+                                sku_fbs = next((s["sku"] for s in sources if s.get("source") == "fbs"), None)
+                                sku_sds = next((s["sku"] for s in sources if s.get("source") == "sds"), None)
                                 if sources:
                                     print(f"SOURCES SAMPLE: {sources[:2]}", flush=True)
                                 warehouse_names = []
@@ -922,6 +924,8 @@ async def sync_products_catalog() -> dict:
                                     "category_id": cat_id,
                                     "category_name": category_name_map.get(cat_id, ""),
                                     "warehouse_type": warehouse,
+                                    "sku_fbs": sku_fbs,
+                                    "sku_sds": sku_sds,
                                 }
                 except Exception as e:
                     import logging; logging.warning(f"sync info error: {e}")
@@ -985,6 +989,8 @@ async def sync_products_catalog() -> dict:
                     category_id=info.get("category_id"),
                     category_name=info.get("category_name") or "",
                     warehouse_type=info.get("warehouse_type") or "",
+                    sku_fbs=info.get("sku_fbs"),
+                    sku_sds=info.get("sku_sds"),
                     brand=brand_map.get(offer_id) or "",
                     price=int(float(price_data.get("price") or 0)),
                     old_price=int(float(price_data.get("old_price") or 0)),
@@ -1922,6 +1928,85 @@ async def api_analytics_ozon_chart(
         return {"chart": chart}
     except Exception as e:
         return {"chart": [], "error": str(e)}
+
+@app.get("/api/analytics/top-by-orders")
+async def api_analytics_top_by_orders(
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db),
+    date_from: str = "",
+    date_to: str = "",
+):
+    if not date_from:
+        date_from = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    if not date_to:
+        date_to = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        # Получаем топ по SKU из Ozon Analytics
+        all_items = []
+        offset = 0
+        async with aiohttp.ClientSession() as session:
+            while True:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v1/analytics/data",
+                    json={
+                        "date_from": date_from,
+                        "date_to": date_to,
+                        "metrics": ["ordered_units", "revenue", "cancellations"],
+                        "dimension": ["sku"],
+                        "limit": 1000,
+                        "offset": offset
+                    },
+                    headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                    rows = data.get("result", {}).get("data", [])
+                    if not rows:
+                        break
+                    all_items.extend(rows)
+                    if len(rows) < 1000:
+                        break
+                    offset += 1000
+
+        if not all_items:
+            return {"top": []}
+
+        # Строим маппинг SKU → продукт из БД
+        skus = [int(r["dimensions"][0]["id"]) for r in all_items]
+        from sqlalchemy import or_
+        prod_res = await db.execute(
+            select(Product.offer_id, Product.name, Product.brand,
+                   Product.category_name, Product.sku_fbs, Product.sku_sds)
+            .where(or_(Product.sku_fbs.in_(skus), Product.sku_sds.in_(skus)))
+        )
+        sku_map = {}
+        for p in prod_res.all():
+            info = {"offer_id": p.offer_id, "name": p.name, "brand": p.brand, "category_name": p.category_name}
+            if p.sku_fbs: sku_map[p.sku_fbs] = info
+            if p.sku_sds: sku_map[p.sku_sds] = info
+
+        top = []
+        for r in all_items:
+            sku = int(r["dimensions"][0]["id"])
+            name_from_ozon = r["dimensions"][0]["name"]
+            prod = sku_map.get(sku, {})
+            top.append({
+                "offer_id": prod.get("offer_id", f"sku:{sku}"),
+                "name": prod.get("name") or name_from_ozon,
+                "brand": prod.get("brand", ""),
+                "category_name": prod.get("category_name", ""),
+                "ordered_units": int(r["metrics"][0]),
+                "revenue": int(r["metrics"][1]),
+                "cancellations": int(r["metrics"][2]),
+            })
+
+        top.sort(key=lambda x: x["ordered_units"], reverse=True)
+        return {"top": top}
+
+    except Exception as e:
+        return {"top": [], "error": str(e)}
 
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.

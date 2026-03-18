@@ -112,6 +112,8 @@ class Product(Base):
     category_id = Column(BigInteger, nullable=True)           # ID категории Ozon
     category_name = Column(String, nullable=True)             # Название категории
     warehouse_type = Column(String, nullable=True)            # fbs/fbo/sds
+    sku_fbs = Column(BigInteger, nullable=True)  # SKU для FBS
+    sku_sds = Column(BigInteger, nullable=True)  # SKU для SDS
 
     updated_at = Column(DateTime, nullable=True)              # Последнее обновление с Ozon
 
