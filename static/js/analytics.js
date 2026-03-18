@@ -2,11 +2,12 @@
 // АНАЛИТИКА ПРОДАЖ
 // =====================================================================
 
-let analyticsData = null;
+let analyticsData = null;   // данные из sales_history (для карточек и графика штуки/выручка)
+let ozonTopData = null;     // данные из Ozon Analytics API (для таблицы)
 let chartInstance = null;
-let chartMode = 'orders'; // По умолчанию — Заказы
+let chartMode = 'orders';
 let tableMode = 'orders';
-let sortField = 'orders_count';
+let sortField = 'ordered_units';
 let sortDir = 'desc';
 let analyticsSearchTimer = null;
 
@@ -37,11 +38,15 @@ function clearAnalyticsFilters() {
   loadAnalytics();
 }
 
-function buildAnalyticsUrl() {
+function getDateParams() {
   const dateFrom = document.getElementById('date-from').value;
   const dateTo = document.getElementById('date-to').value;
+  return { dateFrom, dateTo };
+}
+
+function buildSalesUrl() {
+  const { dateFrom, dateTo } = getDateParams();
   const status = document.getElementById('status-filter').value;
-  const direction = document.getElementById('direction-filter').value;
   const brand = document.getElementById('brand-filter').value;
   const categoryId = document.getElementById('category-filter').value;
   const search = document.getElementById('search-input').value.trim();
@@ -53,11 +58,14 @@ function buildAnalyticsUrl() {
   if (brand) url += `brand=${encodeURIComponent(brand)}&`;
   if (categoryId) url += `category_id=${categoryId}&`;
   if (search) url += `search=${encodeURIComponent(search)}&`;
+  return url;
+}
 
-  // Фильтр направления — добавляем к поиску по бренду
-  if (direction === 'uzspace') url += `brand=${encodeURIComponent('UZSPACE')}&`;
-  else if (direction === 'sima') url += `exclude_brand=${encodeURIComponent('UZSPACE')}&`;
-
+function buildOzonTopUrl() {
+  const { dateFrom, dateTo } = getDateParams();
+  let url = '/api/analytics/top-by-orders?';
+  if (dateFrom) url += `date_from=${dateFrom}&`;
+  if (dateTo) url += `date_to=${dateTo}&`;
   return url;
 }
 
@@ -65,30 +73,38 @@ async function loadAnalytics() {
   document.getElementById('analytics-tbody').innerHTML =
     '<tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
+  // Загружаем параллельно: sales_history для карточек/графика и Ozon API для таблицы
   try {
-    const data = await fetch(buildAnalyticsUrl()).then(r => r.json());
-    analyticsData = data;
+    const [salesData, ozonData] = await Promise.all([
+      fetch(buildSalesUrl()).then(r => r.json()),
+      fetch(buildOzonTopUrl()).then(r => r.json()),
+    ]);
 
-    fillFilters(data.filters);
+    analyticsData = salesData;
+    ozonTopData = ozonData.top || [];
 
-    const chartCancels = data.chart.filter(r => r.status === 'cancel');
-    const totalOrders = data.top.reduce((s, r) => s + r.orders_count, 0);
-    const totalQty = data.top.reduce((s, r) => s + r.total_qty, 0);
-    const totalRevenue = data.top.reduce((s, r) => s + r.total_revenue, 0);
-    const totalCancels = chartCancels.reduce((s, r) => s + r.qty, 0);
+    fillFilters(salesData.filters);
+
+    // Карточки из Ozon API (реальные данные)
+    const totalOrders = ozonTopData.reduce((s, r) => s + r.ordered_units, 0);
+    const totalRevenue = ozonTopData.reduce((s, r) => s + r.revenue, 0);
+    const totalCancels = ozonTopData.reduce((s, r) => s + r.cancellations, 0);
+    const totalQty = totalOrders; // ordered_units = штуки заказанные
 
     document.getElementById('card-orders').textContent = totalOrders.toLocaleString('ru');
     document.getElementById('card-qty').textContent = totalQty.toLocaleString('ru');
     document.getElementById('card-revenue').textContent = formatMoney(totalRevenue);
     document.getElementById('card-cancels').textContent = totalCancels.toLocaleString('ru');
 
-    // По умолчанию показываем режим Заказы
+    // График
     if (chartMode === 'orders') {
       loadOrdersChart();
     } else {
-      renderChart(data.chart);
+      renderChart(salesData.chart);
     }
-    renderTable(data.top);
+
+    // Таблица из Ozon API
+    renderTable(ozonTopData);
 
   } catch(e) {
     document.getElementById('analytics-tbody').innerHTML =
@@ -163,8 +179,7 @@ function renderChart(chartData) {
 }
 
 async function loadOrdersChart() {
-  const dateFrom = document.getElementById('date-from').value;
-  const dateTo = document.getElementById('date-to').value;
+  const { dateFrom, dateTo } = getDateParams();
   let url = '/api/analytics/ozon-chart?';
   if (dateFrom) url += `date_from=${dateFrom}&`;
   if (dateTo) url += `date_to=${dateTo}&`;
@@ -179,8 +194,6 @@ async function loadOrdersChart() {
 
 function renderOrdersChart(chartData) {
   const labels = chartData.map(r => { const p = r.day.split('-'); return p[2] + '.' + p[1]; });
-  const unitsData = chartData.map(r => r.ordered_units);
-  const revenueData = chartData.map(r => r.revenue);
 
   if (chartInstance) chartInstance.destroy();
 
@@ -192,28 +205,20 @@ function renderOrdersChart(chartData) {
       datasets: [
         {
           label: 'Заказано (шт)',
-          data: unitsData,
+          data: chartData.map(r => r.ordered_units),
           backgroundColor: 'rgba(255,106,0,0.7)',
           borderColor: 'rgba(255,106,0,1)',
-          borderWidth: 1,
-          borderRadius: 3,
-          yAxisID: 'y',
+          borderWidth: 1, borderRadius: 3, yAxisID: 'y',
         },
         {
           label: 'Выручка (руб)',
-          data: revenueData,
+          data: chartData.map(r => r.revenue),
           backgroundColor: 'rgba(100,200,100,0.3)',
           borderColor: 'rgba(100,200,100,0.9)',
-          borderWidth: 2,
-          borderRadius: 3,
-          type: 'line',
-          yAxisID: 'y2',
-          pointRadius: 6,
-          pointHoverRadius: 9,
+          borderWidth: 2, type: 'line', yAxisID: 'y2',
+          pointRadius: 6, pointHoverRadius: 9,
           pointBackgroundColor: 'rgba(100,200,100,0.9)',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          tension: 0.3,
+          pointBorderColor: '#fff', pointBorderWidth: 2, tension: 0.3,
         }
       ]
     },
@@ -221,13 +226,7 @@ function renderOrdersChart(chartData) {
       responsive: true,
       plugins: {
         legend: { labels: { color: '#aaa', font: { family: 'monospace' } } },
-        tooltip: {
-          callbacks: {
-            label: ctx => ctx.datasetIndex === 0
-              ? `${ctx.dataset.label}: ${ctx.raw} шт.`
-              : `${ctx.dataset.label}: ${formatMoney(ctx.raw)}`
-          }
-        }
+        tooltip: { callbacks: { label: ctx => ctx.datasetIndex === 0 ? `${ctx.dataset.label}: ${ctx.raw} шт.` : `${ctx.dataset.label}: ${formatMoney(ctx.raw)}` } }
       },
       scales: {
         x: { ticks: { color: '#666', font: { family: 'monospace', size: 10 } }, grid: { color: '#222' } },
@@ -243,11 +242,8 @@ function setChartMode(mode) {
   document.getElementById('btn-chart-qty').classList.toggle('active', mode === 'qty');
   document.getElementById('btn-chart-revenue').classList.toggle('active', mode === 'revenue');
   document.getElementById('btn-chart-orders').classList.toggle('active', mode === 'orders');
-  if (mode === 'orders') {
-    loadOrdersChart();
-  } else {
-    if (analyticsData) renderChart(analyticsData.chart);
-  }
+  if (mode === 'orders') loadOrdersChart();
+  else if (analyticsData) renderChart(analyticsData.chart);
 }
 
 function setTableMode(mode) {
@@ -260,35 +256,31 @@ function setTableMode(mode) {
     thead.innerHTML = `<tr>
       <th style="width:36px">#</th>
       <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
-      <th>Название</th>
-      <th>Бренд</th>
-      <th>Категория</th>
-      <th onclick="sortTable('orders_count')" class="sortable">Заказов ↕</th>
-      <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
-      <th onclick="sortTable('cancel_revenue')" class="sortable">Отмены (руб) ↕</th>
+      <th>Название</th><th>Бренд</th><th>Категория</th>
+      <th onclick="sortTable('ordered_units')" class="sortable">Заказано (шт) ↕</th>
+      <th onclick="sortTable('revenue')" class="sortable">Выручка ↕</th>
+      <th onclick="sortTable('cancellations')" class="sortable">Отмен (шт) ↕</th>
     </tr>`;
-    sortField = 'orders_count';
+    sortField = 'ordered_units';
   } else {
     thead.innerHTML = `<tr>
       <th style="width:36px">#</th>
       <th onclick="sortTable('offer_id')" class="sortable">Артикул ↕</th>
-      <th>Название</th>
-      <th>Бренд</th>
-      <th>Категория</th>
-      <th onclick="sortTable('total_revenue')" class="sortable">Выручка ↕</th>
+      <th>Название</th><th>Бренд</th><th>Категория</th>
+      <th onclick="sortTable('revenue')" class="sortable">Выручка ↕</th>
       <th onclick="sortTable('avg_price')" class="sortable">Средняя цена ↕</th>
-      <th onclick="sortTable('cancel_revenue')" class="sortable">Отмены (руб) ↕</th>
+      <th onclick="sortTable('cancellations')" class="sortable">Отмен (шт) ↕</th>
     </tr>`;
-    sortField = 'total_revenue';
+    sortField = 'revenue';
   }
 
-  if (analyticsData) renderTable(analyticsData.top);
+  if (ozonTopData) renderTable(ozonTopData);
 }
 
 function sortTable(field) {
   if (sortField === field) sortDir = sortDir === 'desc' ? 'asc' : 'desc';
   else { sortField = field; sortDir = 'desc'; }
-  if (analyticsData) renderTable(analyticsData.top);
+  if (ozonTopData) renderTable(ozonTopData);
 }
 
 function copyCell(el, text) {
@@ -296,6 +288,21 @@ function copyCell(el, text) {
     const orig = el.style.color;
     el.style.color = 'var(--green)';
     setTimeout(() => { el.style.color = orig; }, 600);
+  });
+}
+
+function applyFrontFilters(items) {
+  const direction = document.getElementById('direction-filter').value;
+  const search = document.getElementById('search-input').value.trim().toLowerCase();
+  const brand = document.getElementById('brand-filter').value;
+  const categoryFilter = document.getElementById('category-filter').value;
+
+  return items.filter(r => {
+    if (direction === 'uzspace' && (r.brand || '').toUpperCase() !== 'UZSPACE') return false;
+    if (direction === 'sima' && (r.brand || '').toUpperCase() === 'UZSPACE') return false;
+    if (brand && (r.brand || '') !== brand) return false;
+    if (search && !r.offer_id.toLowerCase().includes(search) && !(r.name || '').toLowerCase().includes(search)) return false;
+    return true;
   });
 }
 
@@ -307,18 +314,15 @@ function renderTable(items) {
     return;
   }
 
-  // Фильтр направления на фронте
-  const direction = document.getElementById('direction-filter').value;
-  let filtered = items;
-  if (direction === 'uzspace') {
-    filtered = items.filter(r => (r.brand || '').toUpperCase() === 'UZSPACE');
-  } else if (direction === 'sima') {
-    filtered = items.filter(r => (r.brand || '').toUpperCase() !== 'UZSPACE');
-  }
+  const filtered = applyFrontFilters(items);
 
   const sorted = [...filtered].sort((a, b) => {
-    const av = a[sortField] ?? 0;
-    const bv = b[sortField] ?? 0;
+    let av = a[sortField] ?? 0;
+    let bv = b[sortField] ?? 0;
+    if (sortField === 'avg_price') {
+      av = a.ordered_units > 0 ? a.revenue / a.ordered_units : 0;
+      bv = b.ordered_units > 0 ? b.revenue / b.ordered_units : 0;
+    }
     if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
     return sortDir === 'asc' ? av - bv : bv - av;
   });
@@ -327,31 +331,32 @@ function renderTable(items) {
 
   tbody.innerHTML = sorted.map((r, i) => {
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
-    const avgPrice = r.total_qty > 0 ? Math.round(r.total_revenue / r.total_qty) : 0;
+    const avgPrice = r.ordered_units > 0 ? Math.round(r.revenue / r.ordered_units) : 0;
+    const safeId = r.offer_id.replace(/'/g, "\\'");
 
     if (tableMode === 'orders') {
       return `<tr>
         <td style="text-align:center;font-size:14px">${medal}</td>
         <td class="code copy-cell" style="font-size:11px;color:var(--accent);cursor:pointer"
-            onclick="copyCell(this,'${r.offer_id}')" title="Скопировать">${r.offer_id}</td>
+            onclick="copyCell(this,'${safeId}')" title="Скопировать">${r.offer_id}</td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${r.name || '—'}</td>
         <td style="font-size:11px;color:var(--text-dim)">${r.brand || '—'}</td>
         <td style="font-size:11px;color:var(--text-dim)">${r.category_name || '—'}</td>
-        <td style="text-align:right">${r.orders_count.toLocaleString('ru')}</td>
-        <td style="text-align:right;font-weight:bold;color:var(--accent)">${formatMoney(r.total_revenue)}</td>
-        <td style="text-align:right;color:var(--red,#dc3232)">${formatMoney(r.cancel_revenue || 0)}</td>
+        <td style="text-align:right;font-weight:bold;color:var(--accent)">${r.ordered_units.toLocaleString('ru')}</td>
+        <td style="text-align:right">${formatMoney(r.revenue)}</td>
+        <td style="text-align:right;color:var(--red,#dc3232)">${r.cancellations.toLocaleString('ru')}</td>
       </tr>`;
     } else {
       return `<tr>
         <td style="text-align:center;font-size:14px">${medal}</td>
         <td class="code copy-cell" style="font-size:11px;color:var(--accent);cursor:pointer"
-            onclick="copyCell(this,'${r.offer_id}')" title="Скопировать">${r.offer_id}</td>
+            onclick="copyCell(this,'${safeId}')" title="Скопировать">${r.offer_id}</td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${r.name || '—'}</td>
         <td style="font-size:11px;color:var(--text-dim)">${r.brand || '—'}</td>
         <td style="font-size:11px;color:var(--text-dim)">${r.category_name || '—'}</td>
-        <td style="text-align:right;font-weight:bold;color:var(--green)">${formatMoney(r.total_revenue)}</td>
+        <td style="text-align:right;font-weight:bold;color:var(--green)">${formatMoney(r.revenue)}</td>
         <td style="text-align:right;color:var(--text-dim)">${avgPrice.toLocaleString('ru')} ₽</td>
-        <td style="text-align:right;color:var(--red,#dc3232)">${formatMoney(r.cancel_revenue || 0)}</td>
+        <td style="text-align:right;color:var(--red,#dc3232)">${r.cancellations.toLocaleString('ru')}</td>
       </tr>`;
     }
   }).join('');
@@ -364,28 +369,23 @@ function formatMoney(v) {
 }
 
 function exportTable() {
-  if (!analyticsData || !analyticsData.top) return;
-
-  const direction = document.getElementById('direction-filter').value;
-  let items = analyticsData.top;
-  if (direction === 'uzspace') items = items.filter(r => (r.brand || '').toUpperCase() === 'UZSPACE');
-  else if (direction === 'sima') items = items.filter(r => (r.brand || '').toUpperCase() !== 'UZSPACE');
-
-  const BOM = '\uFEFF';
-  const headers = tableMode === 'orders'
-    ? ['#', 'Артикул', 'Название', 'Бренд', 'Категория', 'Заказов', 'Выручка', 'Отмены (руб)']
-    : ['#', 'Артикул', 'Название', 'Бренд', 'Категория', 'Выручка', 'Средняя цена', 'Отмены (руб)'];
-
-  const sorted = [...items].sort((a, b) => {
-    const av = a[sortField] ?? 0; const bv = b[sortField] ?? 0;
-    if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+  if (!ozonTopData) return;
+  const filtered = applyFrontFilters(ozonTopData);
+  const sorted = [...filtered].sort((a, b) => {
+    let av = a[sortField] ?? 0, bv = b[sortField] ?? 0;
+    if (sortField === 'avg_price') { av = a.ordered_units > 0 ? a.revenue / a.ordered_units : 0; bv = b.ordered_units > 0 ? b.revenue / b.ordered_units : 0; }
     return sortDir === 'asc' ? av - bv : bv - av;
   });
 
+  const BOM = '\uFEFF';
+  const headers = tableMode === 'orders'
+    ? ['#', 'Артикул', 'Название', 'Бренд', 'Категория', 'Заказано (шт)', 'Выручка', 'Отмен (шт)']
+    : ['#', 'Артикул', 'Название', 'Бренд', 'Категория', 'Выручка', 'Средняя цена', 'Отмен (шт)'];
+
   const rows = sorted.map((r, i) => {
-    const avgPrice = r.total_qty > 0 ? Math.round(r.total_revenue / r.total_qty) : 0;
-    if (tableMode === 'orders') return [i+1, r.offer_id, r.name||'', r.brand||'', r.category_name||'', r.orders_count, r.total_revenue, r.cancel_revenue||0];
-    else return [i+1, r.offer_id, r.name||'', r.brand||'', r.category_name||'', r.total_revenue, avgPrice, r.cancel_revenue||0];
+    const avgPrice = r.ordered_units > 0 ? Math.round(r.revenue / r.ordered_units) : 0;
+    if (tableMode === 'orders') return [i+1, r.offer_id, r.name||'', r.brand||'', r.category_name||'', r.ordered_units, r.revenue, r.cancellations];
+    else return [i+1, r.offer_id, r.name||'', r.brand||'', r.category_name||'', r.revenue, avgPrice, r.cancellations];
   });
 
   const csv = BOM + [headers, ...rows].map(row => row.map(v => `"${v}"`).join(';')).join('\n');
