@@ -40,7 +40,11 @@ if not _admin_id_raw.isdigit():
     raise ValueError(f"ADMIN_ID должен быть числом, получено: {_admin_id_raw!r}")
 ADMIN_ID = int(_admin_id_raw)
 
-bot = Bot(token=BOT_TOKEN)
+from aiohttp_socks import ProxyConnector
+from aiogram.client.session.aiohttp import AiohttpSession
+connector = ProxyConnector.from_url('socks5://rjIv9djjgH:ngskc40WuE@72.56.17.207:1080')
+session = AiohttpSession(connector=connector)
+bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 analyzer = OzonAnalytics()
