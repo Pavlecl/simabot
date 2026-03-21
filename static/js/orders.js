@@ -1,5 +1,5 @@
-
 let sortAcceptedDir = 'asc';
+let selectedPostings = new Set();
 
 function debounceSearch() {
   clearTimeout(searchTimer);
@@ -32,7 +32,7 @@ function buildOrdersUrl(page, perPage = 50) {
 async function loadOrders(page) {
   currentPage = page;
   document.getElementById('orders-body').innerHTML =
-    '<tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>';
+    '<tr><td colspan="12" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
   try {
     const data = await fetch(buildOrdersUrl(page)).then(r => r.json());
@@ -49,14 +49,111 @@ async function loadOrders(page) {
     document.getElementById('next-btn').disabled = page >= totalPages;
   } catch(e) {
     document.getElementById('orders-body').innerHTML =
-      `<tr><td colspan="9" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>`;
+      `<tr><td colspan="12" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>`;
   }
 }
 
+// =====================================================================
+// МУЛЬТИСЕЛЕКТ
+// =====================================================================
+function toggleRowSelect(cb, postingNumber) {
+  if (cb.checked) {
+    selectedPostings.add(postingNumber);
+  } else {
+    selectedPostings.delete(postingNumber);
+  }
+  updateBulkPanel();
+}
+
+function toggleSelectAll(cb) {
+  const rows = document.querySelectorAll('#orders-body input[type=checkbox]');
+  rows.forEach(rowCb => {
+    rowCb.checked = cb.checked;
+    const pn = rowCb.dataset.posting;
+    if (pn) {
+      if (cb.checked) selectedPostings.add(pn);
+      else selectedPostings.delete(pn);
+    }
+  });
+  updateBulkPanel();
+}
+
+function clearSelection() {
+  selectedPostings.clear();
+  document.querySelectorAll('#orders-body input[type=checkbox]').forEach(cb => cb.checked = false);
+  const allCb = document.getElementById('select-all-cb');
+  if (allCb) allCb.checked = false;
+  updateBulkPanel();
+}
+
+function updateBulkPanel() {
+  const panel = document.getElementById('bulk-panel');
+  const count = selectedPostings.size;
+  if (count > 0) {
+    panel.style.display = 'flex';
+    document.getElementById('bulk-count').textContent = `Выбрано: ${count} заказов`;
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function applyBulkEdit() {
+  if (selectedPostings.size === 0) return;
+
+  const delivery = document.getElementById('bulk-delivery').value;
+  const sur = document.getElementById('bulk-sur').value.trim();
+  const invoice = document.getElementById('bulk-invoice').value.trim();
+
+  if (!delivery && !sur && !invoice) {
+    showToast('Заполните хотя бы одно поле', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('bulk-apply-btn');
+  btn.disabled = true;
+  btn.textContent = 'Применяю...';
+
+  const body = {};
+  if (delivery) body.plan_delivery_date = delivery;
+  if (sur) body.sur_number = sur;
+  if (invoice) body.sima_order_number = invoice;
+
+  let success = 0, errors = 0;
+  for (const pn of selectedPostings) {
+    try {
+      const resp = await fetch(`/api/orders/${encodeURIComponent(pn)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (resp.ok) success++;
+      else errors++;
+    } catch(e) {
+      errors++;
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Применить';
+
+  showToast(`✓ Обновлено ${success} заказов${errors ? `, ошибок: ${errors}` : ''}`);
+
+  // Сбрасываем поля
+  document.getElementById('bulk-delivery').value = '';
+  document.getElementById('bulk-sur').value = '';
+  document.getElementById('bulk-invoice').value = '';
+
+  clearSelection();
+  loadOrders(currentPage);
+}
+
+// =====================================================================
+// РЕНДЕР ТАБЛИЦЫ
+// =====================================================================
 function renderOrdersTable(orders, tbodyId, showActions) {
   const tbody = document.getElementById(tbodyId);
   if (!orders || orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="state-msg">НЕТ ДАННЫХ</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     return;
   }
 
@@ -70,12 +167,10 @@ function renderOrdersTable(orders, tbodyId, showActions) {
 
   function formatDate(s) {
     if (!s) return '—';
-    // ISO yyyy-mm-dd
     if (s.length >= 10 && s[4] === '-') {
       const d = s.slice(0,10).split('-');
       return d[2] + '.' + d[1] + '.' + d[0];
     }
-    // Короткий д.мм.гг → дд.мм.20гг
     if (s.includes('.')) {
       const parts = s.split('.');
       if (parts.length === 3) {
@@ -109,8 +204,8 @@ function renderOrdersTable(orders, tbodyId, showActions) {
     const acceptedDate = formatDate(o.ozon_accepted_at);
     const planDate = formatDate(o.plan_delivery_date);
     const statusRu = STATUS_RU[o.ozon_status] || o.ozon_status || '—';
+    const isSelected = selectedPostings.has(o.posting_number);
 
-    // Поставка - редактируемая ячейка для admin
     const deliveryCell = (userRole === 'admin')
       ? `<td class="editable-cell" data-field="plan_delivery_date" data-posting="${o.posting_number}"
            onclick="editCell(this)" title="Нажмите для редактирования">
@@ -118,7 +213,6 @@ function renderOrdersTable(orders, tbodyId, showActions) {
          </td>`
       : `<td>${planDate}</td>`;
 
-    // СУР - редактируемый для admin, копируемый для остальных
     const surCell = (userRole === 'admin')
       ? `<td class="editable-cell" data-field="sur_number" data-posting="${o.posting_number}"
              onclick="editCell(this)" title="Нажмите для редактирования">
@@ -132,7 +226,6 @@ function renderOrdersTable(orders, tbodyId, showActions) {
              </td>`
           : `<td><span style="color:var(--yellow)">нет</span></td>`);
 
-    // Номер счёта - редактируемый для admin, копируемый для остальных
     const invoiceCell = (userRole === 'admin')
       ? `<td class="editable-cell" data-field="sima_order_number" data-posting="${o.posting_number}"
              onclick="editCell(this)" title="Нажмите для редактирования">
@@ -146,19 +239,21 @@ function renderOrdersTable(orders, tbodyId, showActions) {
              </td>`
           : `<td><span style="color:var(--text-dim)">—</span></td>`);
 
-    // Комментарий - редактируемый для всех
     const commentCell = `<td class="editable-cell comment-cell" data-field="comment" data-posting="${o.posting_number}"
          onclick="editCell(this)" title="Нажмите для редактирования"
          style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">
          ${o.comment || '<span style="color:var(--border)">+</span>'}
        </td>`;
 
-    // Кнопка редактирования - только для admin
     const editBtn = (showActions && userRole === 'admin')
       ? `<td><button class="btn" onclick='openEdit(${JSON.stringify(o)})' title="Редактировать">✎</button></td>`
       : (showActions ? '<td></td>' : '');
 
-    return `<tr style="${o.not_delivered ? 'background:rgba(220,50,50,0.15);' : ''}">
+    return `<tr style="${o.not_delivered ? 'background:rgba(220,50,50,0.15);' : isSelected ? 'background:rgba(255,106,0,0.08);' : ''}">
+      <td style="padding:6px 8px;text-align:center">
+        <input type="checkbox" data-posting="${o.posting_number}" ${isSelected ? 'checked' : ''}
+          onchange="toggleRowSelect(this, '${o.posting_number}')">
+      </td>
       <td class="copy-cell code" style="white-space:nowrap"
           onclick="copyCell('${o.posting_number}', this)" title="Нажмите чтобы скопировать">
         ${o.posting_number}
@@ -178,14 +273,12 @@ function renderOrdersTable(orders, tbodyId, showActions) {
           : ''}
         <div style="color:var(--text-dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px">${productName || '—'}</div>
       </td>
-
-        <td style="white-space:nowrap">
-          <button onclick="toggleNotDelivered('${o.posting_number}')"
-            style="background:${o.not_delivered ? 'var(--red)' : 'var(--surface2)'};border:1px solid ${o.not_delivered ? 'var(--red)' : 'var(--border)'};padding:3px 8px;cursor:pointer;border-radius:4px;font-size:11px;color:${o.not_delivered ? '#fff' : 'var(--text-dim)'};white-space:nowrap">
-            ${o.not_delivered ? '✗ Не привезли' : 'Не привезли'}
-          </button>
-        </td>
-
+      <td style="white-space:nowrap">
+        <button onclick="toggleNotDelivered('${o.posting_number}')"
+          style="background:${o.not_delivered ? 'var(--red)' : 'var(--surface2)'};border:1px solid ${o.not_delivered ? 'var(--red)' : 'var(--border)'};padding:3px 8px;cursor:pointer;border-radius:4px;font-size:11px;color:${o.not_delivered ? '#fff' : 'var(--text-dim)'};white-space:nowrap">
+          ${o.not_delivered ? '✗ Не привезли' : 'Не привезли'}
+        </button>
+      </td>
       ${deliveryCell}
       ${surCell}
       ${invoiceCell}
@@ -195,65 +288,33 @@ function renderOrdersTable(orders, tbodyId, showActions) {
   }).join('');
 }
 
-
 // =====================================================================
 // ЭКСПОРТ В EXCEL
 // =====================================================================
 async function exportExcel() {
   showToast('Подготовка экспорта...');
   try {
-    // Берём все записи с текущим фильтром (до 5000)
     const data = await fetch(buildOrdersUrl(1, 5000)).then(r => r.json());
     const orders = data.orders;
-
-    if (!orders || orders.length === 0) {
-      showToast('Нет данных для экспорта', 'error');
-      return;
-    }
-
-    // Заголовки
-    const headers = [
-      'Отправление', 'Статус', 'Заказ Сима', 'Дата Сима',
-      'Поставка (план)', 'Поставка (ФФ)', 'СУР', 'Комментарий', 'Добавлен'
-    ];
-
-    // Строки CSV
+    if (!orders || orders.length === 0) { showToast('Нет данных для экспорта', 'error'); return; }
+    const headers = ['Отправление', 'Статус', 'Заказ Сима', 'Дата Сима', 'Поставка (план)', 'Поставка (ФФ)', 'СУР', 'Комментарий', 'Добавлен'];
     const rows = orders.map(o => [
-      o.posting_number,
-      o.ozon_status || '',
-      o.sima_order_number || '',
-      o.sima_order_date || '',
-      o.plan_delivery_date || '',
-      o.ff_delivery_date ? o.ff_delivery_date.slice(0,10) : '',
-      o.sur_number || '',
-      (o.comment || '').replace(/"/g, '""'),
-      o.added_at ? o.added_at.slice(0,10) : ''
+      o.posting_number, o.ozon_status || '', o.sima_order_number || '', o.sima_order_date || '',
+      o.plan_delivery_date || '', o.ff_delivery_date ? o.ff_delivery_date.slice(0,10) : '',
+      o.sur_number || '', (o.comment || '').replace(/"/g, '""'), o.added_at ? o.added_at.slice(0,10) : ''
     ]);
-
-    // Собираем CSV с BOM для корректного открытия в Excel
     const BOM = '\uFEFF';
-    const csv = BOM + [headers, ...rows]
-      .map(row => row.map(v => `"${v}"`).join(';'))
-      .join('\n');
-
-    // Скачиваем файл
+    const csv = BOM + [headers, ...rows].map(row => row.map(v => `"${v}"`).join(';')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const date = new Date().toISOString().slice(0,10);
-    a.download = `sima_orders_${date}.csv`;
+    a.download = `sima_orders_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-
     showToast(`✓ Экспортировано ${orders.length} строк`);
-  } catch(e) {
-    showToast('Ошибка экспорта', 'error');
-  }
+  } catch(e) { showToast('Ошибка экспорта', 'error'); }
 }
-
-// =====================================================================
-
 
 async function syncOzonOrders() {
   const btn = document.getElementById('orders-sync-btn');
@@ -261,40 +322,29 @@ async function syncOzonOrders() {
   btn.innerHTML = '<span class="spinning">⟳</span> Синхронизация...';
   try {
     const result = await fetch('/api/sync', { method: 'POST' }).then(r => r.json());
-    if (result.error) {
-      showToast(`Ошибка: ${result.error}`, 'error');
-    } else {
-      const removedO = result.removed ? `, убрано ${result.removed}` : '';
-      showToast(`✓ Обновлено ${result.synced} заказов${removedO}`);
+    if (result.error) showToast(`Ошибка: ${result.error}`, 'error');
+    else {
+      showToast(`✓ Обновлено ${result.synced} заказов${result.removed ? `, убрано ${result.removed}` : ''}`);
       loadOrders(currentPage);
     }
-  } catch(e) {
-    showToast('Ошибка синхронизации', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '⟳ Обновить с Ozon';
-  }
+  } catch(e) { showToast('Ошибка синхронизации', 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = '⟳ Обновить с Ozon'; }
 }
 
 async function toggleNotDelivered(postingNumber) {
   try {
     await fetch(`/api/orders/${postingNumber}/not_delivered`, {method: 'POST'});
-
-    // Находим кнопку в DOM и обновляем только её строку
     const btn = document.querySelector(`button[onclick="toggleNotDelivered('${postingNumber}')"]`);
     if (btn) {
       const tr = btn.closest('tr');
-      const isNowNotDelivered = !tr.style.background.includes('220,50,50');
-
-      tr.style.background = isNowNotDelivered ? 'rgba(220,50,50,0.15)' : '';
-      btn.style.background = isNowNotDelivered ? 'var(--red)' : 'var(--surface2)';
-      btn.style.borderColor = isNowNotDelivered ? 'var(--red)' : 'var(--border)';
-      btn.style.color = isNowNotDelivered ? '#fff' : 'var(--text-dim)';
-      btn.textContent = isNowNotDelivered ? '✗ Не привезли' : 'Не привезли';
+      const isNow = !tr.style.background.includes('220,50,50');
+      tr.style.background = isNow ? 'rgba(220,50,50,0.15)' : '';
+      btn.style.background = isNow ? 'var(--red)' : 'var(--surface2)';
+      btn.style.borderColor = isNow ? 'var(--red)' : 'var(--border)';
+      btn.style.color = isNow ? '#fff' : 'var(--text-dim)';
+      btn.textContent = isNow ? '✗ Не привезли' : 'Не привезли';
     }
-  } catch(e) {
-    showToast('Ошибка', 'error');
-  }
+  } catch(e) { showToast('Ошибка', 'error'); }
 }
 
 loadOrders(1);

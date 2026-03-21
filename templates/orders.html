@@ -36,10 +36,30 @@
       <span class="toolbar-label" id="orders-count" style="margin-left:auto"></span>
     </div>
 
+    <!-- BULK PANEL -->
+    <div id="bulk-panel" style="display:none;background:var(--surface);border:1px solid var(--accent);padding:10px 16px;margin-bottom:8px;display:none;align-items:center;gap:12px;flex-wrap:wrap">
+      <span id="bulk-count" style="font-size:12px;color:var(--accent);font-family:monospace;white-space:nowrap"></span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--text-dim)">Поставка:</span>
+        <input type="date" id="bulk-delivery" style="padding:3px 8px;font-size:12px;background:var(--surface2);border:1px solid var(--border);color:var(--text)">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--text-dim)">СУР:</span>
+        <input type="text" id="bulk-sur" placeholder="СУР-2026-001" style="padding:3px 8px;font-size:12px;width:120px;background:var(--surface2);border:1px solid var(--border);color:var(--text)">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--text-dim)">Счёт:</span>
+        <input type="text" id="bulk-invoice" placeholder="№ счёта" style="padding:3px 8px;font-size:12px;width:100px;background:var(--surface2);border:1px solid var(--border);color:var(--text)">
+      </div>
+      <button class="btn primary" id="bulk-apply-btn" onclick="applyBulkEdit()">Применить</button>
+      <button class="btn" onclick="clearSelection()">Отменить выбор</button>
+    </div>
+
     <div class="table-container">
       <table>
         <thead>
           <tr>
+            <th style="width:32px;padding:6px 8px"><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this)" title="Выбрать все"></th>
             <th>Отправление</th>
             <th>Статус</th>
             <th style="cursor:pointer;user-select:none" onclick="sortByAccepted()">Принят <span id="sort-icon">↑</span></th>
@@ -54,7 +74,7 @@
           </tr>
         </thead>
         <tbody id="orders-body">
-          <tr><td colspan="11" class="state-msg">ЗАГРУЗКА...</td></tr>
+          <tr><td colspan="12" class="state-msg">ЗАГРУЗКА...</td></tr>
         </tbody>
       </table>
     </div>
@@ -67,5 +87,5 @@
   </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/orders.js?v=7777777"></script>
+<script src="/static/js/orders.js?v=1773870000"></script>
 {% endblock %}
