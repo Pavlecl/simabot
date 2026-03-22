@@ -2115,7 +2115,8 @@ async def sync_stock_cache():
                         offset += 1000
                 return result
 
-            all_rows, fbs_map = await asyncio.gather(fetch_fbo(), fetch_fbs())
+            import asyncio as _asyncio
+            all_rows, fbs_map = await _asyncio.gather(fetch_fbo(), fetch_fbs())
 
         from collections import defaultdict
         async with AsyncSessionLocal() as db:
