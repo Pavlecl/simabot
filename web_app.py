@@ -2061,26 +2061,27 @@ async def stock_page(request: Request, user: dict = Depends(require_any_role)):
         "request": request, "user": user, "active_tab": "stock"
     })
 
+# Кэш остатков FBO
+_stock_cache = {"items": [], "warehouses": [], "total": 0, "loading": False, "updated_at": None}
 
-@app.get("/api/stock/fbo")
-async def api_stock_fbo(user: dict = Depends(require_any_role)):
-    """Остатки FBO (без UZSPACE) + маркер есть ли FBS остаток"""
-    all_rows = []
-    offset = 0
-    fbs_map = {}  # offer_id -> fbs_present
-
+async def sync_stock_cache():
+    global _stock_cache
+    if _stock_cache["loading"]:
+        return
+    _stock_cache["loading"] = True
     try:
-        timeout = aiohttp.ClientTimeout(total=60)
+        all_rows = []
+        fbs_map = {}
+        timeout = aiohttp.ClientTimeout(total=120)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # Параллельно загружаем FBO и FBS
             async def fetch_fbo():
                 rows = []
                 offset = 0
                 while True:
                     async with session.post(
-                            "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
-                            json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
-                            headers=OZON_HEADERS
+                        "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
+                        json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
+                        headers=OZON_HEADERS
                     ) as resp:
                         if resp.status != 200: break
                         data = await resp.json()
@@ -2096,9 +2097,9 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
                 offset = 0
                 while True:
                     async with session.post(
-                            "https://api-seller.ozon.ru/v4/product/info/stocks",
-                            json={"limit": 1000, "offset": offset, "filter": {}},
-                            headers=OZON_HEADERS
+                        "https://api-seller.ozon.ru/v4/product/info/stocks",
+                        json={"limit": 1000, "offset": offset, "filter": {}},
+                        headers=OZON_HEADERS
                     ) as resp:
                         if resp.status != 200: break
                         data = await resp.json()
@@ -2114,16 +2115,13 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
                         offset += 1000
                 return result
 
-            import asyncio as _asyncio
-            all_rows, fbs_map = await _asyncio.gather(fetch_fbo(), fetch_fbs())
+            all_rows, fbs_map = await asyncio.gather(fetch_fbo(), fetch_fbs())
 
-        # Подтягиваем бренды из БД
         from collections import defaultdict
         async with AsyncSessionLocal() as db:
             codes = list(set(r.get("item_code", "") for r in all_rows))
             prod_res = await db.execute(
-                select(Product.offer_id, Product.brand)
-                .where(Product.offer_id.in_(codes))
+                select(Product.offer_id, Product.brand).where(Product.offer_id.in_(codes))
             )
             brand_map = {r.offer_id: r.brand or "" for r in prod_res.all()}
 
@@ -2136,14 +2134,12 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
         for row in all_rows:
             code = row.get("item_code", "")
             brand = brand_map.get(code, "")
-            # Исключаем UZSPACE
             if brand.upper() == "UZSPACE":
                 continue
             wh = row.get("warehouse_name", "")
             free = int(row.get("free_to_sell_amount", 0))
             reserved = int(row.get("reserved_amount", 0))
             promised = int(row.get("promised_amount", 0))
-
             by_item[code]["item_code"] = code
             by_item[code]["item_name"] = row.get("item_name", "")
             by_item[code]["brand"] = brand
@@ -2151,17 +2147,39 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
             by_item[code]["total_reserved"] += reserved
             by_item[code]["total_promised"] += promised
             by_item[code]["fbs_present"] = fbs_map.get(code, 0)
-            by_item[code]["warehouses"][wh] = {
-                "free": free, "reserved": reserved, "promised": promised
-            }
+            by_item[code]["warehouses"][wh] = {"free": free, "reserved": reserved, "promised": promised}
 
         items = sorted(by_item.values(), key=lambda x: x["total_free"], reverse=True)
         warehouses = sorted(set(row.get("warehouse_name", "") for row in all_rows))
 
-        return {"items": items, "warehouses": warehouses, "total": len(items)}
+        _stock_cache["items"] = items
+        _stock_cache["warehouses"] = warehouses
+        _stock_cache["total"] = len(items)
+        _stock_cache["updated_at"] = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     except Exception as e:
-        return {"items": [], "warehouses": [], "total": 0, "error": str(e)}
+        print(f"sync_stock_cache error: {e}", flush=True)
+    finally:
+        _stock_cache["loading"] = False
+
+@app.get("/api/stock/fbo")
+async def api_stock_fbo(user: dict = Depends(require_any_role)):
+    import asyncio as _asyncio
+    if not _stock_cache["items"] and not _stock_cache["loading"]:
+        _asyncio.create_task(sync_stock_cache())
+    return {
+        "items": _stock_cache["items"],
+        "warehouses": _stock_cache["warehouses"],
+        "total": _stock_cache["total"],
+        "loading": _stock_cache["loading"],
+        "updated_at": _stock_cache["updated_at"],
+    }
+
+@app.post("/api/stock/fbo/sync")
+async def api_stock_fbo_sync(user: dict = Depends(require_any_role)):
+    import asyncio as _asyncio
+    _asyncio.create_task(sync_stock_cache())
+    return {"ok": True}
 
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.

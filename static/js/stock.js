@@ -9,28 +9,32 @@ let stockSortDir = 'desc';
 let stockSearchTimer = null;
 
 async function loadStock() {
-  document.getElementById('stock-tbody').innerHTML =
-    '<tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>';
   const btn = document.getElementById('stock-sync-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinning">⟳</span> Загружаем...';
 
   try {
-    const data = await fetch('/api/stock/fbo').then(r => r.json());
-    stockData = data.items || [];
-    stockWarehouses = data.warehouses || [];
+    // Запускаем синхронизацию
+    await fetch('/api/stock/fbo/sync', {method: 'POST'});
 
-    const sel = document.getElementById('stock-warehouse');
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">Все склады</option>';
-    stockWarehouses.forEach(wh => {
-      const opt = document.createElement('option');
-      opt.value = wh; opt.textContent = wh;
-      sel.appendChild(opt);
-    });
-    sel.value = cur;
+    // Поллим пока не загрузится
+    let attempts = 0;
+    while (attempts < 60) {
+      await new Promise(r => setTimeout(r, 2000));
+      const data = await fetch('/api/stock/fbo').then(r => r.json());
 
-    renderStock();
+      if (!data.loading && data.total > 0) {
+        stockData = data.items || [];
+        stockWarehouses = data.warehouses || [];
+        fillWarehouseFilter();
+        renderStock();
+        if (data.updated_at) {
+          document.getElementById('stock-count').textContent = `Обновлено: ${data.updated_at}`;
+        }
+        break;
+      }
+      attempts++;
+    }
   } catch(e) {
     document.getElementById('stock-tbody').innerHTML =
       '<tr><td colspan="8" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>';
@@ -38,6 +42,18 @@ async function loadStock() {
     btn.disabled = false;
     btn.innerHTML = '⟳ Обновить';
   }
+}
+
+function fillWarehouseFilter() {
+  const sel = document.getElementById('stock-warehouse');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Все склады</option>';
+  stockWarehouses.forEach(wh => {
+    const opt = document.createElement('option');
+    opt.value = wh; opt.textContent = wh;
+    sel.appendChild(opt);
+  });
+  sel.value = cur;
 }
 
 function debounceStock() {
