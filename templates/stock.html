@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="stock-wrap">
+
+  <!-- TOOLBAR -->
+  <div class="analytics-toolbar">
+    <div class="toolbar-left">
+      <input type="text" id="stock-search" placeholder="Артикул / название..." oninput="debounceStock()" style="width:220px">
+      <select id="stock-warehouse" onchange="renderStock()">
+        <option value="">Все склады</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+        <input type="checkbox" id="stock-only-available" onchange="renderStock()">
+        Только с остатком
+      </label>
+      <button class="btn" onclick="clearStockFilters()">Сбросить</button>
+      <button class="btn" id="stock-export-btn">↓ CSV</button>
+    </div>
+    <div class="toolbar-right">
+      <span id="stock-count" style="font-size:11px;color:var(--text-dim)"></span>
+      <button class="btn primary" id="stock-sync-btn">⟳ Обновить</button>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <div class="analytics-table-wrap" style="margin-top:16px">
+    <div style="max-height:calc(100vh - 200px);overflow-y:auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th onclick="sortStock('item_code')" class="sortable">Артикул ↕</th>
+            <th>Название</th>
+            <th onclick="sortStock('total_free')" class="sortable" style="text-align:right">Доступно ↕</th>
+            <th onclick="sortStock('total_reserved')" class="sortable" style="text-align:right">Резерв ↕</th>
+            <th onclick="sortStock('total_promised')" class="sortable" style="text-align:right">Ожидается ↕</th>
+            <th onclick="sortStock('total_all')" class="sortable" style="text-align:right">Итого ↕</th>
+            <th style="text-align:center">Склады</th>
+          </tr>
+        </thead>
+        <tbody id="stock-tbody">
+          <tr><td colspan="7" class="state-msg">ЗАГРУЗКА...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- DETAIL MODAL -->
+  <div id="stock-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:1000;background:rgba(0,0,0,0.7);align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);padding:24px;min-width:500px;max-width:700px;max-height:80vh;overflow-y:auto;position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+          <div id="modal-item-code" style="font-family:monospace;color:var(--accent);font-size:14px"></div>
+          <div id="modal-item-name" style="font-size:12px;color:var(--text-dim);margin-top:4px"></div>
+        </div>
+        <button onclick="closeStockModal()" style="background:none;border:none;color:var(--text-dim);font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <table class="data-table" id="modal-table">
+        <thead>
+          <tr>
+            <th>Склад</th>
+            <th style="text-align:right">Доступно</th>
+            <th style="text-align:right">Резерв</th>
+            <th style="text-align:right">Ожидается</th>
+          </tr>
+        </thead>
+        <tbody id="modal-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/stock.js?v=1773872000"></script>
+{% endblock %}

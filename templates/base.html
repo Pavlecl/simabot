@@ -19,6 +19,9 @@
       {% if user.role == 'admin' or 'orders' in perms %}
       <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
       {% endif %}
+      {% if user.role == 'admin' or 'stock' in perms %}
+      <a href="/stock" class="{{ 'active' if active_tab == 'stock' }}">Остатки FBO</a>
+      {% endif %}
       {% if user.role == 'admin' or 'analytics' in perms %}
       <a href="/analytics" class="{{ 'active' if active_tab == 'analytics' }}">Аналитика</a>
       {% endif %}

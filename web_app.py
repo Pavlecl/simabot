@@ -2052,6 +2052,72 @@ async def api_analytics_top_by_orders(
     except Exception as e:
         return {"top": [], "error": str(e)}
 
+
+@app.get("/stock", response_class=HTMLResponse)
+async def stock_page(request: Request, user: dict = Depends(require_any_role)):
+    if "stock" not in user.get("permissions", []) and user["role"] != "admin":
+        return RedirectResponse("/queue", status_code=302)
+    return templates.TemplateResponse("stock.html", {
+        "request": request, "user": user, "active_tab": "stock"
+    })
+
+
+@app.get("/api/stock/fbo")
+async def api_stock_fbo(user: dict = Depends(require_any_role)):
+    """Остатки FBO по всем складам Ozon"""
+    all_rows = []
+    offset = 0
+    try:
+        async with aiohttp.ClientSession() as session:
+            while True:
+                async with session.post(
+                        "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
+                        json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
+                        headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                    rows = data.get("result", {}).get("rows", [])
+                    if not rows:
+                        break
+                    all_rows.extend(rows)
+                    if len(rows) < 1000:
+                        break
+                    offset += 1000
+
+        # Группируем по товару — суммируем по всем складам
+        from collections import defaultdict
+        by_item = defaultdict(
+            lambda: {"item_code": "", "item_name": "", "total_free": 0, "total_reserved": 0, "total_promised": 0,
+                     "warehouses": {}})
+
+        for row in all_rows:
+            code = row.get("item_code", "")
+            wh = row.get("warehouse_name", "")
+            free = int(row.get("free_to_sell_amount", 0))
+            reserved = int(row.get("reserved_amount", 0))
+            promised = int(row.get("promised_amount", 0))
+
+            by_item[code]["item_code"] = code
+            by_item[code]["item_name"] = row.get("item_name", "")
+            by_item[code]["total_free"] += free
+            by_item[code]["total_reserved"] += reserved
+            by_item[code]["total_promised"] += promised
+            by_item[code]["warehouses"][wh] = {
+                "free": free, "reserved": reserved, "promised": promised
+            }
+
+        items = sorted(by_item.values(), key=lambda x: x["total_free"], reverse=True)
+
+        # Список всех складов
+        warehouses = sorted(set(row.get("warehouse_name", "") for row in all_rows))
+
+        return {"items": items, "warehouses": warehouses, "total": len(items)}
+
+    except Exception as e:
+        return {"items": [], "warehouses": [], "total": 0, "error": str(e)}
+
 # --- ЗАПУСК ---
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
 # Вместо @app.on_event("startup") используем async context manager.
