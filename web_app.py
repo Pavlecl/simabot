@@ -2069,6 +2069,7 @@ async def sync_stock_cache():
     if _stock_cache["loading"]:
         return
     _stock_cache["loading"] = True
+    print("STOCK SYNC STARTED", flush=True)
     try:
         all_rows = []
         fbs_map = {}
@@ -2153,6 +2154,7 @@ async def sync_stock_cache():
         items = sorted(by_item.values(), key=lambda x: x["total_free"], reverse=True)
         warehouses = sorted(set(row.get("warehouse_name", "") for row in all_rows))
 
+        print(f"STOCK SYNC DONE: {len(items)} items", flush=True)
         _stock_cache["items"] = items
         _stock_cache["warehouses"] = warehouses
         _stock_cache["total"] = len(items)
