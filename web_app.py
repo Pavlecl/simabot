@@ -2071,10 +2071,9 @@ async def sync_stock_cache():
     _stock_cache["loading"] = True
     print("STOCK SYNC STARTED", flush=True)
     try:
-        all_rows = []
-        fbs_map = {}
         timeout = aiohttp.ClientTimeout(total=120)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+
             async def fetch_fbo():
                 rows = []
                 offset = 0
@@ -2084,12 +2083,17 @@ async def sync_stock_cache():
                         json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
                         headers=OZON_HEADERS
                     ) as resp:
-                        if resp.status != 200: break
+                        if resp.status != 200:
+                            print(f"STOCK FBO error status: {resp.status}", flush=True)
+                            break
                         data = await resp.json()
                         batch = data.get("result", {}).get("rows", [])
-                        if not batch: break
+                        if not batch:
+                            break
                         rows.extend(batch)
-                        if len(batch) < 1000: break
+                        print(f"STOCK FBO loaded: {len(rows)}", flush=True)
+                        if len(batch) < 1000:
+                            break
                         offset += 1000
                 return rows
 
@@ -2102,22 +2106,29 @@ async def sync_stock_cache():
                         json={"limit": 1000, "offset": offset, "filter": {}},
                         headers=OZON_HEADERS
                     ) as resp:
-                        if resp.status != 200: break
+                        if resp.status != 200:
+                            print(f"STOCK FBS error status: {resp.status}", flush=True)
+                            break
                         data = await resp.json()
                         items = data.get("items", [])
-                        if not items: break
+                        if not items:
+                            break
                         for item in items:
                             oid = item.get("offer_id", "")
                             result[oid] = sum(
                                 s.get("present", 0) for s in item.get("stocks", [])
                                 if s.get("type") == "fbs"
                             )
-                        if len(items) < 1000: break
+                        print(f"STOCK FBS loaded: {len(result)}", flush=True)
+                        if len(items) < 1000:
+                            break
                         offset += 1000
                 return result
 
+            print("STOCK: starting parallel fetch", flush=True)
             import asyncio as _asyncio
             all_rows, fbs_map = await _asyncio.gather(fetch_fbo(), fetch_fbs())
+            print(f"STOCK: FBO={len(all_rows)} FBS={len(fbs_map)}", flush=True)
 
         from collections import defaultdict
         async with AsyncSessionLocal() as db:
@@ -2161,7 +2172,8 @@ async def sync_stock_cache():
         _stock_cache["updated_at"] = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     except Exception as e:
-        print(f"sync_stock_cache error: {e}", flush=True)
+        import traceback
+        print(f"STOCK SYNC ERROR: {traceback.format_exc()}", flush=True)
     finally:
         _stock_cache["loading"] = False
 
