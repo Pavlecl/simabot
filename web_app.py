@@ -2088,9 +2088,17 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
 
         # Группируем по товару — суммируем по всем складам
         from collections import defaultdict
+        async with AsyncSessionLocal() as db:
+            codes = list(set(r.get("item_code", "") for r in all_rows))
+            prod_res = await db.execute(
+                select(Product.offer_id, Product.brand)
+                .where(Product.offer_id.in_(codes))
+            )
+            brand_map = {r.offer_id: r.brand or "" for r in prod_res.all()}
+
         by_item = defaultdict(
-            lambda: {"item_code": "", "item_name": "", "total_free": 0, "total_reserved": 0, "total_promised": 0,
-                     "warehouses": {}})
+            lambda: {"item_code": "", "item_name": "", "brand": "", "total_free": 0, "total_reserved": 0,
+                     "total_promised": 0, "warehouses": {}})
 
         for row in all_rows:
             code = row.get("item_code", "")
@@ -2101,6 +2109,7 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
 
             by_item[code]["item_code"] = code
             by_item[code]["item_name"] = row.get("item_name", "")
+            by_item[code]["brand"] = brand_map.get(code, "")
             by_item[code]["total_free"] += free
             by_item[code]["total_reserved"] += reserved
             by_item[code]["total_promised"] += promised
@@ -2109,8 +2118,6 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
             }
 
         items = sorted(by_item.values(), key=lambda x: x["total_free"], reverse=True)
-
-        # Список всех складов
         warehouses = sorted(set(row.get("warehouse_name", "") for row in all_rows))
 
         return {"items": items, "warehouses": warehouses, "total": len(items)}
