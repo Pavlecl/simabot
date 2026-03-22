@@ -2064,16 +2064,19 @@ async def stock_page(request: Request, user: dict = Depends(require_any_role)):
 
 @app.get("/api/stock/fbo")
 async def api_stock_fbo(user: dict = Depends(require_any_role)):
-    """Остатки FBO по всем складам Ozon"""
+    """Остатки FBO (без UZSPACE) + маркер есть ли FBS остаток"""
     all_rows = []
     offset = 0
+    fbs_map = {}  # offer_id -> fbs_present
+
     try:
         async with aiohttp.ClientSession() as session:
+            # Загружаем FBO остатки по складам
             while True:
                 async with session.post(
-                        "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
-                        json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
-                        headers=OZON_HEADERS
+                    "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
+                    json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
+                    headers=OZON_HEADERS
                 ) as resp:
                     if resp.status != 200:
                         break
@@ -2086,7 +2089,32 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
                         break
                     offset += 1000
 
-        # Группируем по товару — суммируем по всем складам
+            # Загружаем FBS остатки
+            fbs_offset = 0
+            while True:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v4/product/info/stocks",
+                    json={"limit": 1000, "offset": fbs_offset, "filter": {}},
+                    headers=OZON_HEADERS
+                ) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                    items = data.get("items", [])
+                    if not items:
+                        break
+                    for item in items:
+                        oid = item.get("offer_id", "")
+                        fbs_present = sum(
+                            s.get("present", 0) for s in item.get("stocks", [])
+                            if s.get("type") == "fbs"
+                        )
+                        fbs_map[oid] = fbs_present
+                    if len(items) < 1000:
+                        break
+                    fbs_offset += 1000
+
+        # Подтягиваем бренды из БД
         from collections import defaultdict
         async with AsyncSessionLocal() as db:
             codes = list(set(r.get("item_code", "") for r in all_rows))
@@ -2096,12 +2124,18 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
             )
             brand_map = {r.offer_id: r.brand or "" for r in prod_res.all()}
 
-        by_item = defaultdict(
-            lambda: {"item_code": "", "item_name": "", "brand": "", "total_free": 0, "total_reserved": 0,
-                     "total_promised": 0, "warehouses": {}})
+        by_item = defaultdict(lambda: {
+            "item_code": "", "item_name": "", "brand": "",
+            "total_free": 0, "total_reserved": 0, "total_promised": 0,
+            "fbs_present": 0, "warehouses": {}
+        })
 
         for row in all_rows:
             code = row.get("item_code", "")
+            brand = brand_map.get(code, "")
+            # Исключаем UZSPACE
+            if brand.upper() == "UZSPACE":
+                continue
             wh = row.get("warehouse_name", "")
             free = int(row.get("free_to_sell_amount", 0))
             reserved = int(row.get("reserved_amount", 0))
@@ -2109,10 +2143,11 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
 
             by_item[code]["item_code"] = code
             by_item[code]["item_name"] = row.get("item_name", "")
-            by_item[code]["brand"] = brand_map.get(code, "")
+            by_item[code]["brand"] = brand
             by_item[code]["total_free"] += free
             by_item[code]["total_reserved"] += reserved
             by_item[code]["total_promised"] += promised
+            by_item[code]["fbs_present"] = fbs_map.get(code, 0)
             by_item[code]["warehouses"][wh] = {
                 "free": free, "reserved": reserved, "promised": promised
             }
