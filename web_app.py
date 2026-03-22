@@ -2099,11 +2099,16 @@ async def sync_stock_cache():
 
             async def fetch_fbs():
                 result = {}
-                offset = 0
+                cursor = ""
                 while True:
+                    payload = {"limit": 1000, "filter": {}}
+                    if cursor:
+                        payload["cursor"] = cursor
+                    else:
+                        payload["offset"] = 0
                     async with session.post(
                         "https://api-seller.ozon.ru/v4/product/info/stocks",
-                        json={"limit": 1000, "offset": offset, "filter": {}},
+                        json=payload,
                         headers=OZON_HEADERS
                     ) as resp:
                         if resp.status != 200:
@@ -2120,9 +2125,9 @@ async def sync_stock_cache():
                                 if s.get("type") == "fbs"
                             )
                         print(f"STOCK FBS loaded: {len(result)}", flush=True)
-                        if len(items) < 1000:
+                        cursor = data.get("cursor", "")
+                        if not cursor or len(items) < 1000:
                             break
-                        offset += 1000
                 return result
 
             print("STOCK: starting parallel fetch", flush=True)
