@@ -2070,49 +2070,52 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
     fbs_map = {}  # offer_id -> fbs_present
 
     try:
-        async with aiohttp.ClientSession() as session:
-            # Загружаем FBO остатки по складам
-            while True:
-                async with session.post(
-                    "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
-                    json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
-                    headers=OZON_HEADERS
-                ) as resp:
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
-                    rows = data.get("result", {}).get("rows", [])
-                    if not rows:
-                        break
-                    all_rows.extend(rows)
-                    if len(rows) < 1000:
-                        break
-                    offset += 1000
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Параллельно загружаем FBO и FBS
+            async def fetch_fbo():
+                rows = []
+                offset = 0
+                while True:
+                    async with session.post(
+                            "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
+                            json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
+                            headers=OZON_HEADERS
+                    ) as resp:
+                        if resp.status != 200: break
+                        data = await resp.json()
+                        batch = data.get("result", {}).get("rows", [])
+                        if not batch: break
+                        rows.extend(batch)
+                        if len(batch) < 1000: break
+                        offset += 1000
+                return rows
 
-            # Загружаем FBS остатки
-            fbs_offset = 0
-            while True:
-                async with session.post(
-                    "https://api-seller.ozon.ru/v4/product/info/stocks",
-                    json={"limit": 1000, "offset": fbs_offset, "filter": {}},
-                    headers=OZON_HEADERS
-                ) as resp:
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
-                    items = data.get("items", [])
-                    if not items:
-                        break
-                    for item in items:
-                        oid = item.get("offer_id", "")
-                        fbs_present = sum(
-                            s.get("present", 0) for s in item.get("stocks", [])
-                            if s.get("type") == "fbs"
-                        )
-                        fbs_map[oid] = fbs_present
-                    if len(items) < 1000:
-                        break
-                    fbs_offset += 1000
+            async def fetch_fbs():
+                result = {}
+                offset = 0
+                while True:
+                    async with session.post(
+                            "https://api-seller.ozon.ru/v4/product/info/stocks",
+                            json={"limit": 1000, "offset": offset, "filter": {}},
+                            headers=OZON_HEADERS
+                    ) as resp:
+                        if resp.status != 200: break
+                        data = await resp.json()
+                        items = data.get("items", [])
+                        if not items: break
+                        for item in items:
+                            oid = item.get("offer_id", "")
+                            result[oid] = sum(
+                                s.get("present", 0) for s in item.get("stocks", [])
+                                if s.get("type") == "fbs"
+                            )
+                        if len(items) < 1000: break
+                        offset += 1000
+                return result
+
+            import asyncio as _asyncio
+            all_rows, fbs_map = await _asyncio.gather(fetch_fbo(), fetch_fbs())
 
         # Подтягиваем бренды из БД
         from collections import defaultdict
