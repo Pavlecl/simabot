@@ -5,12 +5,7 @@
   <!-- TOOLBAR -->
   <div class="analytics-toolbar">
     <div class="toolbar-left">
-      <div class="chart-toggle">
-        <button class="chart-btn active" id="btn-dir-all" onclick="setDirection('')">Все</button>
-        <button class="chart-btn" id="btn-dir-uzspace" onclick="setDirection('uzspace')">UZSPACE</button>
-        <button class="chart-btn" id="btn-dir-sima" onclick="setDirection('sima')">Сима Ленд</button>
-      </div>
-      <input type="text" id="stock-search" placeholder="Артикул / название..." oninput="debounceStock()" style="width:200px">
+      <input type="text" id="stock-search" placeholder="Артикул / название..." oninput="debounceStock()" style="width:220px">
       <select id="stock-warehouse" onchange="renderStock()">
         <option value="">Все склады</option>
       </select>
@@ -20,41 +15,48 @@
       </label>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
         <input type="checkbox" id="stock-show-promised" onchange="renderStock()">
-        Показывать «Ожидается»
+        Только с «Ожидается»
       </label>
       <button class="btn" onclick="clearStockFilters()">Сбросить</button>
     </div>
     <div class="toolbar-right">
       <span id="stock-count" style="font-size:11px;color:var(--text-dim)"></span>
       <button class="btn" id="stock-export-btn">↓ CSV (все)</button>
-      <button class="btn" id="stock-export-zero-btn" style="border-color:rgba(220,50,50,0.6);color:var(--red,#dc3232)">↓ CSV (обнуляются)</button>
+      <button class="btn" id="stock-export-disable-btn" style="border-color:rgba(255,106,0,0.6);color:var(--accent)">↓ CSV (отключить)</button>
       <button class="btn primary" id="stock-sync-btn">⟳ Обновить</button>
     </div>
   </div>
 
   <!-- LEGEND -->
   <div style="display:flex;gap:16px;margin-top:10px;margin-bottom:4px;font-size:11px;color:var(--text-dim)">
-    <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:rgba(220,50,50,0.2);border:1px solid rgba(220,50,50,0.5);display:inline-block"></span> Обнуляются (доступно=0, резерв>0) — сообщить Симе о подключении трансляции</span>
-    <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;background:rgba(255,106,0,0.1);border:1px solid rgba(255,106,0,0.4);display:inline-block"></span> Мало (1–5 шт)</span>
+    <span style="display:flex;align-items:center;gap:4px">
+      <span style="width:12px;height:12px;background:rgba(255,106,0,0.15);border:1px solid rgba(255,106,0,0.5);display:inline-block"></span>
+      Есть FBO + FBS остаток — сообщить Симе об отключении трансляции
+    </span>
+    <span style="display:flex;align-items:center;gap:4px">
+      <span style="width:12px;height:12px;background:rgba(100,200,100,0.1);border:1px solid rgba(100,200,100,0.3);display:inline-block"></span>
+      Только FBO (FBS = 0)
+    </span>
   </div>
 
   <!-- TABLE -->
   <div class="analytics-table-wrap">
     <div style="max-height:calc(100vh - 220px);overflow-y:auto;">
-      <table class="data-table" id="stock-table">
+      <table class="data-table">
         <thead id="stock-thead">
           <tr>
             <th onclick="sortStock('item_code')" class="sortable">Артикул ↕</th>
             <th>Название</th>
             <th>Бренд</th>
-            <th onclick="sortStock('total_free')" class="sortable" style="text-align:right">Доступно ↕</th>
-            <th onclick="sortStock('total_reserved')" class="sortable" style="text-align:right">Резерв ↕</th>
-            <th onclick="sortStock('total_all')" class="sortable" style="text-align:right">Итого ↕</th>
+            <th onclick="sortStock('total_free')" class="sortable" style="text-align:right">FBO Доступно ↕</th>
+            <th onclick="sortStock('total_reserved')" class="sortable" style="text-align:right">FBO Резерв ↕</th>
+            <th onclick="sortStock('fbs_present')" class="sortable" style="text-align:right">FBS Остаток ↕</th>
+            <th onclick="sortStock('total_promised')" class="sortable" style="text-align:right">Ожидается ↕</th>
             <th style="text-align:center">Склады</th>
           </tr>
         </thead>
         <tbody id="stock-tbody">
-          <tr><td colspan="7" class="state-msg">ЗАГРУЗКА...</td></tr>
+          <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
         </tbody>
       </table>
     </div>
@@ -87,5 +89,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/stock.js?v=1773873000"></script>
+<script src="/static/js/stock.js?v=1773874000"></script>
 {% endblock %}
