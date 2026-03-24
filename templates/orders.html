@@ -31,6 +31,16 @@
 
       <div class="toolbar-sep"></div>
 
+      <input type="text" class="search-input" id="sur-filter"
+        placeholder="СУР..."
+        oninput="debounceSearch()"
+        style="width:120px">
+
+      <input type="text" class="search-input" id="invoice-filter"
+        placeholder="№ счёта..."
+        oninput="debounceSearch()"
+        style="width:100px">
+
       <button class="btn" onclick="clearFilters()">Сбросить</button>
       <button class="btn success" onclick="exportExcel()" title="Экспорт текущего фильтра в Excel">↓ Excel</button>
       <span class="toolbar-label" id="orders-count" style="margin-left:auto"></span>
@@ -87,5 +97,5 @@
   </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/orders.js?v=1773870000"></script>
+<script src="/static/js/orders.js?v=1774220000"></script>
 {% endblock %}

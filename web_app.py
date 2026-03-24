@@ -554,6 +554,8 @@ async def get_orders(
     date_from: str = "",
     date_to: str = "",
     sort: str = "accepted_asc",
+    sur: str = "",
+    invoice: str = "",
 ):
     """
     📚 УРОК: Пагинация + фильтрация
@@ -586,6 +588,11 @@ async def get_orders(
     if date_to:
         query = query.where(Order.plan_delivery_date <= date_to)
 
+    if sur:
+        query = query.where(Order.sur_number.ilike(f"%{sur}%"))
+    if invoice:
+        query = query.where(Order.sima_order_number.ilike(f"%{invoice}%"))
+
     # Считаем total с теми же фильтрами
     count_query = select(func.count(Order.posting_number))
     if status == "active":
@@ -601,6 +608,11 @@ async def get_orders(
         count_query = count_query.where(Order.plan_delivery_date >= date_from)
     if date_to:
         count_query = count_query.where(Order.plan_delivery_date <= date_to)
+
+    if sur:
+        count_query = count_query.where(Order.sur_number.ilike(f"%{sur}%"))
+    if invoice:
+        count_query = count_query.where(Order.sima_order_number.ilike(f"%{invoice}%"))
 
     total = (await db.execute(count_query)).scalar()
 

@@ -11,6 +11,8 @@ function clearFilters() {
   document.getElementById('search-input').value = '';
   document.getElementById('date-from').value = '';
   document.getElementById('date-to').value = '';
+  document.getElementById('sur-filter').value = '';
+  document.getElementById('invoice-filter').value = '';
   loadOrders(1);
 }
 
@@ -19,6 +21,10 @@ function buildOrdersUrl(page, perPage = 50) {
   const search = document.getElementById('search-input')?.value.trim() || '';
   const dateFrom = document.getElementById('date-from')?.value || '';
   const dateTo = document.getElementById('date-to')?.value || '';
+  const sur = document.getElementById('sur-filter')?.value.trim() || '';
+  const invoice = document.getElementById('invoice-filter')?.value.trim() || '';
+  if (sur) url += `&sur=${encodeURIComponent(sur)}`;
+  if (invoice) url += `&invoice=${encodeURIComponent(invoice)}`;
 
   let url = `/api/orders?page=${page}&per_page=${perPage}`;
   if (status) url += `&status=${encodeURIComponent(status)}`;
