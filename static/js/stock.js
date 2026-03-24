@@ -14,6 +14,33 @@ const collapseState = {
   main: sessionStorage.getItem('stock_main_collapsed') === '1',
   watchlist: sessionStorage.getItem('stock_watchlist_collapsed') === '1',
 };
+// Добавить в начало файла (после объявления переменных):
+function showConfirm(text, title = 'Подтвердите действие') {
+  return new Promise(resolve => {
+    const modal = document.getElementById('confirm-modal');
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-text').textContent = text;
+    modal.style.display = 'flex';
+
+    const ok = document.getElementById('confirm-ok');
+    const cancel = document.getElementById('confirm-cancel');
+
+    function close(result) {
+      modal.style.display = 'none';
+      ok.removeEventListener('click', onOk);
+      cancel.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBg);
+      resolve(result);
+    }
+    const onOk = () => close(true);
+    const onCancel = () => close(false);
+    const onBg = e => { if (e.target === modal) close(false); };
+
+    ok.addEventListener('click', onOk);
+    cancel.addEventListener('click', onCancel);
+    modal.addEventListener('click', onBg);
+  });
+}
 
 function toggleSection(section) {
   collapseState[section] = !collapseState[section];
@@ -272,7 +299,7 @@ function updateWatchlistDeleteBtn() {
 }
 
 async function deleteWatchlistItem(offerId) {
-  if (!confirm(`Удалить "${offerId}" из списка наблюдения?`)) return;
+  if (!await showConfirm(`Удалить артикул ${offerId} из списка наблюдения?`)) return;
   try {
     const resp = await fetch(`/api/stock/watchlist/${encodeURIComponent(offerId)}`, {method: 'DELETE'});
     if (!resp.ok) throw new Error();
@@ -287,7 +314,7 @@ async function deleteWatchlistItem(offerId) {
 async function deleteWatchlistBulk() {
   const checked = [...document.querySelectorAll('.wl-check:checked')].map(cb => cb.value);
   if (!checked.length) return;
-  if (!confirm(`Удалить ${checked.length} позиций из списка наблюдения?`)) return;
+  if (!await showConfirm(`Удалить ${checked.length} позиций из списка наблюдения?`)) return;
   try {
     const resp = await fetch('/api/stock/watchlist', {
       method: 'DELETE',
