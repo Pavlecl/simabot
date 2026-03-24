@@ -30,7 +30,7 @@ from sqlalchemy import select, func, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory, init_db
+from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory, FboWatchlist, init_db
 
 # --- КОНФИГУРАЦИЯ ---
 # SECRET_KEY используется для подписи JWT. Если утечёт — злоумышленник сможет
@@ -2074,7 +2074,7 @@ async def stock_page(request: Request, user: dict = Depends(require_any_role)):
     })
 
 # Кэш остатков FBO
-_stock_cache = {"items": [], "warehouses": [], "total": 0, "loading": False, "updated_at": None}
+_stock_cache = {"items": [], "warehouses": [], "total": 0, "loading": False, "updated_at": None, "watchlist": []}
 
 async def sync_stock_cache():
     global _stock_cache
@@ -2183,6 +2183,49 @@ async def sync_stock_cache():
         warehouses = sorted(set(row.get("warehouse_name", "") for row in all_rows))
 
         print(f"STOCK SYNC DONE: {len(items)} items", flush=True)
+        # Обновляем watchlist
+        async with AsyncSessionLocal() as db:
+            # Добавляем в watchlist все товары у которых FBO > 0 (наблюдаем)
+            for item in by_item.values():
+                if item["total_free"] > 0:
+                    stmt = pg_insert(FboWatchlist).values(
+                        offer_id=item["item_code"],
+                        item_name=item["item_name"],
+                        brand=item["brand"],
+                    ).on_conflict_do_nothing(index_elements=["offer_id"])
+                    await db.execute(stmt)
+
+            # Помечаем noted_at когда FBO=0
+            for item in by_item.values():
+                if item["total_free"] == 0 and item["fbs_present"] == 0:
+                    await db.execute(
+                        update(FboWatchlist)
+                        .where(FboWatchlist.offer_id == item["item_code"])
+                        .where(FboWatchlist.noted_at == None)
+                        .values(noted_at=datetime.now())
+                    )
+
+            # Автоудаляем из watchlist если FBS снова появился
+            for item in by_item.values():
+                if item["fbs_present"] > 0:
+                    await db.execute(
+                        delete(FboWatchlist)
+                        .where(FboWatchlist.offer_id == item["item_code"])
+                    )
+
+            await db.commit()
+
+            # Загружаем watchlist для ответа
+            wl_res = await db.execute(
+                select(FboWatchlist).order_by(FboWatchlist.noted_at.desc().nullslast())
+            )
+            watchlist = [
+                {"offer_id": w.offer_id, "item_name": w.item_name, "brand": w.brand,
+                 "noted_at": w.noted_at.isoformat() if w.noted_at else None}
+                for w in wl_res.scalars().all()
+            ]
+
+        _stock_cache["watchlist"] = watchlist
         _stock_cache["items"] = items
         _stock_cache["warehouses"] = warehouses
         _stock_cache["total"] = len(items)
@@ -2205,12 +2248,29 @@ async def api_stock_fbo(user: dict = Depends(require_any_role)):
         "total": _stock_cache["total"],
         "loading": _stock_cache["loading"],
         "updated_at": _stock_cache["updated_at"],
+        "watchlist": _stock_cache.get("watchlist", []),
     }
 
 @app.post("/api/stock/fbo/sync")
 async def api_stock_fbo_sync(user: dict = Depends(require_any_role)):
     import asyncio as _asyncio
     _asyncio.create_task(sync_stock_cache())
+    return {"ok": True}
+
+@app.delete("/api/stock/watchlist/{offer_id}")
+async def delete_watchlist_item(offer_id: str, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(FboWatchlist).where(FboWatchlist.offer_id == offer_id))
+    await db.commit()
+    _stock_cache["watchlist"] = [w for w in _stock_cache.get("watchlist", []) if w["offer_id"] != offer_id]
+    return {"ok": True}
+
+@app.delete("/api/stock/watchlist")
+async def delete_watchlist_bulk(request: Request, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    offer_ids = body.get("offer_ids", [])
+    await db.execute(delete(FboWatchlist).where(FboWatchlist.offer_id.in_(offer_ids)))
+    await db.commit()
+    _stock_cache["watchlist"] = [w for w in _stock_cache.get("watchlist", []) if w["offer_id"] not in offer_ids]
     return {"ok": True}
 
 # --- ЗАПУСК ---

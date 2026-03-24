@@ -4,6 +4,7 @@
 
 let stockData = [];
 let stockWarehouses = [];
+let stockWatchlist = [];
 let stockSortField = 'total_free';
 let stockSortDir = 'desc';
 let stockSearchTimer = null;
@@ -26,8 +27,10 @@ async function loadStock() {
       if (!data.loading && data.total > 0) {
         stockData = data.items || [];
         stockWarehouses = data.warehouses || [];
+        stockWatchlist = data.watchlist || [];
         fillWarehouseFilter();
         renderStock();
+        renderWatchlist();
         if (data.updated_at) {
           document.getElementById('stock-count').textContent = `Обновлено: ${data.updated_at}`;
         }
@@ -139,6 +142,9 @@ function renderStock() {
     const whCount = Object.keys(item.warehouses).length;
     const disable = needsDisable(item);
 
+    // FBO > 0, FBS > 0 — оранжевый
+    // FBO > 0, FBS = 0 — слабый зелёный (норма, ничего не нужно)
+    // FBO = 0 — не отображаем в этой таблице (они в watchlist)
     let rowBg = '';
     if (disable) rowBg = 'background:rgba(255,106,0,0.12);';
     else if (item.total_free > 0) rowBg = 'background:rgba(100,200,100,0.06);';
@@ -159,6 +165,123 @@ function renderStock() {
     </tr>`;
   }).join('');
 }
+
+// =====================================================================
+// WATCHLIST — товары с FBO=0, FBS=0 — нужно подключить FBS
+// =====================================================================
+
+function renderWatchlist() {
+  const section = document.getElementById('watchlist-section');
+  const tbody = document.getElementById('watchlist-tbody');
+  const countEl = document.getElementById('watchlist-count');
+
+  if (!stockWatchlist.length) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+  countEl.textContent = `${stockWatchlist.length} позиций`;
+
+  tbody.innerHTML = stockWatchlist.map(w => {
+    const notedDate = w.noted_at
+      ? new Date(w.noted_at).toLocaleString('ru', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})
+      : '—';
+    const safeId = w.offer_id.replace(/'/g, "\\'");
+
+    return `<tr style="background:rgba(100,220,100,0.08)" id="wl-row-${CSS.escape(w.offer_id)}">
+      <td style="text-align:center">
+        <input type="checkbox" class="wl-check" value="${w.offer_id}" onchange="onWatchlistCheckChange()">
+      </td>
+      <td style="color:var(--green,#64c864);font-family:monospace;font-size:11px">${w.offer_id}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${w.item_name || '—'}</td>
+      <td style="font-size:11px;color:var(--text-dim)">${w.brand || '—'}</td>
+      <td style="text-align:right;font-size:11px;color:var(--text-dim)">${notedDate}</td>
+      <td style="text-align:center">
+        <button class="btn" style="padding:2px 8px;font-size:11px;border-color:rgba(255,60,60,0.4);color:#ff6b6b"
+          onclick="deleteWatchlistItem('${safeId}')">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  updateWatchlistDeleteBtn();
+}
+
+function onWatchlistCheckChange() {
+  // Синхронизируем чекбокс "выбрать все"
+  const all = document.querySelectorAll('.wl-check');
+  const checked = document.querySelectorAll('.wl-check:checked');
+  document.getElementById('watchlist-check-all').indeterminate = checked.length > 0 && checked.length < all.length;
+  document.getElementById('watchlist-check-all').checked = checked.length === all.length && all.length > 0;
+  updateWatchlistDeleteBtn();
+}
+
+function toggleAllWatchlist(checked) {
+  document.querySelectorAll('.wl-check').forEach(cb => cb.checked = checked);
+  updateWatchlistDeleteBtn();
+}
+
+function updateWatchlistDeleteBtn() {
+  const checked = document.querySelectorAll('.wl-check:checked');
+  const btn = document.getElementById('watchlist-delete-btn');
+  if (checked.length > 0) {
+    btn.style.display = '';
+    btn.textContent = `🗑 Удалить выбранные (${checked.length})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function deleteWatchlistItem(offerId) {
+  if (!confirm(`Удалить "${offerId}" из списка наблюдения?`)) return;
+  try {
+    const resp = await fetch(`/api/stock/watchlist/${encodeURIComponent(offerId)}`, {method: 'DELETE'});
+    if (!resp.ok) throw new Error();
+    stockWatchlist = stockWatchlist.filter(w => w.offer_id !== offerId);
+    renderWatchlist();
+    showToast('✓ Удалено из списка');
+  } catch {
+    showToast('Ошибка удаления', 'error');
+  }
+}
+
+async function deleteWatchlistBulk() {
+  const checked = [...document.querySelectorAll('.wl-check:checked')].map(cb => cb.value);
+  if (!checked.length) return;
+  if (!confirm(`Удалить ${checked.length} позиций из списка наблюдения?`)) return;
+  try {
+    const resp = await fetch('/api/stock/watchlist', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({offer_ids: checked})
+    });
+    if (!resp.ok) throw new Error();
+    stockWatchlist = stockWatchlist.filter(w => !checked.includes(w.offer_id));
+    renderWatchlist();
+    showToast(`✓ Удалено ${checked.length} позиций`);
+  } catch {
+    showToast('Ошибка удаления', 'error');
+  }
+}
+
+function exportWatchlistCSV() {
+  if (!stockWatchlist.length) { showToast('Список пуст', 'error'); return; }
+  const BOM = '\uFEFF';
+  const headers = ['Артикул', 'Название', 'Бренд', 'Дата обнуления FBO'];
+  const rows = stockWatchlist.map(w => [
+    w.offer_id,
+    w.item_name || '',
+    w.brand || '',
+    w.noted_at ? new Date(w.noted_at).toLocaleString('ru') : ''
+  ]);
+  const csv = BOM + [headers, ...rows].map(r => r.map(v => `"${v}"`).join(';')).join('\n');
+  downloadCSV(csv, `stock_connect_fbs_${new Date().toISOString().slice(0,10)}.csv`);
+  showToast(`✓ Экспортировано ${stockWatchlist.length} позиций для подключения FBS`);
+}
+
+// =====================================================================
+// MODAL
+// =====================================================================
 
 function openStockModal(itemCode) {
   const item = stockData.find(i => i.item_code === itemCode);
@@ -189,6 +312,10 @@ function openStockModal(itemCode) {
 function closeStockModal() {
   document.getElementById('stock-modal').style.display = 'none';
 }
+
+// =====================================================================
+// CSV EXPORT (основная таблица)
+// =====================================================================
 
 function buildCSV(items) {
   const BOM = '\uFEFF';
@@ -227,6 +354,10 @@ function downloadCSV(csv, filename) {
   URL.revokeObjectURL(url);
 }
 
+// =====================================================================
+// СТИЛИ
+// =====================================================================
+
 const style = document.createElement('style');
 style.textContent = `
 .stock-wrap { padding: 20px; }
@@ -239,10 +370,18 @@ style.textContent = `
 .data-table thead th { position:sticky; top:0; background:var(--surface); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); }
 .sortable { cursor:pointer; }
 .sortable:hover { color:var(--accent); }
+#watchlist-section .analytics-table-wrap { border-color:rgba(100,220,100,0.25); }
+#watchlist-section .data-table thead th { color:rgba(100,220,100,0.6); }
 `;
 document.head.appendChild(style);
+
+// =====================================================================
+// ИНИЦИАЛИЗАЦИЯ
+// =====================================================================
 
 loadStock();
 document.getElementById('stock-sync-btn').addEventListener('click', loadStock);
 document.getElementById('stock-export-btn').addEventListener('click', exportStockCSV);
 document.getElementById('stock-export-disable-btn').addEventListener('click', exportDisableCSV);
+document.getElementById('watchlist-export-btn').addEventListener('click', exportWatchlistCSV);
+document.getElementById('watchlist-delete-btn').addEventListener('click', deleteWatchlistBulk);

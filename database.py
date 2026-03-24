@@ -161,6 +161,15 @@ class SalesHistory(Base):
     event_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
+class FboWatchlist(Base):
+    """Артикулы под наблюдением — были на FBO, ждём обнуления для подключения FBS"""
+    __tablename__ = "fbo_watchlist"
+
+    offer_id = Column(String, primary_key=True)
+    item_name = Column(String, nullable=True)
+    brand = Column(String, nullable=True)
+    added_at = Column(DateTime, default=datetime.now)
+    noted_at = Column(DateTime, nullable=True)  # когда FBO обнулился
 
 # --- ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ---
 
