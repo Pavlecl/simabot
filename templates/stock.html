@@ -44,68 +44,79 @@
   </div>
 
   <!-- MAIN TABLE -->
-  <div class="analytics-table-wrap">
-    <div style="max-height:calc(50vh - 60px);overflow-y:auto;">
-      <table class="data-table">
-        <thead id="stock-thead">
-          <tr>
-            <th onclick="sortStock('item_code')" class="sortable">Артикул ↕</th>
-            <th>Название</th>
-            <th>Бренд</th>
-            <th onclick="sortStock('total_free')" class="sortable" style="text-align:right">FBO Доступно ↕</th>
-            <th onclick="sortStock('total_reserved')" class="sortable" style="text-align:right">FBO Резерв ↕</th>
-            <th onclick="sortStock('fbs_present')" class="sortable" style="text-align:right">FBS Остаток ↕</th>
-            <th onclick="sortStock('total_promised')" class="sortable" style="text-align:right">Ожидается ↕</th>
-            <th style="text-align:center">Склады</th>
-          </tr>
-        </thead>
-        <tbody id="stock-tbody">
-          <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
-        </tbody>
-      </table>
+  <div class="section-header" id="main-table-header" onclick="toggleSection('main')"
+       style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--surface);border:1px solid var(--border);margin-top:8px;user-select:none">
+    <span style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">
+      📦 Текущие остатки FBO
+      <span id="main-table-badge" style="margin-left:8px;padding:1px 6px;background:rgba(255,106,0,0.15);border:1px solid rgba(255,106,0,0.3);font-size:10px;color:var(--accent)"></span>
+    </span>
+    <span id="main-collapse-icon" style="color:var(--text-dim);font-size:12px">▲</span>
+  </div>
+  <div id="main-table-body" class="collapsible-body">
+    <div class="analytics-table-wrap" style="margin-top:0;border-top:none">
+      <div id="main-table-scroll" style="max-height:calc(50vh - 60px);overflow-y:auto;">
+        <table class="data-table">
+          <thead id="stock-thead">
+            <tr>
+              <th onclick="sortStock('item_code')" class="sortable">Артикул ↕</th>
+              <th>Название</th>
+              <th>Бренд</th>
+              <th onclick="sortStock('total_free')" class="sortable" style="text-align:right">FBO Доступно ↕</th>
+              <th onclick="sortStock('total_reserved')" class="sortable" style="text-align:right">FBO Резерв ↕</th>
+              <th onclick="sortStock('fbs_present')" class="sortable" style="text-align:right">FBS Остаток ↕</th>
+              <th onclick="sortStock('total_promised')" class="sortable" style="text-align:right">Ожидается ↕</th>
+              <th style="text-align:center">Склады</th>
+            </tr>
+          </thead>
+          <tbody id="stock-tbody">
+            <tr><td colspan="8" class="state-msg">ЗАГРУЗКА...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
   <!-- WATCHLIST SECTION -->
-  <div id="watchlist-section" style="margin-top:24px;display:none">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:10px">
-        <h3 style="margin:0;font-size:13px;color:var(--green,#64c864);text-transform:uppercase;letter-spacing:1px">
-          🟢 К подключению FBS
-        </h3>
-        <span id="watchlist-count" style="font-size:11px;color:var(--text-dim)"></span>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn" id="watchlist-export-btn" style="border-color:rgba(100,220,100,0.5);color:var(--green,#64c864)">
+  <div id="watchlist-section" style="margin-top:16px;display:none">
+    <div class="section-header" id="watchlist-table-header" onclick="toggleSection('watchlist')"
+         style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--surface);border:1px solid rgba(100,220,100,0.25);user-select:none">
+      <span style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:rgba(100,220,100,0.8)">
+        🟢 К подключению FBS
+        <span id="watchlist-count" style="margin-left:8px;padding:1px 6px;background:rgba(100,220,100,0.12);border:1px solid rgba(100,220,100,0.3);font-size:10px;color:rgba(100,220,100,0.9)"></span>
+      </span>
+      <div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
+        <button class="btn" id="watchlist-export-btn" style="border-color:rgba(100,220,100,0.5);color:var(--green,#64c864);font-size:11px;padding:3px 10px">
           ↓ CSV (подключить)
         </button>
-        <button class="btn" id="watchlist-delete-btn" style="border-color:rgba(255,60,60,0.4);color:#ff6b6b;display:none">
+        <button class="btn" id="watchlist-delete-btn" style="border-color:rgba(255,60,60,0.4);color:#ff6b6b;display:none;font-size:11px;padding:3px 10px">
           🗑 Удалить выбранные
         </button>
+        <span id="watchlist-collapse-icon" style="color:rgba(100,220,100,0.6);font-size:12px;margin-left:4px" onclick="toggleSection('watchlist');event.stopPropagation()">▲</span>
       </div>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
-      FBO обнулился — пора подключать трансляцию по FBS. После подключения строки исчезнут автоматически.
-      Можно удалить вручную если товар больше не нужен.
-    </div>
-    <div class="analytics-table-wrap" style="margin-top:0">
-      <div style="max-height:calc(35vh - 60px);overflow-y:auto;">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th style="width:36px">
-                <input type="checkbox" id="watchlist-check-all" onchange="toggleAllWatchlist(this.checked)" title="Выбрать все">
-              </th>
-              <th>Артикул</th>
-              <th>Название</th>
-              <th>Бренд</th>
-              <th style="text-align:right">Дата обнуления</th>
-              <th style="text-align:center">Удалить</th>
-            </tr>
-          </thead>
-          <tbody id="watchlist-tbody">
-          </tbody>
-        </table>
+    <div id="watchlist-table-body" class="collapsible-body">
+      <div style="font-size:11px;color:var(--text-dim);padding:6px 12px;background:var(--surface);border-left:1px solid rgba(100,220,100,0.25);border-right:1px solid rgba(100,220,100,0.25)">
+        FBO обнулился — пора подключать трансляцию по FBS. После подключения строки исчезнут автоматически.
+        Можно удалить вручную если товар больше не нужен.
+      </div>
+      <div class="analytics-table-wrap" style="margin-top:0;border-top:none;border-color:rgba(100,220,100,0.25)">
+        <div style="max-height:calc(40vh - 60px);overflow-y:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:36px">
+                  <input type="checkbox" id="watchlist-check-all" onchange="toggleAllWatchlist(this.checked)" title="Выбрать все">
+                </th>
+                <th>Артикул</th>
+                <th>Название</th>
+                <th>Бренд</th>
+                <th style="text-align:right">Дата обнуления</th>
+                <th style="text-align:center">Удалить</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -137,5 +148,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/stock.js?v=1774304000"></script>
+<script src="/static/js/stock.js?v=1774390000"></script>
 {% endblock %}
