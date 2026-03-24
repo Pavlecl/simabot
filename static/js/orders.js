@@ -23,8 +23,6 @@ function buildOrdersUrl(page, perPage = 50) {
   const dateTo = document.getElementById('date-to')?.value || '';
   const sur = document.getElementById('sur-filter')?.value.trim() || '';
   const invoice = document.getElementById('invoice-filter')?.value.trim() || '';
-  if (sur) url += `&sur=${encodeURIComponent(sur)}`;
-  if (invoice) url += `&invoice=${encodeURIComponent(invoice)}`;
 
   let url = `/api/orders?page=${page}&per_page=${perPage}`;
   if (status) url += `&status=${encodeURIComponent(status)}`;
@@ -32,6 +30,8 @@ function buildOrdersUrl(page, perPage = 50) {
   if (dateFrom) url += `&date_from=${encodeURIComponent(dateFrom)}`;
   if (dateTo) url += `&date_to=${encodeURIComponent(dateTo)}`;
   url += `&sort=${sortAcceptedDir === 'asc' ? 'accepted_asc' : 'accepted_desc'}`;
+  if (sur) url += `&sur=${encodeURIComponent(sur)}`;
+  if (invoice) url += `&invoice=${encodeURIComponent(invoice)}`;
   return url;
 }
 
