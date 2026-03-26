@@ -43,7 +43,7 @@ ADMIN_ID = int(_admin_id_raw)
 from aiohttp_socks import ProxyConnector
 from aiogram.client.session.aiohttp import AiohttpSession
 
-proxy_url = 'socks5://rjIv9djjgH:ngskc40WuE@72.56.17.207:1080'
+proxy_url = 'socks5://rjIv9djjgH:ngskc40WuE@72.56.17.207:8443'
 session = AiohttpSession(proxy=proxy_url)
 bot = Bot(token=BOT_TOKEN, session=session)
 dp = Dispatcher()
