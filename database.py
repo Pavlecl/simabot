@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Text, Boolean, select, delete, update
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Text, Boolean, select, delete, update, func
 from sqlalchemy.dialects.postgresql import insert
 
 # --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
@@ -264,10 +264,12 @@ async def save_order_meta(posting_number, products, sima_num, sima_date, deliv_d
             index_elements=['posting_number'],
             set_={
                 'products_json': products_str,
-                'sima_order_number': sima_num,
-                'sima_order_date': sima_date,
-                'plan_delivery_date': deliv_date,
                 'ozon_accepted_at': accepted_at,
+                # sima_order_number, sima_order_date, plan_delivery_date —
+                # обновляем только если ещё не заполнены
+                'sima_order_number': func.coalesce(Order.sima_order_number, sima_num),
+                'sima_order_date': func.coalesce(Order.sima_order_date, sima_date),
+                'plan_delivery_date': func.coalesce(Order.plan_delivery_date, deliv_date),
             }
         )
         await session.execute(stmt)
