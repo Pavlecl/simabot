@@ -2217,7 +2217,9 @@ async def sync_stock_cache():
 
             # Загружаем watchlist для ответа
             wl_res = await db.execute(
-                select(FboWatchlist).order_by(FboWatchlist.noted_at.desc().nullslast())
+                select(FboWatchlist)
+                .where(FboWatchlist.dismissed_at == None)
+                .order_by(FboWatchlist.noted_at.desc().nullslast())
             )
             watchlist = [
                 {"offer_id": w.offer_id, "item_name": w.item_name, "brand": w.brand,
@@ -2259,7 +2261,11 @@ async def api_stock_fbo_sync(user: dict = Depends(require_any_role)):
 
 @app.delete("/api/stock/watchlist/{offer_id}")
 async def delete_watchlist_item(offer_id: str, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    await db.execute(delete(FboWatchlist).where(FboWatchlist.offer_id == offer_id))
+    await db.execute(
+        update(FboWatchlist)
+        .where(FboWatchlist.offer_id == offer_id)
+        .values(dismissed_at=datetime.now())
+    )
     await db.commit()
     _stock_cache["watchlist"] = [w for w in _stock_cache.get("watchlist", []) if w["offer_id"] != offer_id]
     return {"ok": True}
@@ -2268,7 +2274,11 @@ async def delete_watchlist_item(offer_id: str, user: dict = Depends(require_admi
 async def delete_watchlist_bulk(request: Request, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     body = await request.json()
     offer_ids = body.get("offer_ids", [])
-    await db.execute(delete(FboWatchlist).where(FboWatchlist.offer_id.in_(offer_ids)))
+    await db.execute(
+        update(FboWatchlist)
+        .where(FboWatchlist.offer_id.in_(offer_ids))
+        .values(dismissed_at=datetime.now())
+    )
     await db.commit()
     _stock_cache["watchlist"] = [w for w in _stock_cache.get("watchlist", []) if w["offer_id"] not in offer_ids]
     return {"ok": True}

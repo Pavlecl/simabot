@@ -170,6 +170,7 @@ class FboWatchlist(Base):
     brand = Column(String, nullable=True)
     added_at = Column(DateTime, default=datetime.now)
     noted_at = Column(DateTime, nullable=True)  # когда FBO обнулился
+    dismissed_at = Column(DateTime, nullable=True, default=None)  # скрыт вручную
 
 # --- ФУНКЦИИ ИНИЦИАЛИЗАЦИИ ---
 
