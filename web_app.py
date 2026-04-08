@@ -2185,25 +2185,15 @@ async def sync_stock_cache():
         print(f"STOCK SYNC DONE: {len(items)} items", flush=True)
         # Обновляем watchlist
         async with AsyncSessionLocal() as db:
-            # Добавляем в watchlist все товары у которых FBO > 0 (наблюдаем)
+            # Добавляем в watchlist только когда FBO=0 и FBS=0 (пора подключать)
             for item in by_item.values():
-                if item["total_free"] > 0:
+                if item["total_free"] == 0 and item["fbs_present"] == 0:
                     stmt = pg_insert(FboWatchlist).values(
                         offer_id=item["item_code"],
                         item_name=item["item_name"],
                         brand=item["brand"],
                     ).on_conflict_do_nothing(index_elements=["offer_id"])
                     await db.execute(stmt)
-
-            # Помечаем noted_at когда FBO=0
-            for item in by_item.values():
-                if item["total_free"] == 0 and item["fbs_present"] == 0:
-                    await db.execute(
-                        update(FboWatchlist)
-                        .where(FboWatchlist.offer_id == item["item_code"])
-                        .where(FboWatchlist.noted_at == None)
-                        .values(noted_at=datetime.now())
-                    )
 
             # Автоудаляем из watchlist если FBS снова появился
             for item in by_item.values():
@@ -2268,10 +2258,19 @@ async def api_fbs_zero(request: Request, user: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="offer_ids пустой")
 
     warehouse_id = int(os.getenv("OZON_WAREHOUSE_ID", "0"))
+    # Берём только те offer_id у которых реально есть FBS остаток
+    items_with_fbs = {
+        item["item_code"]: item["fbs_present"]
+        for item in _stock_cache.get("items", [])
+        if item["fbs_present"] > 0
+    }
     stocks_payload = [
         {"offer_id": oid, "stock": 0, "warehouse_id": warehouse_id}
         for oid in offer_ids
+        if oid in items_with_fbs
     ]
+    if not stocks_payload:
+        return {"ok": True, "total": 0, "errors": [], "skipped": len(offer_ids)}
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
