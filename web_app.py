@@ -2275,9 +2275,9 @@ async def api_fbs_zero(request: Request, user: dict = Depends(require_admin)):
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            "https://api-seller.ozon.ru/v1/product/import/stocks",
-            headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
-            json={"stocks": stocks_payload}
+                "https://api-seller.ozon.ru/v2/products/stocks",
+                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+                json={"stocks": stocks_payload}
         ) as resp:
             data = await resp.json()
 
