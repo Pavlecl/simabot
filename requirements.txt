@@ -8,9 +8,9 @@ matplotlib
 sqlalchemy
 asyncpg
 fastapi==0.115.0
+starlette==0.38.6
 uvicorn
 python-multipart
-starlette==0.41.2
 jinja2
 greenlet
 psycopg2-binary
