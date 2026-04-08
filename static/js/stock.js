@@ -14,7 +14,7 @@ const collapseState = {
   main: sessionStorage.getItem('stock_main_collapsed') === '1',
   watchlist: sessionStorage.getItem('stock_watchlist_collapsed') === '1',
 };
-// Добавить в начало файла (после объявления переменных):
+
 function showConfirm(text, title = 'Подтвердите действие') {
   return new Promise(resolve => {
     const modal = document.getElementById('confirm-modal');
@@ -97,7 +97,7 @@ async function loadStock() {
     }
   } catch(e) {
     document.getElementById('stock-tbody').innerHTML =
-      '<tr><td colspan="8" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>';
+      '<tr><td colspan="9" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>';
   } finally {
     btn.disabled = false;
     btn.innerHTML = '⟳ Обновить';
@@ -194,7 +194,7 @@ function renderStock() {
 
   const tbody = document.getElementById('stock-tbody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="state-msg">НЕТ ДАННЫХ</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     return;
   }
 
@@ -213,17 +213,98 @@ function renderStock() {
     const fbsColor = item.fbs_present > 0 ? 'var(--accent)' : 'var(--text-dim)';
     const safeCode = item.item_code.replace(/'/g, "\\'");
 
-    return `<tr style="${rowBg}cursor:pointer" onclick="openStockModal('${safeCode}')">
-      <td class="code" style="color:var(--accent);font-size:11px">${item.item_code}${disable ? ' <span title="Сообщить Симе об отключении трансляции" style="color:var(--accent)">⚡</span>' : ''}</td>
-      <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${item.item_name || '—'}</td>
-      <td style="font-size:11px;color:var(--text-dim)">${item.brand || '—'}</td>
-      <td style="text-align:right;font-weight:bold;color:${freeColor}">${free.toLocaleString('ru')}</td>
-      <td style="text-align:right;color:var(--yellow,#f0a500)">${reserved.toLocaleString('ru')}</td>
-      <td style="text-align:right;font-weight:bold;color:${fbsColor}">${item.fbs_present.toLocaleString('ru')}</td>
-      <td style="text-align:right;color:var(--text-dim)">${promised.toLocaleString('ru')}</td>
-      <td style="text-align:center;font-size:11px;color:var(--text-dim)">${whCount}</td>
+    return `<tr style="${rowBg}">
+      <td style="text-align:center" onclick="event.stopPropagation()">
+        <input type="checkbox" class="main-check" value="${item.item_code}" onchange="onMainCheckChange()">
+      </td>
+      <td class="code" style="color:var(--accent);font-size:11px;cursor:pointer" onclick="openStockModal('${safeCode}')">${item.item_code}${disable ? ' <span title="Сообщить Симе об отключении трансляции" style="color:var(--accent)">⚡</span>' : ''}</td>
+      <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;cursor:pointer" onclick="openStockModal('${safeCode}')">${item.item_name || '—'}</td>
+      <td style="font-size:11px;color:var(--text-dim);cursor:pointer" onclick="openStockModal('${safeCode}')">${item.brand || '—'}</td>
+      <td style="text-align:right;font-weight:bold;color:${freeColor};cursor:pointer" onclick="openStockModal('${safeCode}')">${free.toLocaleString('ru')}</td>
+      <td style="text-align:right;color:var(--yellow,#f0a500);cursor:pointer" onclick="openStockModal('${safeCode}')">${reserved.toLocaleString('ru')}</td>
+      <td style="text-align:right;font-weight:bold;color:${fbsColor};cursor:pointer" onclick="openStockModal('${safeCode}')">${item.fbs_present.toLocaleString('ru')}</td>
+      <td style="text-align:right;color:var(--text-dim);cursor:pointer" onclick="openStockModal('${safeCode}')">${promised.toLocaleString('ru')}</td>
+      <td style="text-align:center;font-size:11px;color:var(--text-dim);cursor:pointer" onclick="openStockModal('${safeCode}')">${whCount}</td>
     </tr>`;
   }).join('');
+
+  // Сбрасываем чекбокс "выбрать все"
+  const allCheck = document.getElementById('main-check-all');
+  if (allCheck) { allCheck.checked = false; allCheck.indeterminate = false; }
+  updateZeroFbsBtn();
+}
+
+// =====================================================================
+// ЧЕКБОКСЫ ОСНОВНОЙ ТАБЛИЦЫ + КНОПКА ОБНУЛИТЬ FBS
+// =====================================================================
+
+function onMainCheckChange() {
+  const all = document.querySelectorAll('.main-check');
+  const checked = document.querySelectorAll('.main-check:checked');
+  const allCheck = document.getElementById('main-check-all');
+  if (allCheck) {
+    allCheck.indeterminate = checked.length > 0 && checked.length < all.length;
+    allCheck.checked = checked.length === all.length && all.length > 0;
+  }
+  updateZeroFbsBtn();
+}
+
+function toggleAllMain(checked) {
+  document.querySelectorAll('.main-check').forEach(cb => cb.checked = checked);
+  updateZeroFbsBtn();
+}
+
+function updateZeroFbsBtn() {
+  const checked = document.querySelectorAll('.main-check:checked');
+  const btn = document.getElementById('stock-zero-fbs-btn');
+  if (checked.length > 0) {
+    btn.style.display = '';
+    btn.textContent = `⊘ Обнулить FBS (${checked.length})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function zeroFbsSelected() {
+  const checked = [...document.querySelectorAll('.main-check:checked')].map(cb => cb.value);
+  if (!checked.length) return;
+
+  if (!await showConfirm(
+    `Обнулить FBS остаток для ${checked.length} позиций на складе Ozon?\nПосле обновления они перейдут в список «К подключению FBS».`,
+    'Обнуление FBS остатка'
+  )) return;
+
+  const btn = document.getElementById('stock-zero-fbs-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Отправляем...';
+
+  try {
+    const resp = await fetch('/api/stock/fbs/zero', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({offer_ids: checked})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Ошибка');
+
+    if (data.errors && data.errors.length > 0) {
+      showToast(`⚠ Обновлено ${data.total - data.errors.length} из ${data.total}, ошибок: ${data.errors.length}`, 'error');
+    } else {
+      showToast(`✓ FBS обнулён для ${data.total} позиций. Нажмите «Обновить» чтобы увидеть изменения.`);
+    }
+
+    // Снимаем чекбоксы
+    document.querySelectorAll('.main-check:checked').forEach(cb => cb.checked = false);
+    const allCheck = document.getElementById('main-check-all');
+    if (allCheck) { allCheck.checked = false; allCheck.indeterminate = false; }
+    updateZeroFbsBtn();
+
+  } catch(e) {
+    showToast(`Ошибка: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    updateZeroFbsBtn();
+  }
 }
 
 // =====================================================================
@@ -243,7 +324,6 @@ function renderWatchlist() {
   section.style.display = 'block';
   countEl.textContent = `${stockWatchlist.length} позиций`;
 
-  // Если watchlist только что появился и пользователь ещё не трогал состояние — раскрываем его
   if (sessionStorage.getItem('stock_watchlist_collapsed') === null) {
     collapseState.watchlist = false;
   }
@@ -451,3 +531,4 @@ document.getElementById('stock-export-btn').addEventListener('click', exportStoc
 document.getElementById('stock-export-disable-btn').addEventListener('click', exportDisableCSV);
 document.getElementById('watchlist-export-btn').addEventListener('click', exportWatchlistCSV);
 document.getElementById('watchlist-delete-btn').addEventListener('click', deleteWatchlistBulk);
+document.getElementById('stock-zero-fbs-btn').addEventListener('click', zeroFbsSelected);

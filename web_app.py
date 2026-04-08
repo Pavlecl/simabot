@@ -2259,6 +2259,35 @@ async def api_stock_fbo_sync(user: dict = Depends(require_any_role)):
     _asyncio.create_task(sync_stock_cache())
     return {"ok": True}
 
+@app.post("/api/stock/fbs/zero")
+async def api_fbs_zero(request: Request, user: dict = Depends(require_admin)):
+    """Обнуляет FBS остаток для переданных offer_id через Ozon API"""
+    body = await request.json()
+    offer_ids = body.get("offer_ids", [])
+    if not offer_ids:
+        raise HTTPException(status_code=400, detail="offer_ids пустой")
+
+    warehouse_id = int(os.getenv("OZON_WAREHOUSE_ID", "0"))
+    stocks_payload = [
+        {"offer_id": oid, "stock": 0, "warehouse_id": warehouse_id}
+        for oid in offer_ids
+    ]
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://api-seller.ozon.ru/v1/product/import/stocks",
+            headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+            json={"stocks": stocks_payload}
+        ) as resp:
+            data = await resp.json()
+
+    errors = [r for r in data.get("result", []) if not r.get("updated")]
+    return {
+        "ok": True,
+        "total": len(stocks_payload),
+        "errors": errors
+    }
+
 @app.delete("/api/stock/watchlist/{offer_id}")
 async def delete_watchlist_item(offer_id: str, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     await db.execute(
