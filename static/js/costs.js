@@ -234,6 +234,22 @@ function closeCostHistoryModal() {
   document.getElementById('cost-history-modal').style.display = 'none';
 }
 
+async function syncOzonProducts() {
+  const btn = document.getElementById('costs-sync-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Синхронизация...';
+  try {
+    const r = await fetch('/api/costs/sync-ozon', {method: 'POST'}).then(r => r.json());
+    showToast(`✓ Добавлено новых: ${r.added}, уже было: ${r.skipped}`);
+    if (r.added > 0) loadCosts(1);
+  } catch(e) {
+    showToast('Ошибка синхронизации', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Синхронизировать с МП';
+  }
+}
+
 // ---- Init ----
 loadCostFilters();
 loadCosts(1);

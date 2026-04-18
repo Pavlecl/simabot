@@ -5,6 +5,7 @@
     <div class="toolbar" style="flex-wrap:wrap;gap:6px">
       <button class="btn primary" onclick="openCostUploadModal()">↑ Загрузить из Excel</button>
       <button class="btn" onclick="exportCostTemplate()">↓ Скачать шаблон</button>
+      <button class="btn" id="costs-sync-btn" onclick="syncOzonProducts()">⟳ Синхронизировать с МП</button>
       <span class="toolbar-sep"></span>
       <input type="text" id="cost-search" class="search-input" placeholder="Артикул / название..." oninput="debounceCosts()" style="width:220px">
       <select id="cost-brand-filter" onchange="loadCosts(1)">

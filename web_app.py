@@ -1588,6 +1588,100 @@ async def api_cost_history(
         for h in history
     ]}
 
+@app.post("/api/costs/sync-ozon")
+async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Получает все артикулы с Ozon и сохраняет новые в БД"""
+    added = 0
+    skipped = 0
+    last_id = ""
+
+    async with aiohttp.ClientSession() as session:
+        while True:
+            async with session.post(
+                "https://api-seller.ozon.ru/v3/product/info/list",
+                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+                json={"filter": {}, "last_id": last_id, "limit": 1000}
+            ) as resp:
+                data = await resp.json()
+
+            items = data.get("result", {}).get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                offer_id = str(item.get("offer_id", "")).strip()
+                product_id = item.get("product_id")
+                if not offer_id:
+                    continue
+
+                stmt = pg_insert(Product).values(
+                    offer_id=offer_id,
+                    product_id=product_id,
+                ).on_conflict_do_nothing(index_elements=["offer_id"])
+                result = await db.execute(stmt)
+                if result.rowcount:
+                    added += 1
+                else:
+                    skipped += 1
+
+            await db.commit()
+
+            last_id = data.get("result", {}).get("last_id", "")
+            if not last_id or len(items) < 1000:
+                break
+
+    return {"ok": True, "added": added, "skipped": skipped}
+
+@app.post("/api/costs/sync-ozon")
+async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Получает все артикулы с Ozon и сохраняет новые в БД"""
+    added = 0
+    skipped = 0
+    last_id = 0
+    limit = 1000
+
+    async with aiohttp.ClientSession() as session:
+        while True:
+            async with session.post(
+                "https://api-seller.ozon.ru/v3/product/info/list",
+                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+                json={"filter": {}, "last_id": last_id, "limit": limit}
+            ) as resp:
+                data = await resp.json()
+
+            items = data.get("result", {}).get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                offer_id = item.get("offer_id", "").strip()
+                if not offer_id:
+                    continue
+
+                # Проверяем есть ли уже в БД
+                existing = await db.execute(
+                    select(Product).where(Product.offer_id == offer_id)
+                )
+                if existing.scalars().first():
+                    skipped += 1
+                    continue
+
+                # Добавляем новый товар
+                new_product = Product(
+                    offer_id=offer_id,
+                    name=item.get("name", ""),
+                )
+                db.add(new_product)
+                added += 1
+
+            await db.commit()
+
+            last_id = data.get("result", {}).get("last_id", "")
+            if not last_id or len(items) < limit:
+                break
+
+    return {"ok": True, "added": added, "skipped": skipped}
+
 @app.post("/api/sync")
 async def api_sync(user: dict = Depends(require_admin)):
     """
