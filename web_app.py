@@ -1595,47 +1595,48 @@ async def api_cost_history(
 
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Получает все артикулы с Ozon и сохраняет новые в БД"""
+    """Получает все артикулы с Ozon через /v5/product/info/prices и сохраняет новые в БД"""
     added = 0
     skipped = 0
-    last_id = ""
+    all_items = []
+    offset = 0
+    limit = 1000
 
-    async with aiohttp.ClientSession() as session:
-        while True:
-            async with session.post(
-                "https://api-seller.ozon.ru/v3/product/info/list",
-                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
-                json={"filter": {}, "last_id": last_id, "limit": 1000}
-            ) as resp:
-                data = await resp.json()
+    # Загружаем все товары через offset-пагинацию
+    first_data = await fetch_products_prices_offset(0, limit)
+    total_available = first_data.get("total", 0)
+    all_items.extend(first_data.get("items", []))
+    offset = len(all_items)
 
-            items = data.get("result", {}).get("items", [])
-            if not items:
-                break
+    while offset < total_available:
+        data = await fetch_products_prices_offset(offset, limit)
+        items = data.get("items", [])
+        if not items:
+            break
+        all_items.extend(items)
+        offset += len(items)
+        if len(items) < limit:
+            break
 
-            for item in items:
-                offer_id = str(item.get("offer_id", "")).strip()
-                product_id = item.get("product_id")
-                if not offer_id:
-                    continue
+    # Сохраняем новые в БД
+    for item in all_items:
+        offer_id = str(item.get("offer_id", "")).strip()
+        product_id = item.get("product_id")
+        if not offer_id:
+            continue
 
-                stmt = pg_insert(Product).values(
-                    offer_id=offer_id,
-                    product_id=product_id,
-                ).on_conflict_do_nothing(index_elements=["offer_id"])
-                result = await db.execute(stmt)
-                if result.rowcount:
-                    added += 1
-                else:
-                    skipped += 1
+        stmt = pg_insert(Product).values(
+            offer_id=offer_id,
+            product_id=product_id,
+        ).on_conflict_do_nothing(index_elements=["offer_id"])
+        result = await db.execute(stmt)
+        if result.rowcount:
+            added += 1
+        else:
+            skipped += 1
 
-            await db.commit()
-
-            last_id = data.get("result", {}).get("last_id", "")
-            if not last_id or len(items) < 1000:
-                break
-
-    return {"ok": True, "added": added, "skipped": skipped}
+    await db.commit()
+    return {"ok": True, "added": added, "skipped": skipped, "total": len(all_items)}
 
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
