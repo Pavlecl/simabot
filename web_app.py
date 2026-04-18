@@ -1597,13 +1597,13 @@ async def api_cost_history(
 
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin)):
-    asyncio.ensure_future(_sync_ozon_task())
+    asyncio.create_task(_sync_ozon_task())
     return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
 async def _sync_ozon_task():
     """Фоновая задача — получает все артикулы с Ozon и сохраняет в БД"""
-    import logging
     try:
+        print("SYNC OZON: started", flush=True)
         all_items = []
         offset = 0
         limit = 1000
@@ -1612,7 +1612,7 @@ async def _sync_ozon_task():
         total_available = first_data.get("total", 0)
         all_items.extend(first_data.get("items", []))
         offset = len(all_items)
-        logging.info(f"SYNC OZON: total={total_available}")
+        print(f"SYNC OZON: total={total_available}", flush=True)
 
         while offset < total_available:
             data = await fetch_products_prices_offset(offset, limit)
@@ -1624,7 +1624,7 @@ async def _sync_ozon_task():
             if len(items) < limit:
                 break
 
-        logging.info(f"SYNC OZON: fetched {len(all_items)} items, saving...")
+        print(f"SYNC OZON: fetched {len(all_items)}, saving...", flush=True)
 
         batch_size = 500
         added = 0
@@ -1644,11 +1644,14 @@ async def _sync_ozon_task():
                     if result.rowcount:
                         added += 1
                 await db.commit()
+                print(f"SYNC OZON: saved batch {i//batch_size + 1}, added so far: {added}", flush=True)
 
-        logging.info(f"SYNC OZON: done, added={added}")
+        print(f"SYNC OZON: done, added={added}", flush=True)
+
     except Exception as e:
-        import logging
-        logging.error(f"SYNC OZON ERROR: {e}")
+        print(f"SYNC OZON ERROR: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
 
 
 
