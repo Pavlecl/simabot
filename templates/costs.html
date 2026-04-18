@@ -8,6 +8,11 @@
       <button class="btn" id="costs-sync-btn" onclick="syncOzonProducts()">⟳ Синхронизировать с МП</button>
       <span class="toolbar-sep"></span>
       <input type="text" id="cost-search" class="search-input" placeholder="Артикул / название..." oninput="debounceCosts()" style="width:220px">
+      <select id="cost-direction-filter" onchange="loadCosts(1)">
+        <option value="">Все направления</option>
+        <option value="uzspace">UZSPACE</option>
+        <option value="sima">Сима</option>
+      </select>
       <select id="cost-brand-filter" onchange="loadCosts(1)">
         <option value="">Все бренды</option>
       </select>
@@ -34,7 +39,7 @@
         </tbody>
       </table>
     </div>
-    <div id="costs-pagination" class="pagination"></div>
+    <div id="costs-pagination"></div>
   </div>
 
   {# Modal: загрузка Excel #}
@@ -92,5 +97,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="/static/js/costs.js?v=1772735279"></script>
+<script src="/static/js/costs.js?v=1776508000"></script>
 {% endblock %}

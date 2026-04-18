@@ -2,8 +2,10 @@
 // СЕБЕСТОИМОСТЬ
 // =====================================================================
 let costsPage = 1;
+let costsTotalPages = 1;
 let costsSearchTimer = null;
 let pendingCostData = [];
+const COSTS_PER_PAGE = 100;
 
 function debounceCosts() {
   clearTimeout(costsSearchTimer);
@@ -14,15 +16,18 @@ async function loadCosts(page = 1) {
   costsPage = page;
   const search = document.getElementById('cost-search')?.value || '';
   const brand = document.getElementById('cost-brand-filter')?.value || '';
+  const direction = document.getElementById('cost-direction-filter')?.value || '';
   const tbody = document.getElementById('costs-body');
   tbody.innerHTML = '<tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
   try {
-    const params = new URLSearchParams({ page, per_page: 100, search, brand });
+    const params = new URLSearchParams({ page, per_page: COSTS_PER_PAGE, search, brand, direction });
     const r = await fetch(`/api/costs/products?${params}`).then(r => r.json());
-    document.getElementById('cost-count').textContent = r.total ? `${r.total} товаров` : '';
+    const total = r.total || 0;
+    costsTotalPages = Math.ceil(total / COSTS_PER_PAGE);
+    document.getElementById('cost-count').textContent = total ? `${total} товаров` : '';
     renderCosts(r.products || []);
-    renderCostsPagination(r.total, page, 100);
+    renderCostsPagination(total, page, COSTS_PER_PAGE);
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="9" class="state-msg">ОШИБКА ЗАГРУЗКИ</td></tr>';
   }
@@ -72,15 +77,63 @@ function renderCosts(products) {
   }).join('');
 }
 
+// ---- Умная пагинация ----
 function renderCostsPagination(total, page, perPage) {
   const el = document.getElementById('costs-pagination');
   const totalPages = Math.ceil(total / perPage);
   if (totalPages <= 1) { el.innerHTML = ''; return; }
-  let html = '';
-  for (let i = 1; i <= Math.min(totalPages, 20); i++) {
-    html += `<button class="btn${i === page ? ' active' : ''}" onclick="loadCosts(${i})">${i}</button> `;
+
+  // Генерируем список страниц с многоточиями
+  const pages = buildPageList(page, totalPages);
+
+  const btnStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;margin:0 2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;';
+  const activeBtnStyle = btnStyle + 'border-color:var(--accent);color:var(--accent);background:rgba(255,106,0,0.1);';
+  const dimBtnStyle = btnStyle + 'color:var(--text-dim);cursor:default;';
+
+  let html = '<div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 0;flex-wrap:wrap">';
+
+  // Кнопка "Назад"
+  html += page > 1
+    ? `<button style="${btnStyle}" onclick="loadCosts(${page - 1})">‹</button>`
+    : `<button style="${dimBtnStyle}" disabled>‹</button>`;
+
+  // Страницы
+  for (const p of pages) {
+    if (p === '...') {
+      html += `<span style="${dimBtnStyle}">…</span>`;
+    } else if (p === page) {
+      html += `<button style="${activeBtnStyle}">${p}</button>`;
+    } else {
+      html += `<button style="${btnStyle}" onclick="loadCosts(${p})">${p}</button>`;
+    }
   }
+
+  // Кнопка "Вперёд"
+  html += page < totalPages
+    ? `<button style="${btnStyle}" onclick="loadCosts(${page + 1})">›</button>`
+    : `<button style="${dimBtnStyle}" disabled>›</button>`;
+
+  // Счётчик страниц
+  html += `<span style="margin-left:12px;font-size:11px;color:var(--text-dim)">стр. ${page} из ${totalPages}</span>`;
+
+  html += '</div>';
   el.innerHTML = html;
+}
+
+function buildPageList(current, total) {
+  if (total <= 7) return Array.from({length: total}, (_, i) => i + 1);
+
+  const pages = [];
+  // Всегда показываем первую и последнюю
+  // Вокруг текущей — по 2 страницы
+  const around = new Set([1, total, current, current - 1, current + 1, current - 2, current + 2]);
+  const sorted = [...around].filter(p => p >= 1 && p <= total).sort((a, b) => a - b);
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) pages.push('...');
+    pages.push(sorted[i]);
+  }
+  return pages;
 }
 
 // ---- Загрузка брендов в фильтр ----
@@ -124,15 +177,10 @@ function handleCostFile(file) {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
-      // Определяем колонки — поддерживаем разные форматы
-      // Формат 1: Артикул + Себестоимость
-      // Формат 2 (Сима): Код + Цена
-      // Формат 3: offer_id + cost_price
       pendingCostData = [];
       let skipped = 0;
 
       for (const row of rows) {
-        const keys = Object.keys(row);
         let offerId = row['Артикул'] || row['артикул'] || row['offer_id'] || row['Код'] || row['код'] || row['SKU'] || '';
         let cost = row['Себестоимость'] || row['себестоимость'] || row['cost_price'] ||
           row['Цена'] || row['цена'] || row['Закупочная цена'] || row['закупочная цена'] || '';
@@ -147,7 +195,6 @@ function handleCostFile(file) {
         }
       }
 
-      // Превью
       document.getElementById('cost-upload-info').textContent =
         `Найдено: ${pendingCostData.length} позиций${skipped ? `, пропущено: ${skipped}` : ''}`;
 
@@ -234,6 +281,7 @@ function closeCostHistoryModal() {
   document.getElementById('cost-history-modal').style.display = 'none';
 }
 
+// ---- Синхронизация с Ozon ----
 async function syncOzonProducts() {
   const btn = document.getElementById('costs-sync-btn');
   btn.disabled = true;

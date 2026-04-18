@@ -1459,6 +1459,7 @@ async def api_costs_products(
     brand: str = "",
     page: int = 1,
     per_page: int = 100,
+    direction: str = Query("", alias="direction"),
     user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1474,6 +1475,10 @@ async def api_costs_products(
         filters.append(or_(Product.offer_id.ilike(like), Product.name.ilike(like)))
     if brand:
         filters.append(Product.brand == brand)
+    if direction == "uzspace":
+        filters.append(Product.brand.ilike("UZSPACE"))
+    elif direction == "sima":
+        filters.append(Product.brand.notilike("UZSPACE"))
 
     for f in filters:
         query = query.where(f)
