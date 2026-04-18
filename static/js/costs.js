@@ -183,7 +183,7 @@ function handleCostFile(file) {
       for (const row of rows) {
         let offerId = row['Артикул'] || row['артикул'] || row['offer_id'] || row['Код'] || row['код'] || row['SKU'] || '';
         let cost = row['Себестоимость'] || row['себестоимость'] || row['cost_price'] ||
-          row['Цена'] || row['цена'] || row['Закупочная цена'] || row['закупочная цена'] || '';
+            row['Цена, ₽'] || row['Цена'] || row['цена'] || row['Закупочная цена'] || row['закупочная цена'] || '';
 
         offerId = String(offerId).trim();
         const costNum = parseFloat(String(cost).replace(',', '.').replace(/[^\d.]/g, ''));
