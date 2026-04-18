@@ -238,15 +238,28 @@ async function submitCostUpload() {
 }
 
 // ---- Экспорт шаблона ----
-function exportCostTemplate() {
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['Артикул', 'Себестоимость'],
-    ['12345/red', '150'],
-    ['67890', '320'],
-  ]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Себестоимость');
-  XLSX.writeFile(wb, 'cost_template.xlsx');
+async function exportCostTemplate() {
+  try {
+    // Загружаем все товары без пагинации
+    const r = await fetch('/api/costs/products?page=1&per_page=100000&search=&brand=&direction=').then(r => r.json());
+    const products = r.products || [];
+
+    const rows = [['Артикул', 'Себестоимость']];
+    for (const p of products) {
+      rows.push([p.offer_id, p.cost_price || '']);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    // Ширина колонок
+    ws['!cols'] = [{wch: 20}, {wch: 15}];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Себестоимость');
+    XLSX.writeFile(wb, `cost_template_${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast(`✓ Экспортировано ${products.length} позиций`);
+  } catch(e) {
+    showToast('Ошибка экспорта', 'error');
+  }
 }
 
 // ---- История себестоимости ----
