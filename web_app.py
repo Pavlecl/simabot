@@ -1595,13 +1595,23 @@ async def api_cost_history(
     ]}
 
 
+_ozon_sync_status = {"running": False, "fetched": 0, "total": 0, "saved": 0, "done": False}
+
+
+@app.get("/api/costs/sync-ozon/status")
+async def api_costs_sync_status(user: dict = Depends(require_any_role)):
+    return _ozon_sync_status
+
+
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin)):
     asyncio.create_task(_sync_ozon_task())
     return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
+
 async def _sync_ozon_task():
-    """Фоновая задача — получает все артикулы с Ozon через /v3/product/list"""
+    global _ozon_sync_status
+    _ozon_sync_status = {"running": True, "fetched": 0, "total": 0, "saved": 0, "done": False}
     try:
         print("SYNC OZON: started", flush=True)
         all_offer_ids = []
@@ -1624,15 +1634,17 @@ async def _sync_ozon_task():
 
             all_offer_ids.extend(items)
             last_id = result.get("last_id", "")
+            _ozon_sync_status["fetched"] = len(all_offer_ids)
             print(f"SYNC OZON: fetched {len(all_offer_ids)}", flush=True)
 
             if not last_id or len(items) < limit:
                 break
 
-        print(f"SYNC OZON: total fetched {len(all_offer_ids)}, saving...", flush=True)
+        _ozon_sync_status["total"] = len(all_offer_ids)
+        print(f"SYNC OZON: total {len(all_offer_ids)}, saving...", flush=True)
 
         batch_size = 500
-        added = 0
+        saved = 0
         async with AsyncSessionLocal() as db:
             for i in range(0, len(all_offer_ids), batch_size):
                 batch = all_offer_ids[i:i + batch_size]
@@ -1646,13 +1658,16 @@ async def _sync_ozon_task():
                         product_id=product_id,
                     ).on_conflict_do_nothing(index_elements=["offer_id"])
                     await db.execute(stmt)
-                    added += 1
+                    saved += 1
                 await db.commit()
-                print(f"SYNC OZON: committed batch {i//batch_size + 1}", flush=True)
+                _ozon_sync_status["saved"] = saved
+                print(f"SYNC OZON: saved {saved}", flush=True)
 
-        print(f"SYNC OZON: done, processed={added}", flush=True)
+        _ozon_sync_status = {"running": False, "fetched": len(all_offer_ids), "total": len(all_offer_ids), "saved": saved, "done": True}
+        print(f"SYNC OZON: done", flush=True)
 
     except Exception as e:
+        _ozon_sync_status = {"running": False, "fetched": 0, "total": 0, "saved": 0, "done": False, "error": str(e)}
         print(f"SYNC OZON ERROR: {e}", flush=True)
         import traceback
         traceback.print_exc()
