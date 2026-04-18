@@ -1459,7 +1459,7 @@ async def api_costs_products(
     brand: str = "",
     page: int = 1,
     per_page: int = 100,
-    direction: str = Query("", alias="direction"),
+    direction: str = "",
     user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
