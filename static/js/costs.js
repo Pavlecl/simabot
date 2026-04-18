@@ -83,7 +83,6 @@ function renderCostsPagination(total, page, perPage) {
   const totalPages = Math.ceil(total / perPage);
   if (totalPages <= 1) { el.innerHTML = ''; return; }
 
-  // Генерируем список страниц с многоточиями
   const pages = buildPageList(page, totalPages);
 
   const btnStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;margin:0 2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;';
@@ -92,12 +91,10 @@ function renderCostsPagination(total, page, perPage) {
 
   let html = '<div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 0;flex-wrap:wrap">';
 
-  // Кнопка "Назад"
   html += page > 1
     ? `<button style="${btnStyle}" onclick="loadCosts(${page - 1})">‹</button>`
     : `<button style="${dimBtnStyle}" disabled>‹</button>`;
 
-  // Страницы
   for (const p of pages) {
     if (p === '...') {
       html += `<span style="${dimBtnStyle}">…</span>`;
@@ -108,27 +105,20 @@ function renderCostsPagination(total, page, perPage) {
     }
   }
 
-  // Кнопка "Вперёд"
   html += page < totalPages
     ? `<button style="${btnStyle}" onclick="loadCosts(${page + 1})">›</button>`
     : `<button style="${dimBtnStyle}" disabled>›</button>`;
 
-  // Счётчик страниц
   html += `<span style="margin-left:12px;font-size:11px;color:var(--text-dim)">стр. ${page} из ${totalPages}</span>`;
-
   html += '</div>';
   el.innerHTML = html;
 }
 
 function buildPageList(current, total) {
   if (total <= 7) return Array.from({length: total}, (_, i) => i + 1);
-
   const pages = [];
-  // Всегда показываем первую и последнюю
-  // Вокруг текущей — по 2 страницы
   const around = new Set([1, total, current, current - 1, current + 1, current - 2, current + 2]);
   const sorted = [...around].filter(p => p >= 1 && p <= total).sort((a, b) => a - b);
-
   for (let i = 0; i < sorted.length; i++) {
     if (i > 0 && sorted[i] - sorted[i - 1] > 1) pages.push('...');
     pages.push(sorted[i]);
@@ -240,7 +230,6 @@ async function submitCostUpload() {
 // ---- Экспорт шаблона ----
 async function exportCostTemplate() {
   try {
-    // Загружаем все товары без пагинации
     const r = await fetch('/api/costs/products?page=1&per_page=100000&search=&brand=&direction=').then(r => r.json());
     const products = r.products || [];
 
@@ -250,9 +239,7 @@ async function exportCostTemplate() {
     }
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    // Ширина колонок
     ws['!cols'] = [{wch: 20}, {wch: 15}];
-
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Себестоимость');
     XLSX.writeFile(wb, `cost_template_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -300,13 +287,47 @@ async function syncOzonProducts() {
   btn.disabled = true;
   btn.textContent = '⏳ Запускаем...';
   try {
-    await fetch('/api/costs/sync-ozon', {method: 'POST'}).then(r => r.json());
-    showToast('✓ Синхронизация запущена. Подождите 1-2 минуты и обновите страницу.');
+    await fetch('/api/costs/sync-ozon', {method: 'POST'});
+    await pollSyncStatus();
   } catch(e) {
     showToast('Ошибка синхронизации', 'error');
-  } finally {
     btn.disabled = false;
     btn.textContent = '⟳ Синхронизировать с МП';
+  }
+}
+
+async function pollSyncStatus() {
+  const btn = document.getElementById('costs-sync-btn');
+
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    try {
+      const s = await fetch('/api/costs/sync-ozon/status').then(r => r.json());
+
+      if (s.running) {
+        if (s.total === 0 || s.fetched < s.total) {
+          // Фаза загрузки с Ozon
+          btn.textContent = `⏳ Загружаем... ${s.fetched.toLocaleString('ru')}`;
+        } else {
+          // Фаза сохранения в БД
+          const pct = s.total > 0 ? Math.round(s.saved / s.total * 100) : 0;
+          btn.textContent = `💾 Сохраняем... ${pct}% (${s.saved.toLocaleString('ru')} / ${s.total.toLocaleString('ru')})`;
+        }
+      } else if (s.done) {
+        showToast(`✓ Синхронизировано ${s.total.toLocaleString('ru')} артикулов`);
+        btn.disabled = false;
+        btn.textContent = '⟳ Синхронизировать с МП';
+        setTimeout(() => location.reload(), 1000);
+        break;
+      } else if (s.error) {
+        showToast(`Ошибка: ${s.error}`, 'error');
+        btn.disabled = false;
+        btn.textContent = '⟳ Синхронизировать с МП';
+        break;
+      }
+    } catch {
+      break;
+    }
   }
 }
 
