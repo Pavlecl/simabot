@@ -20,7 +20,7 @@ import asyncio
 from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -1594,10 +1594,13 @@ async def api_cost_history(
         for h in history
     ]}
 
+
 @app.post("/api/costs/sync-ozon")
-async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Запускает синхронизацию в фоне"""
-    asyncio.create_task(_sync_ozon_task())
+async def api_costs_sync_ozon(
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_admin)
+):
+    background_tasks.add_task(_sync_ozon_task)
     return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
 async def _sync_ozon_task():
