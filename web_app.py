@@ -1596,11 +1596,8 @@ async def api_cost_history(
 
 
 @app.post("/api/costs/sync-ozon")
-async def api_costs_sync_ozon(
-    background_tasks: BackgroundTasks,
-    user: dict = Depends(require_admin)
-):
-    background_tasks.add_task(_sync_ozon_task)
+async def api_costs_sync_ozon(user: dict = Depends(require_admin)):
+    asyncio.ensure_future(_sync_ozon_task())
     return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
 async def _sync_ozon_task():
