@@ -1601,36 +1601,41 @@ async def api_costs_sync_ozon(user: dict = Depends(require_admin)):
     return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
 async def _sync_ozon_task():
-    """Фоновая задача — получает все артикулы с Ozon и сохраняет в БД"""
+    """Фоновая задача — получает все артикулы с Ozon через /v3/product/list"""
     try:
         print("SYNC OZON: started", flush=True)
-        all_items = []
-        offset = 0
+        all_offer_ids = []
+        last_id = ""
         limit = 1000
 
-        first_data = await fetch_products_prices_offset(0, limit)
-        total_available = first_data.get("total", 0)
-        all_items.extend(first_data.get("items", []))
-        offset = len(all_items)
-        print(f"SYNC OZON: total={total_available}", flush=True)
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v3/product/list",
+                    headers=OZON_HEADERS,
+                    json={"filter": {"visibility": "ALL"}, "last_id": last_id, "limit": limit}
+                ) as resp:
+                    data = await resp.json()
 
-        while offset < total_available:
-            data = await fetch_products_prices_offset(offset, limit)
-            items = data.get("items", [])
+            result = data.get("result", {})
+            items = result.get("items", [])
             if not items:
                 break
-            all_items.extend(items)
-            offset += len(items)
-            if len(items) < limit:
+
+            all_offer_ids.extend(items)
+            last_id = result.get("last_id", "")
+            print(f"SYNC OZON: fetched {len(all_offer_ids)}", flush=True)
+
+            if not last_id or len(items) < limit:
                 break
 
-        print(f"SYNC OZON: fetched {len(all_items)}, saving...", flush=True)
+        print(f"SYNC OZON: total fetched {len(all_offer_ids)}, saving...", flush=True)
 
         batch_size = 500
         added = 0
         async with AsyncSessionLocal() as db:
-            for i in range(0, len(all_items), batch_size):
-                batch = all_items[i:i + batch_size]
+            for i in range(0, len(all_offer_ids), batch_size):
+                batch = all_offer_ids[i:i + batch_size]
                 for item in batch:
                     offer_id = str(item.get("offer_id", "")).strip()
                     product_id = item.get("product_id")
@@ -1640,13 +1645,12 @@ async def _sync_ozon_task():
                         offer_id=offer_id,
                         product_id=product_id,
                     ).on_conflict_do_nothing(index_elements=["offer_id"])
-                    result = await db.execute(stmt)
-                    if result.rowcount:
-                        added += 1
+                    await db.execute(stmt)
+                    added += 1
                 await db.commit()
-                print(f"SYNC OZON: saved batch {i//batch_size + 1}, added so far: {added}", flush=True)
+                print(f"SYNC OZON: committed batch {i//batch_size + 1}", flush=True)
 
-        print(f"SYNC OZON: done, added={added}", flush=True)
+        print(f"SYNC OZON: done, processed={added}", flush=True)
 
     except Exception as e:
         print(f"SYNC OZON ERROR: {e}", flush=True)
