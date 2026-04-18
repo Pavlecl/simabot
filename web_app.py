@@ -16,6 +16,7 @@ FastAPI строится на двух типах маршрутов (routes):
 import os
 import json
 import aiohttp
+import asyncio
 from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 
