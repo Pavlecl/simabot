@@ -1595,49 +1595,59 @@ async def api_cost_history(
 
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Получает все артикулы с Ozon и сохраняет в БД батчами"""
-    added = 0
-    updated = 0
-    all_items = []
-    offset = 0
-    limit = 1000
+    """Запускает синхронизацию в фоне"""
+    asyncio.create_task(_sync_ozon_task())
+    return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
-    first_data = await fetch_products_prices_offset(0, limit)
-    total_available = first_data.get("total", 0)
-    all_items.extend(first_data.get("items", []))
-    offset = len(all_items)
+async def _sync_ozon_task():
+    """Фоновая задача — получает все артикулы с Ozon и сохраняет в БД"""
+    import logging
+    try:
+        all_items = []
+        offset = 0
+        limit = 1000
 
-    while offset < total_available:
-        data = await fetch_products_prices_offset(offset, limit)
-        items = data.get("items", [])
-        if not items:
-            break
-        all_items.extend(items)
-        offset += len(items)
-        if len(items) < limit:
-            break
+        first_data = await fetch_products_prices_offset(0, limit)
+        total_available = first_data.get("total", 0)
+        all_items.extend(first_data.get("items", []))
+        offset = len(all_items)
+        logging.info(f"SYNC OZON: total={total_available}")
 
-    # Записываем батчами по 500
-    batch_size = 500
-    for i in range(0, len(all_items), batch_size):
-        batch = all_items[i:i + batch_size]
-        for item in batch:
-            offer_id = str(item.get("offer_id", "")).strip()
-            product_id = item.get("product_id")
-            if not offer_id:
-                continue
-            stmt = pg_insert(Product).values(
-                offer_id=offer_id,
-                product_id=product_id,
-            ).on_conflict_do_nothing(index_elements=["offer_id"])
-            result = await db.execute(stmt)
-            if result.rowcount:
-                added += 1
-            else:
-                updated += 1
-        await db.commit()
+        while offset < total_available:
+            data = await fetch_products_prices_offset(offset, limit)
+            items = data.get("items", [])
+            if not items:
+                break
+            all_items.extend(items)
+            offset += len(items)
+            if len(items) < limit:
+                break
 
-    return {"ok": True, "added": added, "updated": updated, "total": len(all_items)}
+        logging.info(f"SYNC OZON: fetched {len(all_items)} items, saving...")
+
+        batch_size = 500
+        added = 0
+        async with AsyncSessionLocal() as db:
+            for i in range(0, len(all_items), batch_size):
+                batch = all_items[i:i + batch_size]
+                for item in batch:
+                    offer_id = str(item.get("offer_id", "")).strip()
+                    product_id = item.get("product_id")
+                    if not offer_id:
+                        continue
+                    stmt = pg_insert(Product).values(
+                        offer_id=offer_id,
+                        product_id=product_id,
+                    ).on_conflict_do_nothing(index_elements=["offer_id"])
+                    result = await db.execute(stmt)
+                    if result.rowcount:
+                        added += 1
+                await db.commit()
+
+        logging.info(f"SYNC OZON: done, added={added}")
+    except Exception as e:
+        import logging
+        logging.error(f"SYNC OZON ERROR: {e}")
 
 
 

@@ -298,11 +298,10 @@ function closeCostHistoryModal() {
 async function syncOzonProducts() {
   const btn = document.getElementById('costs-sync-btn');
   btn.disabled = true;
-  btn.textContent = '⏳ Синхронизация...';
+  btn.textContent = '⏳ Запускаем...';
   try {
-    const r = await fetch('/api/costs/sync-ozon', {method: 'POST'}).then(r => r.json());
-    showToast(`✓ Добавлено новых: ${r.added}, уже было: ${r.skipped}`);
-    if (r.added > 0) loadCosts(1);
+    await fetch('/api/costs/sync-ozon', {method: 'POST'}).then(r => r.json());
+    showToast('✓ Синхронизация запущена. Подождите 1-2 минуты и обновите страницу.');
   } catch(e) {
     showToast('Ошибка синхронизации', 'error');
   } finally {
