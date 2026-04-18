@@ -1595,52 +1595,7 @@ async def api_cost_history(
 
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Получает все артикулы с Ozon через /v5/product/info/prices и сохраняет новые в БД"""
-    added = 0
-    skipped = 0
-    all_items = []
-    offset = 0
-    limit = 1000
-
-    # Загружаем все товары через offset-пагинацию
-    first_data = await fetch_products_prices_offset(0, limit)
-    total_available = first_data.get("total", 0)
-    all_items.extend(first_data.get("items", []))
-    offset = len(all_items)
-
-    while offset < total_available:
-        data = await fetch_products_prices_offset(offset, limit)
-        items = data.get("items", [])
-        if not items:
-            break
-        all_items.extend(items)
-        offset += len(items)
-        if len(items) < limit:
-            break
-
-    # Сохраняем новые в БД
-    for item in all_items:
-        offer_id = str(item.get("offer_id", "")).strip()
-        product_id = item.get("product_id")
-        if not offer_id:
-            continue
-
-        stmt = pg_insert(Product).values(
-            offer_id=offer_id,
-            product_id=product_id,
-        ).on_conflict_do_nothing(index_elements=["offer_id"])
-        result = await db.execute(stmt)
-        if result.rowcount:
-            added += 1
-        else:
-            skipped += 1
-
-    await db.commit()
-    return {"ok": True, "added": added, "skipped": skipped, "total": len(all_items)}
-
-@app.post("/api/costs/sync-ozon")
-async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Получает все артикулы с Ozon и сохраняет/обновляет в БД"""
+    """Получает все артикулы с Ozon и сохраняет в БД батчами"""
     added = 0
     updated = 0
     all_items = []
@@ -1662,27 +1617,29 @@ async def api_costs_sync_ozon(user: dict = Depends(require_admin), db: AsyncSess
         if len(items) < limit:
             break
 
-    for item in all_items:
-        offer_id = str(item.get("offer_id", "")).strip()
-        product_id = item.get("product_id")
-        if not offer_id:
-            continue
+    # Записываем батчами по 500
+    batch_size = 500
+    for i in range(0, len(all_items), batch_size):
+        batch = all_items[i:i + batch_size]
+        for item in batch:
+            offer_id = str(item.get("offer_id", "")).strip()
+            product_id = item.get("product_id")
+            if not offer_id:
+                continue
+            stmt = pg_insert(Product).values(
+                offer_id=offer_id,
+                product_id=product_id,
+            ).on_conflict_do_nothing(index_elements=["offer_id"])
+            result = await db.execute(stmt)
+            if result.rowcount:
+                added += 1
+            else:
+                updated += 1
+        await db.commit()
 
-        stmt = pg_insert(Product).values(
-            offer_id=offer_id,
-            product_id=product_id,
-        ).on_conflict_do_update(
-            index_elements=["offer_id"],
-            set_={"product_id": product_id}
-        )
-        result = await db.execute(stmt)
-        if result.rowcount == 1:
-            added += 1
-        else:
-            updated += 1
-
-    await db.commit()
     return {"ok": True, "added": added, "updated": updated, "total": len(all_items)}
+
+
 
 @app.post("/api/sync")
 async def api_sync(user: dict = Depends(require_admin)):
