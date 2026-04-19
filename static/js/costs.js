@@ -302,27 +302,20 @@ async function pollSyncStatus() {
   while (true) {
     await new Promise(r => setTimeout(r, 1500));
     try {
-      const s = await fetch('/api/costs/sync-ozon/status').then(r => r.json());
+      const s = await fetch('/api/repricer/sync/status').then(r => r.json());
 
       if (s.running) {
-        if (s.total === 0 || s.fetched < s.total) {
-          // Фаза загрузки с Ozon
-          btn.textContent = `⏳ Загружаем... ${s.fetched.toLocaleString('ru')}`;
-        } else {
-          // Фаза сохранения в БД
-          const pct = s.total > 0 ? Math.round(s.saved / s.total * 100) : 0;
-          btn.textContent = `💾 Сохраняем... ${pct}% (${s.saved.toLocaleString('ru')} / ${s.total.toLocaleString('ru')})`;
-        }
-      } else if (s.done) {
-        showToast(`✓ Синхронизировано ${s.total.toLocaleString('ru')} артикулов`);
-        btn.disabled = false;
-        btn.textContent = '⟳ Синхронизировать с МП';
-        setTimeout(() => location.reload(), 1000);
-        break;
+        btn.textContent = `⏳ ${s.progress || 'Синхронизация...'}`;
       } else if (s.error) {
         showToast(`Ошибка: ${s.error}`, 'error');
         btn.disabled = false;
         btn.textContent = '⟳ Синхронизировать с МП';
+        break;
+      } else {
+        showToast(`✓ Синхронизировано ${s.synced} товаров`);
+        btn.disabled = false;
+        btn.textContent = '⟳ Синхронизировать с МП';
+        setTimeout(() => location.reload(), 1000);
         break;
       }
     } catch {

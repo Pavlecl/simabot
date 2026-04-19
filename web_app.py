@@ -1605,7 +1605,7 @@ async def api_costs_sync_status(user: dict = Depends(require_any_role)):
 
 @app.post("/api/costs/sync-ozon")
 async def api_costs_sync_ozon(user: dict = Depends(require_admin)):
-    asyncio.create_task(_sync_ozon_task())
+    asyncio.create_task(sync_products_catalog())
     return {"ok": True, "message": "Синхронизация запущена в фоне"}
 
 
