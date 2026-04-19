@@ -299,8 +299,13 @@ async function syncOzonProducts() {
 async function pollSyncStatus() {
   const btn = document.getElementById('costs-sync-btn');
 
+  // Ждём чтобы задача успела запуститься
+  await new Promise(r => setTimeout(r, 2000));
+
+  let attempts = 0;
   while (true) {
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 2000));
+    attempts++;
     try {
       const s = await fetch('/api/repricer/sync/status').then(r => r.json());
 
@@ -311,14 +316,17 @@ async function pollSyncStatus() {
         btn.disabled = false;
         btn.textContent = '⟳ Синхронизировать с МП';
         break;
-      } else {
-        showToast(`✓ Синхронизировано ${s.synced} товаров`);
+      } else if (attempts > 2) {
+        // running=false и нет ошибки — значит завершилась
+        showToast(`✓ Синхронизировано ${(s.synced || 0).toLocaleString('ru')} товаров`);
         btn.disabled = false;
         btn.textContent = '⟳ Синхронизировать с МП';
         setTimeout(() => location.reload(), 1000);
         break;
       }
     } catch {
+      btn.disabled = false;
+      btn.textContent = '⟳ Синхронизировать с МП';
       break;
     }
   }
