@@ -411,18 +411,15 @@ async def process_check_file(message: types.Message, state: FSMContext):
         file_data = await bot.download_file(file.file_path)
         content = file_data.read()
 
-        # 1. Пытаемся прочитать как Excel, если не выйдет - как CSV
+        # 1. Читаем файл
         try:
-            # Читаем без заголовков (header=None), чтобы самим найти нужную строку
             df_raw = pd.read_excel(io.BytesIO(content), header=None)
         except:
-            # Если это CSV (Сима иногда так отдает)
             df_raw = pd.read_csv(io.BytesIO(content), header=None, sep=None, engine='python')
 
-        # 2. Ищем строку, в которой есть слово "Артикул"
+        # 2. Ищем строку с заголовками
         header_row_index = -1
         for i, row in df_raw.iterrows():
-            # Превращаем всю строку в текст и ищем ключевые слова
             row_content = " ".join([str(val).lower() for val in row if pd.notna(val)])
             if 'артикул' in row_content and ('количество' in row_content or 'кол-во' in row_content):
                 header_row_index = i
@@ -430,119 +427,103 @@ async def process_check_file(message: types.Message, state: FSMContext):
 
         if header_row_index == -1:
             await message.answer("❌ Не нашел в файле таблицу с колонками 'Артикул' и 'Количество'.")
+            await state.clear()
             return
 
-        # 3. Пересобираем таблицу, начиная с найденной строки
-        # Назначаем найденную строку заголовками
+        # 3. Пересобираем таблицу
         headers = [str(h).strip().lower() for h in df_raw.iloc[header_row_index]]
         df = df_raw.iloc[header_row_index + 1:].copy()
         df.columns = headers
 
-        # Определяем точные названия колонок
         col_art = next((c for c in df.columns if 'артикул' in c or 'код' in c), None)
         col_qty = next((c for c in df.columns if 'количество' in c or 'кол-во' in c or 'кол.' in c), None)
+        col_price = next((c for c in df.columns if 'цена, ₽' in c or ('цена' in c and '₽' in c)), None)
+        if col_price is None:
+            col_price = next((c for c in df.columns if 'цена' in c and 'опт' not in c), None)
 
+        # 4. Сверка количества с Ozon
         file_items = {}
         for _, row in df.iterrows():
             try:
                 art = str(row[col_art]).strip()
-                # Пропускаем пустые строки или строку "Итого"
                 if not art or art == 'nan' or 'итого' in art.lower():
                     continue
-
-                qty = int(float(row[col_qty]))  # float на случай если в Excel записано 1.0
+                qty = int(float(row[col_qty]))
                 file_items[art] = file_items.get(art, 0) + qty
             except:
                 continue
 
-        # 4. Получаем данные Ozon и сравниваем
         from ozon_api import get_total_ozon_demand
         ozon_demand = await get_total_ozon_demand()
 
         diff_lines = []
         all_arts = set(list(file_items.keys()) + list(ozon_demand.keys()))
-
         for art in sorted(all_arts):
             in_file = file_items.get(art, 0)
             needed = ozon_demand.get(art, 0)
-
             if in_file > needed:
-                diff_lines.append(
-                    f"⚠️ <code>{art}</code>: В файле {in_file} шт. (нужно {needed}). <b>Лишних: {in_file - needed}</b>")
+                diff_lines.append(f"⚠️ <code>{art}</code>: В файле {in_file} шт. (нужно {needed}). <b>Лишних: {in_file - needed}</b>")
             elif in_file < needed:
-                diff_lines.append(
-                    f"❌ <code>{art}</code>: В файле {in_file} шт. (нужно {needed}). <b>Не хватает: {needed - in_file}</b>")
+                diff_lines.append(f"❌ <code>{art}</code>: В файле {in_file} шт. (нужно {needed}). <b>Не хватает: {needed - in_file}</b>")
 
         if not diff_lines:
-            await message.answer("✅ <b>Результат проверки:</b>\n\nСостав корзины идеально совпадает с заказами Ozon!",
-                                 parse_mode="HTML")
+            await message.answer("✅ <b>Результат проверки:</b>\n\nСостав корзины идеально совпадает с заказами Ozon!", parse_mode="HTML")
         else:
             report = "📊 <b>Результат проверки:</b>\n\n" + "\n".join(diff_lines)
             if len(report) > 4000:
                 await message.answer("⚠️ Слишком много расхождений, проверьте внимательно!")
-                # Вывод частями, если список огромный
                 for i in range(0, len(diff_lines), 20):
                     await message.answer("\n".join(diff_lines[i:i + 20]), parse_mode="HTML")
             else:
                 await message.answer(report, parse_mode="HTML")
 
-    except Exception as e:
-        logging.error(f"Full check error: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
-
         # 5. Сверка и обновление себестоимости
-        try:
-            print(f"DEBUG columns: {list(df.columns)}", flush=True)
-            # Ищем колонку с ценой
-            col_price = next((c for c in df.columns if 'цена, ₽' in c or ('цена' in c and '₽' in c)), None)
-            print(f"DEBUG col_price: {col_price}", flush=True)
-            if col_price is None:
-                col_price = next((c for c in df.columns if 'цена' in c and 'опт' not in c), None)
-
-            if col_price:
-                # Собираем цены из файла
-                file_prices = {}
-                for _, row in df.iterrows():
-                    try:
-                        art = str(row[col_art]).strip()
-                        if not art or art == 'nan' or 'итого' in art.lower():
-                            continue
-                        price_val = float(str(row[col_price]).replace(',', '.').replace(' ', ''))
-                        if price_val > 0:
-                            file_prices[art] = round(price_val)
-                    except:
+        if col_price and col_art:
+            file_prices = {}
+            for _, row in df.iterrows():
+                try:
+                    art = str(row[col_art]).strip()
+                    if not art or art == 'nan' or 'итого' in art.lower():
                         continue
+                    price_val = float(str(row[col_price]).replace(',', '.').replace(' ', ''))
+                    if price_val > 0:
+                        file_prices[art] = round(price_val)
+                except:
+                    continue
 
-                if file_prices:
-                    cost_changes = []
-                    async with AsyncSessionLocal() as db:
-                        for offer_id, new_price in file_prices.items():
-                            result = await db.execute(
-                                select(Product).where(Product.offer_id == offer_id)
-                            )
-                            product = result.scalars().first()
-                            if product:
-                                old_price = product.cost_price or 0
-                                if old_price != new_price:
-                                    cost_changes.append(
-                                        f"📦 <code>{offer_id}</code>: {old_price} ₽ → <b>{new_price} ₽</b>"
-                                    )
-                                    product.cost_price = new_price
-                                    product.updated_at = datetime.now()
-                        await db.commit()
+            if file_prices:
+                cost_changes = []
+                async with AsyncSessionLocal() as db:
+                    for offer_id, new_price in file_prices.items():
+                        result = await db.execute(
+                            select(Product).where(Product.offer_id == offer_id)
+                        )
+                        product = result.scalars().first()
+                        if product:
+                            old_price = product.cost_price or 0
+                            if old_price != new_price:
+                                cost_changes.append(
+                                    f"📦 <code>{offer_id}</code>: {old_price} ₽ → <b>{new_price} ₽</b>"
+                                )
+                                product.cost_price = new_price
+                                product.updated_at = datetime.now()
+                    await db.commit()
 
-                    if cost_changes:
-                        report_cost = f"💰 <b>Обновлена себестоимость ({len(cost_changes)} позиций):</b>\n\n"
-                        report_cost += "\n".join(cost_changes[:30])
-                        if len(cost_changes) > 30:
-                            report_cost += f"\n... и ещё {len(cost_changes) - 30} позиций"
-                        await message.answer(report_cost, parse_mode="HTML")
-                    else:
-                        await message.answer("✅ Себестоимость актуальна — расхождений нет.")
-        except Exception as e:
-            import traceback
-            logging.error(f"Cost update error: {traceback.format_exc()}")
-            await message.answer(f"⚠️ Ошибка обновления себестоимости: {e}")
+                if cost_changes:
+                    report_cost = f"💰 <b>Обновлена себестоимость ({len(cost_changes)} позиций):</b>\n\n"
+                    report_cost += "\n".join(cost_changes[:30])
+                    if len(cost_changes) > 30:
+                        report_cost += f"\n... и ещё {len(cost_changes) - 30} позиций"
+                    await message.answer(report_cost, parse_mode="HTML")
+                else:
+                    await message.answer("✅ Себестоимость актуальна — расхождений нет.")
+        else:
+            await message.answer("ℹ️ Колонка с ценой не найдена — себестоимость не обновлялась.")
+
+    except Exception as e:
+        import traceback
+        logging.error(f"check_file error: {traceback.format_exc()}")
+        await message.answer(f"❌ Ошибка: {e}")
 
     await state.clear()
 
