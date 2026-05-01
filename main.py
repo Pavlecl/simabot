@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Импорт ваших модулей
 from database import (
     init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders,
-    AsyncSessionLocal, Order, VirtualOrder
+    AsyncSessionLocal, Order, VirtualOrder, Product
 )
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
@@ -489,6 +489,57 @@ async def process_check_file(message: types.Message, state: FSMContext):
     except Exception as e:
         logging.error(f"Full check error: {e}")
         await message.answer(f"❌ Ошибка: {e}")
+
+        # 5. Сверка и обновление себестоимости
+        try:
+            # Ищем колонку с ценой
+            col_price = next((c for c in df.columns if 'цена, ₽' in c or ('цена' in c and '₽' in c)), None)
+            if col_price is None:
+                col_price = next((c for c in df.columns if 'цена' in c and 'опт' not in c), None)
+
+            if col_price:
+                # Собираем цены из файла
+                file_prices = {}
+                for _, row in df.iterrows():
+                    try:
+                        art = str(row[col_art]).strip()
+                        if not art or art == 'nan' or 'итого' in art.lower():
+                            continue
+                        price_val = float(str(row[col_price]).replace(',', '.').replace(' ', ''))
+                        if price_val > 0:
+                            file_prices[art] = round(price_val)
+                    except:
+                        continue
+
+                if file_prices:
+                    cost_changes = []
+                    async with AsyncSessionLocal() as db:
+                        for offer_id, new_price in file_prices.items():
+                            result = await db.execute(
+                                select(Product).where(Product.offer_id == offer_id)
+                            )
+                            product = result.scalars().first()
+                            if product:
+                                old_price = product.cost_price or 0
+                                if old_price != new_price:
+                                    cost_changes.append(
+                                        f"📦 <code>{offer_id}</code>: {old_price} ₽ → <b>{new_price} ₽</b>"
+                                    )
+                                    product.cost_price = new_price
+                                    product.updated_at = datetime.now()
+                        await db.commit()
+
+                    if cost_changes:
+                        report_cost = f"💰 <b>Обновлена себестоимость ({len(cost_changes)} позиций):</b>\n\n"
+                        report_cost += "\n".join(cost_changes[:30])
+                        if len(cost_changes) > 30:
+                            report_cost += f"\n... и ещё {len(cost_changes) - 30} позиций"
+                        await message.answer(report_cost, parse_mode="HTML")
+                    else:
+                        await message.answer("✅ Себестоимость актуальна — расхождений нет.")
+        except Exception as e:
+            logging.error(f"Cost update error: {e}")
+            await message.answer(f"⚠️ Ошибка обновления себестоимости: {e}")
 
     await state.clear()
 
