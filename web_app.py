@@ -823,45 +823,41 @@ async def sync_products_catalog() -> dict:
     _sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
 
     try:
-        # ШАГ 1: Все товары через cursor пагинацию
+        # ШАГ 1: Все товары через last_id пагинацию /v3/product/list
         all_items = []
-        cursor = ""
+        last_id = ""
         limit = 1000
 
-        # Узнаём total из первого запроса
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                    "https://api-seller.ozon.ru/v5/product/info/prices",
-                    headers=OZON_HEADERS,
-                    json={"filter": {"visibility": "ALL"}, "limit": limit, "last_id": ""}
-            ) as resp:
-                first_data = await resp.json()
-
-        total_available = first_data.get("total", 0)
-        all_items.extend(first_data.get("items", []))
-        cursor = first_data.get("cursor", "")
-        print(f"STEP 1: total={total_available}, first batch={len(all_items)}", flush=True)
-
-        while len(all_items) < total_available and cursor:
+        while True:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                        "https://api-seller.ozon.ru/v5/product/info/prices",
+                        "https://api-seller.ozon.ru/v3/product/list",
                         headers=OZON_HEADERS,
-                        json={"filter": {"visibility": "ALL"}, "limit": limit, "last_id": cursor}
+                        json={"filter": {"visibility": "ALL"}, "last_id": last_id, "limit": limit}
                 ) as resp:
-                    data = await resp.json()
+                    list_data = await resp.json()
 
-            items = data.get("items", [])
-            if not items:
+            result = list_data.get("result", {})
+            list_items = result.get("items", [])
+            if not list_items:
                 break
-            all_items.extend(items)
-            new_cursor = data.get("cursor", "")
-            if new_cursor == cursor:
-                # Курсор не изменился — конец данных
+
+            # Конвертируем в формат совместимый с дальнейшим кодом
+            for li in list_items:
+                all_items.append({
+                    "offer_id": li.get("offer_id"),
+                    "product_id": li.get("product_id"),
+                    "price": {},
+                    "commissions": {},
+                    "price_indexes": {},
+                })
+
+            last_id = result.get("last_id", "")
+            _sync_status["progress"] = f"Товары: {len(all_items)}..."
+            print(f"STEP 1: fetched {len(all_items)}", flush=True)
+
+            if not last_id or len(list_items) < limit:
                 break
-            cursor = new_cursor
-            _sync_status["progress"] = f"Цены: {len(all_items)}/{total_available}..."
-            print(f"STEP 1: fetched {len(all_items)}/{total_available}", flush=True)
 
         if not all_items:
             _sync_status = {"running": False, "progress": "", "synced": 0, "error": "Нет товаров от Ozon"}
