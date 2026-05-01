@@ -2430,14 +2430,25 @@ async def api_stock_manage_items(
     db: AsyncSession = Depends(get_db)
 ):
     """Список включённых артикулов с FBO/FBS из кэша и остатками из Google Sheets"""
+
+    # Если кэш пустой — запускаем синхронизацию в фоне
+    if not _stock_cache.get("items"):
+        asyncio.create_task(sync_stock_cache())
+
     query = select(StockItem).where(StockItem.enabled == True)
     count_q = select(func.count(StockItem.offer_id)).where(StockItem.enabled == True)
     if search:
         like = f"%{search}%"
-        query = query.where(StockItem.offer_id.ilike(like) | StockItem.name.ilike(like))
-        count_q = count_q.where(StockItem.offer_id.ilike(like) | StockItem.name.ilike(like))
+        query = query.where(
+            or_(StockItem.offer_id.ilike(like), StockItem.name.ilike(like))
+        )
+        count_q = count_q.where(
+            or_(StockItem.offer_id.ilike(like), StockItem.name.ilike(like))
+        )
     total = (await db.execute(count_q)).scalar()
-    items_r = await db.execute(query.order_by(StockItem.offer_id).limit(per_page).offset((page-1)*per_page))
+    items_r = await db.execute(
+        query.order_by(StockItem.offer_id).limit(per_page).offset((page - 1) * per_page)
+    )
     items = items_r.scalars().all()
 
     # FBO/FBS из кэша остатков
@@ -2445,6 +2456,7 @@ async def api_stock_manage_items(
 
     return {
         "total": total,
+        "loading": not bool(_stock_cache.get("items")),
         "items": [
             {
                 "offer_id": i.offer_id,

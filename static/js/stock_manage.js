@@ -331,7 +331,29 @@ document.head.appendChild(style);
 // =====================================================================
 // ИНИЦИАЛИЗАЦИЯ
 // =====================================================================
-loadStockManage(1);
+async function initStockManage() {
+  await loadStockManage(1);
+  // Автозагрузка Google Sheets
+  loadGoogleStock();
+  // Если кэш FBO ещё грузится — поллим
+  if (window._smLoadingCache) return;
+  const r = await fetch('/api/stock-manage/items?page=1&per_page=1').then(r => r.json());
+  if (r.loading) {
+    window._smLoadingCache = true;
+    showToast('⏳ Загружаем остатки FBO/FBS... (~30 сек)');
+    const poll = setInterval(async () => {
+      const r2 = await fetch('/api/stock-manage/items?page=1&per_page=1').then(r => r.json()).catch(() => ({}));
+      if (!r2.loading) {
+        clearInterval(poll);
+        window._smLoadingCache = false;
+        await loadStockManage(smPage);
+        showToast('✓ Остатки FBO/FBS загружены');
+      }
+    }, 3000);
+  }
+}
+
+initStockManage();
 document.getElementById('sm-export-btn').addEventListener('click', exportStockList);
 document.getElementById('sm-google-btn').addEventListener('click', loadGoogleStock);
 document.getElementById('sm-push-btn').addEventListener('click', pushFbsToOzon);
