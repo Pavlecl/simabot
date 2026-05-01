@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Импорт ваших модулей
 from database import (
     init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders,
-    AsyncSessionLocal, Order, VirtualOrder, Product
+    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory
 )
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
@@ -507,6 +507,13 @@ async def process_check_file(message: types.Message, state: FSMContext):
                                 )
                                 product.cost_price = new_price
                                 product.updated_at = datetime.now()
+                                db.add(CostHistory(
+                                    offer_id=offer_id,
+                                    old_cost=old_price if old_price else None,
+                                    new_cost=new_price,
+                                    source="sima_order",
+                                    changed_at=datetime.now()
+                                ))
                     await db.commit()
 
                 if cost_changes:
