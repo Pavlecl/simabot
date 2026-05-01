@@ -10,36 +10,38 @@
     </div>
     <div class="toolbar-right">
       <span id="sm-count" style="font-size:11px;color:var(--text-dim)"></span>
+      <button class="btn" id="sm-sync-fbo-btn">⟳ Синхр. FBO/FBS</button>
       <button class="btn" id="sm-export-btn">↓ Список артикулов</button>
       <label class="btn" style="cursor:pointer">
         ↑ Загрузить список
         <input type="file" id="sm-import-input" accept=".xlsx" style="display:none" onchange="importStockList(this)">
       </label>
-        <button class="btn" id="sm-google-import-btn">↓ Импорт из Google</button>
+      <button class="btn" id="sm-google-import-btn">↓ Импорт из Google</button>
       <button class="btn" id="sm-google-btn">⟳ Обновить склад</button>
-        <button class="btn" id="sm-sync-fbo-btn">⟳ Синхр. FBO/FBS</button>
       <button class="btn primary" id="sm-push-btn">→ Передать FBS в Ozon</button>
     </div>
   </div>
 
-  <!-- INFO -->
-  <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:16px">
-    <span>📋 Скачайте список артикулов, отметьте «Да» в колонке «Включить», загрузите обратно</span>
-    <span id="sm-google-status"></span>
+  <!-- STATUS BAR -->
+  <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <span>📋 Нажмите «Импорт из Google» для загрузки артикулов из Google Sheets</span>
+    <span id="sm-google-status" style="font-size:11px"></span>
+    <span id="sm-sync-status" style="font-size:11px;color:var(--accent)"></span>
   </div>
 
   <!-- ПРОЦЕНТ КОРРЕКТИРОВКИ -->
-  <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:12px">
+  <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap">
     <span style="color:var(--text-dim)">Корректировка остатков:</span>
-    <input type="number" id="sm-adjust-pct" value="0" min="-100" max="100" style="width:70px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+    <input type="number" id="sm-adjust-pct" value="0" min="-100" max="100"
+      style="width:70px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
     <span style="color:var(--text-dim)">%</span>
     <button class="btn" onclick="applyAdjustment()" style="font-size:11px;padding:3px 10px">Применить ко всем</button>
-    <span style="color:var(--text-dim);font-size:11px">— уменьшить/увеличить все значения столбца «Новый FBS» на %</span>
+    <span style="color:var(--text-dim);font-size:11px">— скорректировать значения «Новый FBS» относительно склада Google</span>
   </div>
 
   <!-- TABLE -->
   <div class="analytics-table-wrap" style="margin-top:8px">
-    <div style="max-height:calc(100vh - 280px);overflow-y:auto;">
+    <div style="max-height:calc(100vh - 310px);overflow-y:auto;">
       <table class="data-table">
         <thead>
           <tr>
@@ -78,5 +80,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="/static/js/stock_manage.js?v=1777672000"></script>
+<script src="/static/js/stock_manage.js?v=1777675000"></script>
 {% endblock %}

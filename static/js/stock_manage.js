@@ -4,9 +4,9 @@
 
 let smPage = 1;
 let smTotal = 0;
-let smItems = [];         // данные из БД
-let googleStock = {};     // остатки из Google Sheets
-let smOverrides = {};     // локальные правки: offer_id -> новое значение FBS
+let smItems = [];
+let googleStock = {};
+let smOverrides = {};
 let smSearchTimer = null;
 const SM_PER_PAGE = 100;
 
@@ -50,7 +50,6 @@ function clearSmFilters() {
 async function loadStockManage(page = 1) {
   smPage = page;
   const search = document.getElementById('sm-search')?.value || '';
-  document.getElementById('sm-tbody').innerHTML = '<tr><td colspan="7" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
   try {
     const params = new URLSearchParams({ page, per_page: SM_PER_PAGE, search });
@@ -65,6 +64,63 @@ async function loadStockManage(page = 1) {
   }
 }
 
+// =====================================================================
+// СИНХРОНИЗАЦИЯ FBO/FBS
+// =====================================================================
+async function syncFboFbs() {
+  const btn = document.getElementById('sm-sync-fbo-btn');
+  btn.disabled = true;
+
+  try {
+    // Запускаем синхронизацию
+    await fetch('/api/stock/fbo/sync', { method: 'POST' });
+
+    // Поллим через /api/stock-manage/items — он сам скажет loading
+    let attempts = 0;
+    const maxAttempts = 90; // 3 минуты
+
+    const poll = async () => {
+      while (attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, 2000));
+        attempts++;
+
+        try {
+          const data = await fetch('/api/stock/fbo').then(r => r.json());
+
+          if (data.loading) {
+            btn.textContent = `⏳ Загружаем FBO/FBS... ${attempts * 2}с`;
+            continue;
+          }
+
+          if (data.total > 0) {
+            await loadStockManage(smPage);
+            showToast(`✓ FBO/FBS загружены: ${data.total} позиций`);
+            return;
+          }
+
+          // loading=false но total=0 — ждём ещё немного
+          if (attempts > 5) {
+            await loadStockManage(smPage);
+            showToast('FBO/FBS синхронизированы');
+            return;
+          }
+        } catch { continue; }
+      }
+      showToast('Таймаут синхронизации', 'error');
+    };
+
+    await poll();
+  } catch(e) {
+    showToast('Ошибка синхронизации FBO/FBS', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Синхр. FBO/FBS';
+  }
+}
+
+// =====================================================================
+// GOOGLE SHEETS
+// =====================================================================
 async function loadGoogleStock() {
   const btn = document.getElementById('sm-google-btn');
   const status = document.getElementById('sm-google-status');
@@ -100,19 +156,20 @@ async function loadGoogleStock() {
 function renderStockManage() {
   const tbody = document.getElementById('sm-tbody');
   if (!smItems.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="state-msg">НЕТ ДАННЫХ — загрузите список артикулов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="state-msg">НЕТ ДАННЫХ — нажмите «Импорт из Google» для загрузки артикулов</td></tr>';
     return;
   }
 
   tbody.innerHTML = smItems.map(item => {
     const warehouseStock = googleStock[item.offer_id] ?? '—';
     const currentOverride = smOverrides[item.offer_id];
-    const displayValue = currentOverride !== undefined ? currentOverride : (item.fbs_override !== null ? item.fbs_override : '');
+    const displayValue = currentOverride !== undefined ? currentOverride
+      : (item.fbs_override !== null && item.fbs_override !== undefined ? item.fbs_override : '');
 
     const fboColor = item.fbo > 10 ? 'var(--green)' : item.fbo > 0 ? 'var(--yellow,#f0a500)' : 'var(--text-dim)';
     const fbsColor = item.fbs > 0 ? 'var(--accent)' : 'var(--text-dim)';
     const warehouseColor = warehouseStock === 0 ? 'var(--red)' : warehouseStock === '—' ? 'var(--text-dim)' : 'var(--green)';
-    const hasOverride = currentOverride !== undefined || item.fbs_override !== null;
+    const hasOverride = currentOverride !== undefined || (item.fbs_override !== null && item.fbs_override !== undefined);
 
     return `<tr style="${hasOverride ? 'background:rgba(255,106,0,0.06)' : ''}">
       <td style="color:var(--accent);font-family:monospace;font-size:11px">${item.offer_id}</td>
@@ -121,10 +178,9 @@ function renderStockManage() {
       <td style="text-align:right;color:${fbsColor}">${item.fbs.toLocaleString('ru')}</td>
       <td style="text-align:right;color:${warehouseColor};font-weight:bold">${warehouseStock !== '—' ? Number(warehouseStock).toLocaleString('ru') : '—'}</td>
       <td style="text-align:right;padding:4px 8px">
-        <input type="number"
-          min="0"
+        <input type="number" min="0"
           value="${displayValue}"
-          placeholder="${warehouseStock !== '—' ? warehouseStock : '—'}"
+          placeholder="${warehouseStock !== '—' ? warehouseStock : ''}"
           style="width:90px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;text-align:right"
           data-offer="${item.offer_id}"
           onchange="setOverride('${item.offer_id}', this.value)"
@@ -149,21 +205,18 @@ function setOverride(offerId, value) {
 
 function clearOverride(offerId) {
   delete smOverrides[offerId];
-  // Обновляем input
   const input = document.querySelector(`input[data-offer="${offerId}"]`);
   if (input) input.value = '';
   renderStockManage();
 }
 
-// Применить % корректировку ко всем строкам
 function applyAdjustment() {
   const pct = parseFloat(document.getElementById('sm-adjust-pct').value);
   if (isNaN(pct)) { showToast('Введите корректный %', 'error'); return; }
-
   smItems.forEach(item => {
     const base = googleStock[item.offer_id];
-    if (base !== undefined && base !== null) {
-      const adjusted = Math.max(0, Math.round(base * (1 + pct / 100)));
+    if (base !== undefined && base !== null && base !== '—') {
+      const adjusted = Math.max(0, Math.round(Number(base) * (1 + pct / 100)));
       smOverrides[item.offer_id] = adjusted;
     }
   });
@@ -175,13 +228,12 @@ function applyAdjustment() {
 // ПЕРЕДАЧА FBS В OZON
 // =====================================================================
 async function pushFbsToOzon() {
-  // Собираем все строки: override или значение из Google
   const stocks = [];
   smItems.forEach(item => {
     let value = smOverrides[item.offer_id];
     if (value === undefined) {
       const gs = googleStock[item.offer_id];
-      if (gs !== undefined) value = gs;
+      if (gs !== undefined && gs !== '—') value = Number(gs);
     }
     if (value !== undefined && value !== null && !isNaN(value)) {
       stocks.push({ offer_id: item.offer_id, stock: parseInt(value) });
@@ -216,7 +268,7 @@ async function pushFbsToOzon() {
       smOverrides = {};
       await loadStockManage(smPage);
     }
-  } catch(e) {
+  } catch {
     showToast('Ошибка передачи в Ozon', 'error');
   } finally {
     btn.disabled = false;
@@ -225,7 +277,7 @@ async function pushFbsToOzon() {
 }
 
 // =====================================================================
-// ЭКСПОРТ / ИМПОРТ СПИСКА АРТИКУЛОВ
+// ЭКСПОРТ / ИМПОРТ
 // =====================================================================
 async function exportStockList() {
   const btn = document.getElementById('sm-export-btn');
@@ -253,21 +305,32 @@ async function exportStockList() {
 async function importStockList(input) {
   const file = input.files[0];
   if (!file) return;
-
   const formData = new FormData();
   formData.append('file', file);
-
   try {
-    const r = await fetch('/api/stock-manage/import-list', {
-      method: 'POST',
-      body: formData
-    }).then(r => r.json());
-
+    const r = await fetch('/api/stock-manage/import-list', { method: 'POST', body: formData }).then(r => r.json());
     showToast(`✓ Включено ${r.enabled} артикулов`);
     input.value = '';
     await loadStockManage(1);
   } catch {
     showToast('Ошибка импорта', 'error');
+  }
+}
+
+async function importFromGoogle() {
+  if (!await smConfirm('Импортировать все 717 артикулов из Google Sheets?', 'Импорт из Google')) return;
+  const btn = document.getElementById('sm-google-import-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Импортируем...';
+  try {
+    const r = await fetch('/api/stock-manage/import-from-google', { method: 'POST' }).then(r => r.json());
+    showToast(`✓ Импортировано ${r.added} артикулов`);
+    await loadStockManage(1);
+  } catch {
+    showToast('Ошибка импорта', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↓ Импорт из Google';
   }
 }
 
@@ -278,24 +341,19 @@ function renderSmPagination() {
   const el = document.getElementById('sm-pagination');
   const totalPages = Math.ceil(smTotal / SM_PER_PAGE);
   if (totalPages <= 1) { el.innerHTML = ''; return; }
-
   const btnStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;margin:0 2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;';
   const activeBtnStyle = btnStyle + 'border-color:var(--accent);color:var(--accent);background:rgba(255,106,0,0.1);';
   const dimBtnStyle = btnStyle + 'color:var(--text-dim);cursor:default;';
-
   let html = '<div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 0;flex-wrap:wrap">';
   html += smPage > 1 ? `<button style="${btnStyle}" onclick="loadStockManage(${smPage-1})">‹</button>` : `<button style="${dimBtnStyle}" disabled>‹</button>`;
-
   const pages = buildSmPages(smPage, totalPages);
   for (const p of pages) {
     if (p === '...') html += `<span style="${dimBtnStyle}">…</span>`;
     else if (p === smPage) html += `<button style="${activeBtnStyle}">${p}</button>`;
     else html += `<button style="${btnStyle}" onclick="loadStockManage(${p})">${p}</button>`;
   }
-
   html += smPage < totalPages ? `<button style="${btnStyle}" onclick="loadStockManage(${smPage+1})">›</button>` : `<button style="${dimBtnStyle}" disabled>›</button>`;
-  html += `<span style="margin-left:12px;font-size:11px;color:var(--text-dim)">стр. ${smPage} из ${totalPages}</span>`;
-  html += '</div>';
+  html += `<span style="margin-left:12px;font-size:11px;color:var(--text-dim)">стр. ${smPage} из ${totalPages}</span></div>`;
   el.innerHTML = html;
 }
 
@@ -310,55 +368,6 @@ function buildSmPages(current, total) {
   }
   return pages;
 }
-
-async function importFromGoogle() {
-  if (!await smConfirm('Импортировать все артикулы из Google Sheets как включённые?', 'Импорт из Google')) return;
-  const btn = document.getElementById('sm-google-import-btn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Импортируем...';
-  try {
-    const r = await fetch('/api/stock-manage/import-from-google', {method: 'POST'}).then(r => r.json());
-    showToast(`✓ Импортировано ${r.added} артикулов`);
-    await loadStockManage(1);
-  } catch {
-    showToast('Ошибка импорта', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '↓ Импорт из Google';
-  }
-}
-
-async function syncFboFbs() {
-  const btn = document.getElementById('sm-sync-fbo-btn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Загружаем...';
-
-  try {
-    await fetch('/api/stock/fbo/sync', {method: 'POST'});
-
-    let attempts = 0;
-    while (attempts < 60) {
-      await new Promise(r => setTimeout(r, 2000));
-      const data = await fetch('/api/stock/fbo').then(r => r.json());
-      if (!data.loading && data.total > 0) {
-        await loadStockManage(smPage);
-        showToast(`✓ FBO/FBS загружены: ${data.total} позиций`);
-        break;
-      }
-      btn.textContent = `⏳ ${attempts * 2}с...`;
-      attempts++;
-    }
-  } catch {
-    showToast('Ошибка синхронизации FBO/FBS', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⟳ Синхр. FBO/FBS';
-  }
-}
-
-document.getElementById('sm-sync-fbo-btn').addEventListener('click', syncFboFbs);
-
-document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
 
 // =====================================================================
 // СТИЛИ
@@ -380,29 +389,10 @@ document.head.appendChild(style);
 // =====================================================================
 // ИНИЦИАЛИЗАЦИЯ
 // =====================================================================
-async function initStockManage() {
-  await loadStockManage(1);
-  // Автозагрузка Google Sheets
-  loadGoogleStock();
-  // Если кэш FBO ещё грузится — поллим
-  if (window._smLoadingCache) return;
-  const r = await fetch('/api/stock-manage/items?page=1&per_page=1').then(r => r.json());
-  if (r.loading) {
-    window._smLoadingCache = true;
-    showToast('⏳ Загружаем остатки FBO/FBS... (~30 сек)');
-    const poll = setInterval(async () => {
-      const r2 = await fetch('/api/stock-manage/items?page=1&per_page=1').then(r => r.json()).catch(() => ({}));
-      if (!r2.loading) {
-        clearInterval(poll);
-        window._smLoadingCache = false;
-        await loadStockManage(smPage);
-        showToast('✓ Остатки FBO/FBS загружены');
-      }
-    }, 3000);
-  }
-}
-
-initStockManage();
+loadStockManage(1);
+loadGoogleStock();
 document.getElementById('sm-export-btn').addEventListener('click', exportStockList);
 document.getElementById('sm-google-btn').addEventListener('click', loadGoogleStock);
+document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
+document.getElementById('sm-sync-fbo-btn').addEventListener('click', syncFboFbs);
 document.getElementById('sm-push-btn').addEventListener('click', pushFbsToOzon);
