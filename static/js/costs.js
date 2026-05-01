@@ -36,14 +36,9 @@ async function loadCosts(page = 1) {
 
 // Расчёт маржи с ФФ
 // Маржа = (чистая выручка - себестоимость - стоимость ФФ) / чистая выручка * 100
-function calcMarginWithFF(p, ffCost) {
-  if (!p.cost_price || !p.price || p.price === 0) return null;
-  const commPct = (p.commission_fbs_percent || 0) / 100;
-  const logistics = p.commission_fbs_logistics || 0;
-  const net = p.price * (1 - commPct) - logistics;
-  if (net <= 0) return null;
-  const margin = (net - p.cost_price - ffCost) / net * 100;
-  return Math.round(margin * 10) / 10;
+function calcCostWithFF(p, ffCost) {
+  if (!p.cost_price) return null;
+  return p.cost_price + ffCost;
 }
 
 function renderCosts(products) {
@@ -84,8 +79,8 @@ function renderCosts(products) {
         </div>
       </td>
       <td style="font-size:11px;color:var(--text-dim)">${updatedAt}</td>
-      <td style="font-weight:600;color:${marginColor}">
-        ${margin !== null ? margin + '%' : '—'}
+      <td style="font-weight:600;color:var(--text)">
+        ${costWithFF !== null ? costWithFF.toLocaleString('ru') + ' ₽' : '—'}
       </td>
     </tr>`;
   }).join('');
