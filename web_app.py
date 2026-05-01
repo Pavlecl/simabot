@@ -823,9 +823,9 @@ async def sync_products_catalog() -> dict:
     _sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
 
     try:
-        # ШАГ 1: Все товары через last_id пагинацию
+        # ШАГ 1: Все товары через cursor пагинацию
         all_items = []
-        last_id = ""
+        cursor = ""
         limit = 1000
 
         while True:
@@ -833,7 +833,7 @@ async def sync_products_catalog() -> dict:
                 async with session.post(
                         "https://api-seller.ozon.ru/v5/product/info/prices",
                         headers=OZON_HEADERS,
-                        json={"filter": {"visibility": "ALL"}, "limit": limit, "last_id": last_id}
+                        json={"filter": {"visibility": "ALL"}, "limit": limit, "last_id": cursor}
                 ) as resp:
                     data = await resp.json()
 
@@ -841,10 +841,10 @@ async def sync_products_catalog() -> dict:
             if not items:
                 break
             all_items.extend(items)
-            last_id = data.get("last_id", "")
+            cursor = data.get("cursor", "")
             _sync_status["progress"] = f"Цены: {len(all_items)}..."
-            print(f"STEP 1: fetched {len(all_items)}", flush=True)
-            if not last_id or len(items) < limit:
+            print(f"STEP 1: fetched {len(all_items)}, cursor={cursor}", flush=True)
+            if not cursor or len(items) < limit:
                 break
 
         if not all_items:
