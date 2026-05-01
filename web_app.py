@@ -823,27 +823,28 @@ async def sync_products_catalog() -> dict:
     _sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
 
     try:
-        # ШАГ 1: Все товары через offset
-        print("STEP 1: fetching prices", flush=True)
+        # ШАГ 1: Все товары через last_id пагинацию
         all_items = []
-        offset = 0
+        last_id = ""
         limit = 1000
-        # Сначала узнаём total из первого запроса
-        first_data = await fetch_products_prices_offset(0, limit)
-        total_available = first_data.get("total", 0)
-        all_items.extend(first_data.get("items", []))
-        offset = len(all_items)
-        _sync_status["progress"] = f"Цены: {offset}/{total_available}..."
 
-        while offset < total_available:
-            data = await fetch_products_prices_offset(offset, limit)
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                        "https://api-seller.ozon.ru/v5/product/info/prices",
+                        headers=OZON_HEADERS,
+                        json={"filter": {"visibility": "ALL"}, "limit": limit, "last_id": last_id}
+                ) as resp:
+                    data = await resp.json()
+
             items = data.get("items", [])
             if not items:
                 break
             all_items.extend(items)
-            offset += len(items)
-            _sync_status["progress"] = f"Цены: {offset}/{total_available}..."
-            if len(items) < limit:
+            last_id = data.get("last_id", "")
+            _sync_status["progress"] = f"Цены: {len(all_items)}..."
+            print(f"STEP 1: fetched {len(all_items)}", flush=True)
+            if not last_id or len(items) < limit:
                 break
 
         if not all_items:
