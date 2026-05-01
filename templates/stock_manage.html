@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="stock-manage-wrap">
+
+  <!-- TOOLBAR -->
+  <div class="analytics-toolbar">
+    <div class="toolbar-left">
+      <input type="text" id="sm-search" placeholder="Артикул / название..." oninput="debounceStockManage()" style="width:220px">
+      <button class="btn" onclick="clearSmFilters()">Сбросить</button>
+    </div>
+    <div class="toolbar-right">
+      <span id="sm-count" style="font-size:11px;color:var(--text-dim)"></span>
+      <button class="btn" id="sm-export-btn">↓ Список артикулов</button>
+      <label class="btn" style="cursor:pointer">
+        ↑ Загрузить список
+        <input type="file" id="sm-import-input" accept=".xlsx" style="display:none" onchange="importStockList(this)">
+      </label>
+      <button class="btn" id="sm-google-btn">⟳ Обновить склад</button>
+      <button class="btn primary" id="sm-push-btn">→ Передать FBS в Ozon</button>
+    </div>
+  </div>
+
+  <!-- INFO -->
+  <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:16px">
+    <span>📋 Скачайте список артикулов, отметьте «Да» в колонке «Включить», загрузите обратно</span>
+    <span id="sm-google-status"></span>
+  </div>
+
+  <!-- ПРОЦЕНТ КОРРЕКТИРОВКИ -->
+  <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:12px">
+    <span style="color:var(--text-dim)">Корректировка остатков:</span>
+    <input type="number" id="sm-adjust-pct" value="0" min="-100" max="100" style="width:70px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+    <span style="color:var(--text-dim)">%</span>
+    <button class="btn" onclick="applyAdjustment()" style="font-size:11px;padding:3px 10px">Применить ко всем</button>
+    <span style="color:var(--text-dim);font-size:11px">— уменьшить/увеличить все значения столбца «Новый FBS» на %</span>
+  </div>
+
+  <!-- TABLE -->
+  <div class="analytics-table-wrap" style="margin-top:8px">
+    <div style="max-height:calc(100vh - 280px);overflow-y:auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Артикул</th>
+            <th>Название</th>
+            <th style="text-align:right">FBO (Ozon)</th>
+            <th style="text-align:right">FBS (Ozon)</th>
+            <th style="text-align:right">Склад (Google)</th>
+            <th style="text-align:right;min-width:120px">Новый FBS</th>
+            <th style="text-align:center">Сбросить</th>
+          </tr>
+        </thead>
+        <tbody id="sm-tbody">
+          <tr><td colspan="7" class="state-msg">Загрузка...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- PAGINATION -->
+  <div id="sm-pagination"></div>
+
+  <!-- CONFIRM MODAL -->
+  <div id="sm-confirm-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:2000;background:rgba(0,0,0,0.75);align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);padding:28px 32px;min-width:360px;max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+      <div id="sm-confirm-title" style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:10px"></div>
+      <div id="sm-confirm-text" style="font-size:14px;color:var(--text);margin-bottom:24px;line-height:1.5"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button id="sm-confirm-cancel" class="btn" style="min-width:90px">Отмена</button>
+        <button id="sm-confirm-ok" class="btn primary" style="min-width:90px">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/static/js/stock_manage.js?v=1777672000"></script>
+{% endblock %}
