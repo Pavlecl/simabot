@@ -492,8 +492,10 @@ async def process_check_file(message: types.Message, state: FSMContext):
 
         # 5. Сверка и обновление себестоимости
         try:
+            print(f"DEBUG columns: {list(df.columns)}", flush=True)
             # Ищем колонку с ценой
             col_price = next((c for c in df.columns if 'цена, ₽' in c or ('цена' in c and '₽' in c)), None)
+            print(f"DEBUG col_price: {col_price}", flush=True)
             if col_price is None:
                 col_price = next((c for c in df.columns if 'цена' in c and 'опт' not in c), None)
 
