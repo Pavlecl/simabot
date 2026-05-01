@@ -19,6 +19,15 @@
       <span id="cost-count" class="toolbar-label" style="margin-left:auto"></span>
     </div>
 
+    <!-- Панель стоимости ФФ -->
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);font-size:12px">
+      <span style="color:var(--text-dim)">Стоимость услуг ФФ:</span>
+      <input type="number" id="ff-cost-input" value="80" min="0" style="width:80px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+      <span style="color:var(--text-dim)">₽</span>
+      <button class="btn" onclick="applyFfCostAll()" style="font-size:11px;padding:3px 10px">Применить ко всем</button>
+      <span style="color:var(--text-dim);font-size:11px">— стоимость применяется локально для расчёта маржи с ФФ</span>
+    </div>
+
     <div class="table-container">
       <table>
         <thead>
@@ -29,13 +38,11 @@
             <th>Бренд</th>
             <th>Себест. текущая</th>
             <th>Обновлена</th>
-            <th>Цена Ozon</th>
-            <th>Чистая выр.</th>
-            <th>Маржа %</th>
+            <th>Маржа с ФФ</th>
           </tr>
         </thead>
         <tbody id="costs-body">
-          <tr><td colspan="9" class="state-msg">Загрузка...</td></tr>
+          <tr><td colspan="7" class="state-msg">Загрузка...</td></tr>
         </tbody>
       </table>
     </div>
@@ -97,5 +104,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="/static/js/costs.js?v=1776591000"></script>
+<script src="/static/js/costs.js?v=1777650000"></script>
 {% endblock %}

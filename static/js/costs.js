@@ -5,6 +5,7 @@ let costsPage = 1;
 let costsTotalPages = 1;
 let costsSearchTimer = null;
 let pendingCostData = [];
+let currentFfCost = 80; // текущая стоимость ФФ (локальная)
 const COSTS_PER_PAGE = 100;
 
 function debounceCosts() {
@@ -18,7 +19,7 @@ async function loadCosts(page = 1) {
   const brand = document.getElementById('cost-brand-filter')?.value || '';
   const direction = document.getElementById('cost-direction-filter')?.value || '';
   const tbody = document.getElementById('costs-body');
-  tbody.innerHTML = '<tr><td colspan="9" class="state-msg">ЗАГРУЗКА...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7" class="state-msg">ЗАГРУЗКА...</td></tr>';
 
   try {
     const params = new URLSearchParams({ page, per_page: COSTS_PER_PAGE, search, brand, direction });
@@ -29,21 +30,36 @@ async function loadCosts(page = 1) {
     renderCosts(r.products || []);
     renderCostsPagination(total, page, COSTS_PER_PAGE);
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">ОШИБКА ЗАГРУЗКИ</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="state-msg">ОШИБКА ЗАГРУЗКИ</td></tr>';
   }
+}
+
+// Расчёт маржи с ФФ
+// Маржа = (чистая выручка - себестоимость - стоимость ФФ) / чистая выручка * 100
+function calcMarginWithFF(p, ffCost) {
+  if (!p.cost_price || !p.price || p.price === 0) return null;
+  const commPct = (p.commission_fbs_percent || 0) / 100;
+  const logistics = p.commission_fbs_logistics || 0;
+  const net = p.price * (1 - commPct) - logistics;
+  if (net <= 0) return null;
+  const margin = (net - p.cost_price - ffCost) / net * 100;
+  return Math.round(margin * 10) / 10;
 }
 
 function renderCosts(products) {
   const tbody = document.getElementById('costs-body');
   if (!products.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">НЕТ ДАННЫХ</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="state-msg">НЕТ ДАННЫХ</td></tr>';
     return;
   }
 
+  const ffCost = currentFfCost;
+
   tbody.innerHTML = products.map(p => {
-    const marginColor = p.margin === null ? 'var(--text-dim)'
-      : p.margin < 10 ? 'var(--red)'
-      : p.margin < 25 ? 'var(--yellow)'
+    const margin = calcMarginWithFF(p, ffCost);
+    const marginColor = margin === null ? 'var(--text-dim)'
+      : margin < 10 ? 'var(--red)'
+      : margin < 25 ? 'var(--yellow,#f0a500)'
       : 'var(--green)';
 
     const updatedAt = p.cost_updated_at
@@ -68,13 +84,23 @@ function renderCosts(products) {
         </div>
       </td>
       <td style="font-size:11px;color:var(--text-dim)">${updatedAt}</td>
-      <td>${p.price ? p.price.toLocaleString('ru') + ' ₽' : '—'}</td>
-      <td>${p.net_price ? p.net_price.toLocaleString('ru') + ' ₽' : '—'}</td>
       <td style="font-weight:600;color:${marginColor}">
-        ${p.margin !== null ? p.margin + '%' : '—'}
+        ${margin !== null ? margin + '%' : '—'}
       </td>
     </tr>`;
   }).join('');
+}
+
+// Применить новую стоимость ФФ и пересчитать таблицу
+function applyFfCostAll() {
+  const val = parseInt(document.getElementById('ff-cost-input').value);
+  if (isNaN(val) || val < 0) {
+    showToast('Введите корректное значение', 'error');
+    return;
+  }
+  currentFfCost = val;
+  loadCosts(costsPage);
+  showToast(`✓ Стоимость ФФ обновлена: ${val} ₽`);
 }
 
 // ---- Умная пагинация ----
@@ -298,8 +324,6 @@ async function syncOzonProducts() {
 
 async function pollSyncStatus() {
   const btn = document.getElementById('costs-sync-btn');
-
-  // Ждём чтобы задача успела запуститься
   await new Promise(r => setTimeout(r, 2000));
 
   let attempts = 0;
@@ -317,7 +341,6 @@ async function pollSyncStatus() {
         btn.textContent = '⟳ Синхронизировать с МП';
         break;
       } else if (attempts > 2) {
-        // running=false и нет ошибки — значит завершилась
         showToast(`✓ Синхронизировано ${(s.synced || 0).toLocaleString('ru')} товаров`);
         btn.disabled = false;
         btn.textContent = '⟳ Синхронизировать с МП';
@@ -335,3 +358,13 @@ async function pollSyncStatus() {
 // ---- Init ----
 loadCostFilters();
 loadCosts(1);
+
+// Обновление таблицы при изменении поля ФФ через Enter
+document.addEventListener('DOMContentLoaded', () => {
+  const ffInput = document.getElementById('ff-cost-input');
+  if (ffInput) {
+    ffInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') applyFfCostAll();
+    });
+  }
+});

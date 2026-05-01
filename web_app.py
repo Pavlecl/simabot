@@ -1506,14 +1506,6 @@ async def api_costs_products(
     products_r = await db.execute(query)
     products = products_r.scalars().all()
 
-    def calc_margin(p):
-        if not p.cost_price or not p.price or p.price == 0:
-            return None
-        net = p.price * (1 - (p.commission_fbs_percent or 0) / 100) - (p.commission_fbs_logistics or 0)
-        if net <= 0:
-            return None
-        return round((net - p.cost_price) / net * 100, 1)
-
     return {
         "total": total,
         "products": [
@@ -1526,7 +1518,8 @@ async def api_costs_products(
                 "cost_updated_at": p.updated_at.isoformat() if p.updated_at else None,
                 "price": p.price,
                 "net_price": p.net_price,
-                "margin": calc_margin(p),
+                "commission_fbs_percent": p.commission_fbs_percent,
+                "commission_fbs_logistics": p.commission_fbs_logistics,
             }
             for p in products
         ]
