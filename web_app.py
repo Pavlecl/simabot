@@ -31,7 +31,8 @@ from sqlalchemy import select, func, or_, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from database import AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory, FboWatchlist, init_db
+from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
+                      FboWatchlist, StockItem,  init_db)
 
 # --- КОНФИГУРАЦИЯ ---
 # SECRET_KEY используется для подписи JWT. Если утечёт — злоумышленник сможет
@@ -2407,6 +2408,181 @@ async def delete_watchlist_bulk(request: Request, user: dict = Depends(require_a
 # 📚 УРОК: lifespan — современный способ запускать код при старте/остановке приложения.
 # Вместо @app.on_event("startup") используем async context manager.
 from contextlib import asynccontextmanager
+
+# =====================================================================
+# УПРАВЛЕНИЕ ОСТАТКАМИ (не Сима-Ленд)
+# =====================================================================
+
+GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1EIWUlFEBbaGDpPK72t9mXDW3wD-m6riKilZmdNcM4lI/export?format=csv&gid=1663121958"
+
+@app.get("/stock-manage", response_class=HTMLResponse)
+async def stock_manage_page(request: Request, user: dict = Depends(require_any_role)):
+    return templates.TemplateResponse("stock_manage.html", {
+        "request": request, "user": user, "active_tab": "stock-manage"
+    })
+
+@app.get("/api/stock-manage/items")
+async def api_stock_manage_items(
+    search: str = "",
+    page: int = 1,
+    per_page: int = 100,
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db)
+):
+    """Список включённых артикулов с FBO/FBS из кэша и остатками из Google Sheets"""
+    query = select(StockItem).where(StockItem.enabled == True)
+    count_q = select(func.count(StockItem.offer_id)).where(StockItem.enabled == True)
+    if search:
+        like = f"%{search}%"
+        query = query.where(StockItem.offer_id.ilike(like) | StockItem.name.ilike(like))
+        count_q = count_q.where(StockItem.offer_id.ilike(like) | StockItem.name.ilike(like))
+    total = (await db.execute(count_q)).scalar()
+    items_r = await db.execute(query.order_by(StockItem.offer_id).limit(per_page).offset((page-1)*per_page))
+    items = items_r.scalars().all()
+
+    # FBO/FBS из кэша остатков
+    stock_map = {i["item_code"]: i for i in _stock_cache.get("items", [])}
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "offer_id": i.offer_id,
+                "name": i.name,
+                "fbs_override": i.fbs_override,
+                "fbo": stock_map.get(i.offer_id, {}).get("total_free", 0),
+                "fbs": stock_map.get(i.offer_id, {}).get("fbs_present", 0),
+            }
+            for i in items
+        ]
+    }
+
+@app.get("/api/stock-manage/google")
+async def api_stock_manage_google(user: dict = Depends(require_any_role)):
+    """Читает остатки из Google Sheets"""
+    import urllib.request, csv, io as sio
+    try:
+        data = urllib.request.urlopen(GOOGLE_SHEET_URL, timeout=10).read().decode('utf-8')
+        rows = list(csv.reader(sio.StringIO(data)))
+        result = {}
+        for row in rows[2:]:
+            if not row or not row[0].strip():
+                continue
+            offer_id = row[0].strip()
+            try:
+                stock = int(float(row[10].replace(',', '.').replace(' ', ''))) if len(row) > 10 and row[10].strip() else 0
+            except:
+                stock = 0
+            result[offer_id] = stock
+        return {"ok": True, "data": result}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "data": {}}
+
+@app.post("/api/stock-manage/push-fbs")
+async def api_stock_manage_push_fbs(
+    request: Request,
+    user: dict = Depends(require_admin),
+):
+    """Передаёт новые FBS остатки в Ozon"""
+    body = await request.json()
+    stocks = body.get("stocks", [])  # [{offer_id, stock}]
+    if not stocks:
+        raise HTTPException(status_code=400, detail="stocks пустой")
+
+    warehouse_id = int(os.getenv("OZON_WAREHOUSE_ID", "0"))
+    payload = [{"offer_id": s["offer_id"], "stock": s["stock"], "warehouse_id": warehouse_id} for s in stocks]
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://api-seller.ozon.ru/v2/products/stocks",
+            headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+            json={"stocks": payload}
+        ) as resp:
+            data = await resp.json()
+
+    errors = [r for r in data.get("result", []) if not r.get("updated")]
+    return {"ok": True, "total": len(payload), "errors": errors}
+
+@app.get("/api/stock-manage/export-list")
+async def api_stock_manage_export(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Скачать Excel со всеми артикулами из products для разметки"""
+    import openpyxl
+    from fastapi.responses import StreamingResponse
+    import io as sio
+
+    products_r = await db.execute(select(Product).order_by(Product.offer_id))
+    products = products_r.scalars().all()
+
+    enabled_r = await db.execute(select(StockItem.offer_id))
+    enabled_ids = {r[0] for r in enabled_r.fetchall()}
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Артикулы"
+    ws.append(["Артикул", "Название", "Бренд", "Включить (Да/-)"])
+    for p in products:
+        ws.append([p.offer_id, p.name or "", p.brand or "", "Да" if p.offer_id in enabled_ids else ""])
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 40
+    ws.column_dimensions["C"].width = 20
+    ws.column_dimensions["D"].width = 15
+
+    buf = sio.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": "attachment; filename=stock_items.xlsx"})
+
+@app.post("/api/stock-manage/import-list")
+async def api_stock_manage_import(
+    request: Request,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Загрузить Excel с отмеченными артикулами"""
+    import openpyxl, io as sio
+    form = await request.form()
+    file = form.get("file")
+    if not file:
+        raise HTTPException(status_code=400, detail="Файл не найден")
+    content = await file.read()
+    wb = openpyxl.load_workbook(sio.BytesIO(content))
+    ws = wb.active
+    added = 0
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or not row[0]:
+            continue
+        offer_id = str(row[0]).strip()
+        name = str(row[1]).strip() if row[1] else ""
+        enabled = str(row[3]).strip().lower() in ("да", "yes", "+", "1", "true") if len(row) > 3 and row[3] else False
+        stmt = pg_insert(StockItem).values(
+            offer_id=offer_id,
+            name=name,
+            enabled=enabled
+        ).on_conflict_do_update(
+            index_elements=["offer_id"],
+            set_={"name": name, "enabled": enabled}
+        )
+        await db.execute(stmt)
+        if enabled:
+            added += 1
+    await db.commit()
+    return {"ok": True, "enabled": added}
+
+@app.patch("/api/stock-manage/fbs-override/{offer_id}")
+async def api_stock_manage_fbs_override(
+    offer_id: str,
+    request: Request,
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    body = await request.json()
+    value = body.get("value")
+    await db.execute(
+        update(StockItem).where(StockItem.offer_id == offer_id).values(fbs_override=value)
+    )
+    await db.commit()
+    return {"ok": True}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

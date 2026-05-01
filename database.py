@@ -335,3 +335,12 @@ async def get_all_virtual_articles():
 async def clear_all_virtual_orders():
     await clear_virtual_orders()
 
+class StockItem(Base):
+    """Артикулы для страницы управления остатками (не Сима-Ленд)"""
+    __tablename__ = "stock_items"
+
+    offer_id = Column(String, primary_key=True)
+    name = Column(String, nullable=True)
+    enabled = Column(Boolean, default=False)
+    fbs_override = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
