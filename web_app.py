@@ -828,7 +828,21 @@ async def sync_products_catalog() -> dict:
         cursor = ""
         limit = 1000
 
-        while True:
+        # Узнаём total из первого запроса
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                    "https://api-seller.ozon.ru/v5/product/info/prices",
+                    headers=OZON_HEADERS,
+                    json={"filter": {"visibility": "ALL"}, "limit": limit, "last_id": ""}
+            ) as resp:
+                first_data = await resp.json()
+
+        total_available = first_data.get("total", 0)
+        all_items.extend(first_data.get("items", []))
+        cursor = first_data.get("cursor", "")
+        print(f"STEP 1: total={total_available}, first batch={len(all_items)}", flush=True)
+
+        while len(all_items) < total_available and cursor:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                         "https://api-seller.ozon.ru/v5/product/info/prices",
@@ -841,11 +855,13 @@ async def sync_products_catalog() -> dict:
             if not items:
                 break
             all_items.extend(items)
-            cursor = data.get("cursor", "")
-            _sync_status["progress"] = f"Цены: {len(all_items)}..."
-            print(f"STEP 1: fetched {len(all_items)}, cursor={cursor}", flush=True)
-            if not cursor or len(items) < limit:
+            new_cursor = data.get("cursor", "")
+            if new_cursor == cursor:
+                # Курсор не изменился — конец данных
                 break
+            cursor = new_cursor
+            _sync_status["progress"] = f"Цены: {len(all_items)}/{total_available}..."
+            print(f"STEP 1: fetched {len(all_items)}/{total_available}", flush=True)
 
         if not all_items:
             _sync_status = {"running": False, "progress": "", "synced": 0, "error": "Нет товаров от Ozon"}
