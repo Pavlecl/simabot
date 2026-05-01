@@ -538,7 +538,8 @@ async def process_check_file(message: types.Message, state: FSMContext):
                     else:
                         await message.answer("✅ Себестоимость актуальна — расхождений нет.")
         except Exception as e:
-            logging.error(f"Cost update error: {e}")
+            import traceback
+            logging.error(f"Cost update error: {traceback.format_exc()}")
             await message.answer(f"⚠️ Ошибка обновления себестоимости: {e}")
 
     await state.clear()
