@@ -328,6 +328,36 @@ async function importFromGoogle() {
   }
 }
 
+async function syncFboFbs() {
+  const btn = document.getElementById('sm-sync-fbo-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Загружаем...';
+
+  try {
+    await fetch('/api/stock/fbo/sync', {method: 'POST'});
+
+    let attempts = 0;
+    while (attempts < 60) {
+      await new Promise(r => setTimeout(r, 2000));
+      const data = await fetch('/api/stock/fbo').then(r => r.json());
+      if (!data.loading && data.total > 0) {
+        await loadStockManage(smPage);
+        showToast(`✓ FBO/FBS загружены: ${data.total} позиций`);
+        break;
+      }
+      btn.textContent = `⏳ ${attempts * 2}с...`;
+      attempts++;
+    }
+  } catch {
+    showToast('Ошибка синхронизации FBO/FBS', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Синхр. FBO/FBS';
+  }
+}
+
+document.getElementById('sm-sync-fbo-btn').addEventListener('click', syncFboFbs);
+
 document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
 
 // =====================================================================
