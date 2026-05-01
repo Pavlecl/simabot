@@ -311,6 +311,25 @@ function buildSmPages(current, total) {
   return pages;
 }
 
+async function importFromGoogle() {
+  if (!await smConfirm('Импортировать все артикулы из Google Sheets как включённые?', 'Импорт из Google')) return;
+  const btn = document.getElementById('sm-google-import-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Импортируем...';
+  try {
+    const r = await fetch('/api/stock-manage/import-from-google', {method: 'POST'}).then(r => r.json());
+    showToast(`✓ Импортировано ${r.added} артикулов`);
+    await loadStockManage(1);
+  } catch {
+    showToast('Ошибка импорта', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↓ Импорт из Google';
+  }
+}
+
+document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
+
 // =====================================================================
 // СТИЛИ
 // =====================================================================

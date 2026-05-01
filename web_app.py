@@ -2490,6 +2490,51 @@ async def api_stock_manage_google(user: dict = Depends(require_any_role)):
     except Exception as e:
         return {"ok": False, "error": str(e), "data": {}}
 
+@app.post("/api/stock-manage/import-from-google")
+async def api_stock_manage_import_google(
+    user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Импортирует артикулы из Google Sheets в stock_items"""
+    import urllib.request, csv, io as sio
+    try:
+        data = urllib.request.urlopen(GOOGLE_SHEET_URL, timeout=10).read().decode('utf-8')
+        rows = list(csv.reader(sio.StringIO(data)))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка чтения Google Sheets: {e}")
+
+    added = 0
+    skipped = 0
+    for row in rows[2:]:
+        if not row or not row[0].strip():
+            continue
+        offer_id = row[0].strip()
+        stmt = pg_insert(StockItem).values(
+            offer_id=offer_id,
+            name="",
+            enabled=True,
+        ).on_conflict_do_update(
+            index_elements=["offer_id"],
+            set_={"enabled": True}
+        )
+        result = await db.execute(stmt)
+        if result.rowcount:
+            added += 1
+        else:
+            skipped += 1
+
+    await db.commit()
+
+    # Подтягиваем названия из таблицы products
+    await db.execute(
+        update(StockItem)
+        .where(StockItem.offer_id == Product.offer_id)
+        .values(name=Product.name)
+    )
+    await db.commit()
+
+    return {"ok": True, "added": added, "skipped": skipped}
+
 @app.post("/api/stock-manage/push-fbs")
 async def api_stock_manage_push_fbs(
     request: Request,
