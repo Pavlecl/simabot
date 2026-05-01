@@ -49,13 +49,8 @@ function renderCosts(products) {
   }
 
   const ffCost = currentFfCost;
-
   tbody.innerHTML = products.map(p => {
-    const margin = calcMarginWithFF(p, ffCost);
-    const marginColor = margin === null ? 'var(--text-dim)'
-      : margin < 10 ? 'var(--red)'
-      : margin < 25 ? 'var(--yellow,#f0a500)'
-      : 'var(--green)';
+    const costWithFF = p.cost_price ? p.cost_price + ffCost : null;
 
     const updatedAt = p.cost_updated_at
       ? new Date(p.cost_updated_at).toLocaleDateString('ru-RU')
