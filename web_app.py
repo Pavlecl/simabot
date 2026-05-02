@@ -2590,6 +2590,43 @@ async def api_stock_manage_export(user: dict = Depends(require_admin), db: Async
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": "attachment; filename=stock_items.xlsx"})
 
+@app.post("/api/stock-manage/sync-stocks")
+async def api_stock_manage_sync_stocks(
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db)
+):
+    """Загружает FBO+FBS остатки для артикулов из stock_items"""
+    # Получаем все включённые артикулы
+    r = await db.execute(select(StockItem.offer_id).where(StockItem.enabled == True))
+    offer_ids = [row[0] for row in r.fetchall()]
+    if not offer_ids:
+        return {"ok": True, "stocks": {}}
+
+    result = {}
+
+    # FBS через /v4/product/info/stocks
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(offer_ids), 100):
+            batch = offer_ids[i:i+100]
+            async with session.post(
+                "https://api-seller.ozon.ru/v4/product/info/stocks",
+                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+                json={"filter": {"offer_id": batch, "visibility": "ALL"}, "limit": 100, "offset": 0}
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    for item in data.get("result", {}).get("items", []):
+                        oid = item.get("offer_id")
+                        if not oid:
+                            continue
+                        fbs = sum(s.get("present", 0) for s in item.get("stocks", []) if s.get("type") == "fbs")
+                        fbo = sum(s.get("present", 0) for s in item.get("stocks", []) if s.get("type") == "fbo")
+                        result[oid] = {"fbo": fbo, "fbs": fbs}
+
+    return {"ok": True, "stocks": result}
+
+
+
 @app.post("/api/stock-manage/import-list")
 async def api_stock_manage_import(
     request: Request,

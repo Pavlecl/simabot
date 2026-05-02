@@ -369,6 +369,23 @@ function buildSmPages(current, total) {
   return pages;
 }
 
+async function loadOzonStocks() {
+  try {
+    const r = await fetch('/api/stock-manage/sync-stocks', {method: 'POST'}).then(r => r.json());
+    if (r.ok && r.stocks) {
+      // Обновляем smItems с реальными остатками
+      smItems = smItems.map(item => ({
+        ...item,
+        fbo: r.stocks[item.offer_id]?.fbo ?? item.fbo,
+        fbs: r.stocks[item.offer_id]?.fbs ?? item.fbs,
+      }));
+      renderStockManage();
+    }
+  } catch(e) {
+    console.error('Stock sync error:', e);
+  }
+}
+
 // =====================================================================
 // СТИЛИ
 // =====================================================================
@@ -391,6 +408,7 @@ document.head.appendChild(style);
 // =====================================================================
 loadStockManage(1);
 loadGoogleStock();
+loadOzonStocks(); // загружаем FBO/FBS напрямую из Ozon
 document.getElementById('sm-export-btn').addEventListener('click', exportStockList);
 document.getElementById('sm-google-btn').addEventListener('click', loadGoogleStock);
 document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
