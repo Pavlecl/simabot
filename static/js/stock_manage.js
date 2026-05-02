@@ -9,6 +9,8 @@ let googleStock = {};
 let smOverrides = {};
 let smSearchTimer = null;
 const SM_PER_PAGE = 100;
+let smSortField = null;
+let smSortDir = 'desc';
 
 // =====================================================================
 // CONFIRM MODAL
@@ -153,6 +155,12 @@ async function loadGoogleStock() {
 // =====================================================================
 // РЕНДЕР ТАБЛИЦЫ
 // =====================================================================
+function sortSm(field) {
+  if (smSortField === field) smSortDir = smSortDir === 'desc' ? 'asc' : 'desc';
+  else { smSortField = field; smSortDir = 'desc'; }
+  renderStockManage();
+}
+
 function renderStockManage() {
   const tbody = document.getElementById('sm-tbody');
   if (!smItems.length) {
@@ -160,7 +168,22 @@ function renderStockManage() {
     return;
   }
 
-  tbody.innerHTML = smItems.map(item => {
+  // Сортировка
+  let items = [...smItems];
+  if (smSortField) {
+    items.sort((a, b) => {
+      let av, bv;
+      if (smSortField === 'fbo') { av = a.fbo; bv = b.fbo; }
+      else if (smSortField === 'fbs') { av = a.fbs; bv = b.fbs; }
+      else if (smSortField === 'google') {
+        av = googleStock[a.offer_id] ?? -1;
+        bv = googleStock[b.offer_id] ?? -1;
+      }
+      return smSortDir === 'desc' ? bv - av : av - bv;
+    });
+  }
+
+  tbody.innerHTML = items.map(item => {
     const warehouseStock = googleStock[item.offer_id] ?? '—';
     const currentOverride = smOverrides[item.offer_id];
     const displayValue = currentOverride !== undefined ? currentOverride
@@ -172,7 +195,9 @@ function renderStockManage() {
     const hasOverride = currentOverride !== undefined || (item.fbs_override !== null && item.fbs_override !== undefined);
 
     return `<tr style="${hasOverride ? 'background:rgba(255,106,0,0.06)' : ''}">
-      <td style="color:var(--accent);font-family:monospace;font-size:11px">${item.offer_id}</td>
+      <td style="color:var(--accent);font-family:monospace;font-size:11px;cursor:pointer"
+        onclick="copySmCell('${item.offer_id}', this)"
+        title="Нажмите для копирования">${item.offer_id}</td>
       <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-dim)">${item.name || '—'}</td>
       <td style="text-align:right;font-weight:bold;color:${fboColor}">${item.fbo.toLocaleString('ru')}</td>
       <td style="text-align:right;color:${fbsColor}">${item.fbs.toLocaleString('ru')}</td>
@@ -220,6 +245,15 @@ function applyAdjustment() {
       smOverrides[item.offer_id] = adjusted;
     }
   });
+
+function copySmCell(text, el) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = el.style.color;
+    el.style.color = 'var(--green)';
+    setTimeout(() => el.style.color = orig, 800);
+  });
+}
+
   renderStockManage();
   showToast(`✓ Применена корректировка ${pct > 0 ? '+' : ''}${pct}%`);
 }

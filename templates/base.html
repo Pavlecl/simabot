@@ -36,7 +36,7 @@
       <a href="/costs" class="{{ 'active' if active_tab == 'costs' }}">Себестоимость</a>
       {% endif %}
       {% if user.role == 'admin' or 'costs' in perms %}
-      <a href="/stock-manage" class="nav-link {% if active_tab == 'stock-manage' %}active{% endif %}">Остатки WB</a>
+      <a href="/stock-manage" class="nav-link {% if active_tab == 'stock-manage' %}active{% endif %}">Остатки</a>
       {% endif %}
   </nav>
   <div class="header-right">
