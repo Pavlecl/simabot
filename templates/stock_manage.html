@@ -3,33 +3,28 @@
 <div class="stock-manage-wrap">
 
   <!-- TOOLBAR -->
-  <div class="analytics-toolbar">
-    <div class="toolbar-left">
-      <input type="text" id="sm-search" placeholder="Артикул / название..." oninput="debounceStockManage()" style="width:220px">
-      <select id="sm-filter-fbs" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
-        <option value="">FBS: все</option>
-        <option value="has_fbs">FBS > 0</option>
-        <option value="no_fbs">FBS = 0</option>
-      </select>
-        <select id="sm-filter-fbo" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
-          <option value="">FBO: все</option>
-          <option value="has_fbo">FBO > 0</option>
-          <option value="no_fbo">FBO = 0</option>
-        </select>
-      <select id="sm-filter-google" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
-        <option value="">Склад: все</option>
-        <option value="has_stock">Склад > 0</option>
-        <option value="no_stock">Склад = 0</option>
-      </select>
-      <button class="btn" onclick="clearSmFilters()">Сбросить</button>
-    </div>
-    <div class="toolbar-right">
-      <span id="sm-count" style="font-size:11px;color:var(--text-dim)"></span>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px">
+    <input type="text" id="sm-search" placeholder="Артикул / название..." oninput="debounceStockManage()" style="width:180px">
+    <select id="sm-filter-fbs" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+      <option value="">FBS: все</option>
+      <option value="has_fbs">FBS > 0</option>
+      <option value="no_fbs">FBS = 0</option>
+    </select>
+    <select id="sm-filter-fbo" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+      <option value="">FBO: все</option>
+      <option value="has_fbo">FBO > 0</option>
+      <option value="no_fbo">FBO = 0</option>
+    </select>
+    <select id="sm-filter-google" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+      <option value="">Склад: все</option>
+      <option value="has_stock">Склад > 0</option>
+      <option value="no_stock">Склад = 0</option>
+    </select>
+    <button class="btn" onclick="clearSmFilters()">Сбросить</button>
+    <span id="sm-count" style="font-size:11px;color:var(--text-dim)"></span>
+    <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <button class="btn" id="sm-export-btn">↓ Список артикулов</button>
-      <label class="btn" style="cursor:pointer">
-        ↑ Загрузить список
-        <input type="file" id="sm-import-input" accept=".xlsx" style="display:none" onchange="importStockList(this)">
-      </label>
+      <label class="btn" style="cursor:pointer">↑ Загрузить список<input type="file" id="sm-import-input" accept=".xlsx" style="display:none" onchange="importStockList(this)"></label>
       <button class="btn" id="sm-google-import-btn">↓ Импорт из Google</button>
       <button class="btn" id="sm-google-btn">⟳ Обновить склад</button>
       <button class="btn primary" id="sm-push-btn">→ Передать FBS в Ozon</button>
@@ -56,7 +51,7 @@
 
   <!-- TABLE -->
   <div class="analytics-table-wrap" style="margin-top:8px">
-    <div style="max-height:calc(100vh - 330px);overflow-y:auto;">
+    <div style="max-height:calc(100vh - 280px);overflow-y:auto;">
       <table class="data-table">
         <thead>
           <tr>
@@ -99,5 +94,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="/static/js/stock_manage.js?v=1777715000"></script>
+<script src="/static/js/stock_manage.js?v=1777756000"></script>
 {% endblock %}
