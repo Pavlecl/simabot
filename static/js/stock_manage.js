@@ -67,60 +67,6 @@ async function loadStockManage(page = 1) {
 }
 
 // =====================================================================
-// СИНХРОНИЗАЦИЯ FBO/FBS
-// =====================================================================
-async function syncFboFbs() {
-  const btn = document.getElementById('sm-sync-fbo-btn');
-  btn.disabled = true;
-
-  try {
-    // Запускаем синхронизацию
-    await fetch('/api/stock/fbo/sync', { method: 'POST' });
-
-    // Поллим через /api/stock-manage/items — он сам скажет loading
-    let attempts = 0;
-    const maxAttempts = 90; // 3 минуты
-
-    const poll = async () => {
-      while (attempts < maxAttempts) {
-        await new Promise(r => setTimeout(r, 2000));
-        attempts++;
-
-        try {
-          const data = await fetch('/api/stock/fbo').then(r => r.json());
-
-          if (data.loading) {
-            btn.textContent = `⏳ Загружаем FBO/FBS... ${attempts * 2}с`;
-            continue;
-          }
-
-          if (data.total > 0) {
-            await loadStockManage(smPage);
-            showToast(`✓ FBO/FBS загружены: ${data.total} позиций`);
-            return;
-          }
-
-          // loading=false но total=0 — ждём ещё немного
-          if (attempts > 5) {
-            await loadStockManage(smPage);
-            showToast('FBO/FBS синхронизированы');
-            return;
-          }
-        } catch { continue; }
-      }
-      showToast('Таймаут синхронизации', 'error');
-    };
-
-    await poll();
-  } catch(e) {
-    showToast('Ошибка синхронизации FBO/FBS', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⟳ Синхр. FBO/FBS';
-  }
-}
-
-// =====================================================================
 // GOOGLE SHEETS
 // =====================================================================
 async function loadGoogleStock() {
@@ -153,7 +99,26 @@ async function loadGoogleStock() {
 }
 
 // =====================================================================
-// РЕНДЕР ТАБЛИЦЫ
+// OZON FBO/FBS
+// =====================================================================
+async function loadOzonStocks() {
+  try {
+    const r = await fetch('/api/stock-manage/sync-stocks', {method: 'POST'}).then(r => r.json());
+    if (r.ok && r.stocks) {
+      smItems = smItems.map(item => ({
+        ...item,
+        fbo: r.stocks[item.offer_id]?.fbo ?? item.fbo,
+        fbs: r.stocks[item.offer_id]?.fbs ?? item.fbs,
+      }));
+      renderStockManage();
+    }
+  } catch(e) {
+    console.error('Stock sync error:', e);
+  }
+}
+
+// =====================================================================
+// СОРТИРОВКА И КОПИРОВАНИЕ
 // =====================================================================
 function sortSm(field) {
   if (smSortField === field) smSortDir = smSortDir === 'desc' ? 'asc' : 'desc';
@@ -161,6 +126,17 @@ function sortSm(field) {
   renderStockManage();
 }
 
+function copySmCell(text, el) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = el.style.color;
+    el.style.color = 'var(--green)';
+    setTimeout(() => el.style.color = orig, 800);
+  });
+}
+
+// =====================================================================
+// РЕНДЕР ТАБЛИЦЫ
+// =====================================================================
 function renderStockManage() {
   const tbody = document.getElementById('sm-tbody');
   if (!smItems.length) {
@@ -168,7 +144,6 @@ function renderStockManage() {
     return;
   }
 
-  // Сортировка
   let items = [...smItems];
   if (smSortField) {
     items.sort((a, b) => {
@@ -221,11 +196,8 @@ function renderStockManage() {
 
 function setOverride(offerId, value) {
   const num = parseInt(value);
-  if (!isNaN(num) && num >= 0) {
-    smOverrides[offerId] = num;
-  } else if (value === '' || value === null) {
-    delete smOverrides[offerId];
-  }
+  if (!isNaN(num) && num >= 0) smOverrides[offerId] = num;
+  else if (value === '' || value === null) delete smOverrides[offerId];
 }
 
 function clearOverride(offerId) {
@@ -245,15 +217,6 @@ function applyAdjustment() {
       smOverrides[item.offer_id] = adjusted;
     }
   });
-
-function copySmCell(text, el) {
-  navigator.clipboard.writeText(text).then(() => {
-    const orig = el.style.color;
-    el.style.color = 'var(--green)';
-    setTimeout(() => el.style.color = orig, 800);
-  });
-}
-
   renderStockManage();
   showToast(`✓ Применена корректировка ${pct > 0 ? '+' : ''}${pct}%`);
 }
@@ -403,23 +366,6 @@ function buildSmPages(current, total) {
   return pages;
 }
 
-async function loadOzonStocks() {
-  try {
-    const r = await fetch('/api/stock-manage/sync-stocks', {method: 'POST'}).then(r => r.json());
-    if (r.ok && r.stocks) {
-      // Обновляем smItems с реальными остатками
-      smItems = smItems.map(item => ({
-        ...item,
-        fbo: r.stocks[item.offer_id]?.fbo ?? item.fbo,
-        fbs: r.stocks[item.offer_id]?.fbs ?? item.fbs,
-      }));
-      renderStockManage();
-    }
-  } catch(e) {
-    console.error('Stock sync error:', e);
-  }
-}
-
 // =====================================================================
 // СТИЛИ
 // =====================================================================
@@ -433,6 +379,8 @@ style.textContent = `
 .data-table { width:100%; border-collapse:collapse; }
 .data-table th, .data-table td { padding:8px 12px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
 .data-table thead th { position:sticky; top:0; background:var(--surface); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); }
+.data-table thead th.sortable { cursor:pointer; user-select:none; }
+.data-table thead th.sortable:hover { color:var(--accent); }
 input[type=number]::-webkit-inner-spin-button { opacity: 0.5; }
 `;
 document.head.appendChild(style);
@@ -442,7 +390,7 @@ document.head.appendChild(style);
 // =====================================================================
 loadStockManage(1);
 loadGoogleStock();
-loadOzonStocks(); // загружаем FBO/FBS напрямую из Ozon
+loadOzonStocks();
 document.getElementById('sm-export-btn').addEventListener('click', exportStockList);
 document.getElementById('sm-google-btn').addEventListener('click', loadGoogleStock);
 document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
