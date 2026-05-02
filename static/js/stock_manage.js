@@ -131,6 +131,8 @@ async function loadOzonStocks() {
   try {
     const r = await fetch('/api/stock-manage/sync-stocks', {method: 'POST'}).then(r => r.json());
     if (r.ok && r.stocks) {
+      const sample = Object.entries(r.stocks).slice(0, 3);
+      console.log('OzonStocks sample:', sample);
       smItems = smItems.map(item => ({
         ...item,
         fbo: r.stocks[item.offer_id]?.fbo ?? item.fbo,
@@ -499,9 +501,12 @@ document.head.appendChild(style);
 // =====================================================================
 // ИНИЦИАЛИЗАЦИЯ
 // =====================================================================
-loadStockManage(1);
-loadGoogleStock();
-loadOzonStocks();
+async function init() {
+  await loadStockManage(1);
+  loadGoogleStock();
+  await loadOzonStocks();
+}
+init();
 document.getElementById('sm-export-btn').addEventListener('click', exportStockList);
 document.getElementById('sm-google-btn').addEventListener('click', loadGoogleStock);
 document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
