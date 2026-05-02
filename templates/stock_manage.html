@@ -6,6 +6,16 @@
   <div class="analytics-toolbar">
     <div class="toolbar-left">
       <input type="text" id="sm-search" placeholder="Артикул / название..." oninput="debounceStockManage()" style="width:220px">
+      <select id="sm-filter-fbs" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+        <option value="">FBS: все</option>
+        <option value="has_fbs">FBS > 0</option>
+        <option value="no_fbs">FBS = 0</option>
+      </select>
+      <select id="sm-filter-google" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+        <option value="">Склад: все</option>
+        <option value="has_stock">Склад > 0</option>
+        <option value="no_stock">Склад = 0</option>
+      </select>
       <button class="btn" onclick="clearSmFilters()">Сбросить</button>
     </div>
     <div class="toolbar-right">
@@ -25,7 +35,7 @@
   <div style="margin-top:8px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:16px;flex-wrap:wrap">
     <span>📋 Нажмите «Импорт из Google» для загрузки артикулов из Google Sheets</span>
     <span id="sm-google-status" style="font-size:11px"></span>
-    <span id="sm-sync-status" style="font-size:11px;color:var(--accent)"></span>
+    <span id="sm-selected-count" style="font-size:11px;color:var(--accent)"></span>
   </div>
 
   <!-- ПРОЦЕНТ КОРРЕКТИРОВКИ -->
@@ -34,27 +44,32 @@
     <input type="number" id="sm-adjust-pct" value="0" min="-100" max="100"
       style="width:70px;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
     <span style="color:var(--text-dim)">%</span>
-    <button class="btn" onclick="applyAdjustment()" style="font-size:11px;padding:3px 10px">Применить ко всем</button>
-    <span style="color:var(--text-dim);font-size:11px">— скорректировать значения «Новый FBS» относительно склада Google</span>
+    <button class="btn" onclick="applyAdjustment(false)" style="font-size:11px;padding:3px 10px">Ко всем</button>
+    <button class="btn" onclick="applyAdjustment(true)" style="font-size:11px;padding:3px 10px">К выбранным</button>
+    <span style="color:var(--text-dim);font-size:11px">— скорректировать «Новый FBS» относительно склада Google</span>
   </div>
 
   <!-- TABLE -->
   <div class="analytics-table-wrap" style="margin-top:8px">
-    <div style="max-height:calc(100vh - 310px);overflow-y:auto;">
+    <div style="max-height:calc(100vh - 330px);overflow-y:auto;">
       <table class="data-table">
         <thead>
           <tr>
+            <th style="width:36px;text-align:center">
+              <input type="checkbox" id="sm-check-all" onchange="toggleCheckAll(this.checked)"
+                style="width:15px;height:15px;cursor:pointer">
+            </th>
             <th>Артикул</th>
             <th>Название</th>
-            <th style="text-align:right;cursor:pointer" onclick="sortSm('fbo')">FBO (Ozon) ↕</th>
-            <th style="text-align:right;cursor:pointer" onclick="sortSm('fbs')">FBS (Ozon) ↕</th>
-            <th style="text-align:right;cursor:pointer" onclick="sortSm('google')">Склад (Google) ↕</th>
+            <th class="sortable" style="text-align:right" onclick="sortSm('fbo')">FBO (Ozon) ↕</th>
+            <th class="sortable" style="text-align:right" onclick="sortSm('fbs')">FBS (Ozon) ↕</th>
+            <th class="sortable" style="text-align:right" onclick="sortSm('google')">Склад (Google) ↕</th>
             <th style="text-align:right;min-width:120px">Новый FBS</th>
             <th style="text-align:center">Сбросить</th>
           </tr>
         </thead>
         <tbody id="sm-tbody">
-          <tr><td colspan="7" class="state-msg">Загрузка...</td></tr>
+          <tr><td colspan="8" class="state-msg">Загрузка...</td></tr>
         </tbody>
       </table>
     </div>
@@ -79,5 +94,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="/static/js/stock_manage.js?v=1777710000"></script>
+<script src="/static/js/stock_manage.js?v=1777712000"></script>
 {% endblock %}

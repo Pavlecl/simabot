@@ -4,9 +4,11 @@
 
 let smPage = 1;
 let smTotal = 0;
-let smItems = [];
+let smItems = [];          // все загруженные из БД
+let smFiltered = [];       // после фильтрации
 let googleStock = {};
 let smOverrides = {};
+let smChecked = new Set(); // выбранные offer_id
 let smSearchTimer = null;
 const SM_PER_PAGE = 100;
 let smSortField = null;
@@ -46,7 +48,13 @@ function debounceStockManage() {
 
 function clearSmFilters() {
   document.getElementById('sm-search').value = '';
+  document.getElementById('sm-filter-fbs').value = '';
+  document.getElementById('sm-filter-google').value = '';
   loadStockManage(1);
+}
+
+function applySmFilter() {
+  applyFiltersAndRender();
 }
 
 async function loadStockManage(page = 1) {
@@ -54,16 +62,34 @@ async function loadStockManage(page = 1) {
   const search = document.getElementById('sm-search')?.value || '';
 
   try {
-    const params = new URLSearchParams({ page, per_page: SM_PER_PAGE, search });
+    const params = new URLSearchParams({ page: 1, per_page: 10000, search });
     const r = await fetch(`/api/stock-manage/items?${params}`).then(r => r.json());
     smItems = r.items || [];
     smTotal = r.total || 0;
-    document.getElementById('sm-count').textContent = smTotal ? `${smTotal} позиций` : '';
-    renderStockManage();
-    renderSmPagination();
+    applyFiltersAndRender();
   } catch(e) {
-    document.getElementById('sm-tbody').innerHTML = '<tr><td colspan="7" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>';
+    document.getElementById('sm-tbody').innerHTML = '<tr><td colspan="8" class="state-msg" style="color:var(--red)">ОШИБКА ЗАГРУЗКИ</td></tr>';
   }
+}
+
+function applyFiltersAndRender() {
+  const filterFbs = document.getElementById('sm-filter-fbs')?.value || '';
+  const filterGoogle = document.getElementById('sm-filter-google')?.value || '';
+
+  smFiltered = smItems.filter(item => {
+    if (filterFbs === 'has_fbs' && item.fbs <= 0) return false;
+    if (filterFbs === 'no_fbs' && item.fbs > 0) return false;
+    const gs = googleStock[item.offer_id];
+    const gsNum = gs !== undefined ? Number(gs) : -1;
+    if (filterGoogle === 'has_stock' && gsNum <= 0) return false;
+    if (filterGoogle === 'no_stock' && gsNum > 0) return false;
+    return true;
+  });
+
+  document.getElementById('sm-count').textContent = smFiltered.length ? `${smFiltered.length} позиций` : '';
+  updateSelectedCount();
+  renderStockManage();
+  renderSmPagination();
 }
 
 // =====================================================================
@@ -83,7 +109,7 @@ async function loadGoogleStock() {
       const count = Object.keys(googleStock).length;
       status.textContent = `✓ Google: ${count} артикулов`;
       status.style.color = 'var(--green)';
-      renderStockManage();
+      applyFiltersAndRender();
       showToast(`✓ Загружено ${count} остатков из Google Sheets`);
     } else {
       status.textContent = `Ошибка: ${r.error}`;
@@ -110,11 +136,49 @@ async function loadOzonStocks() {
         fbo: r.stocks[item.offer_id]?.fbo ?? item.fbo,
         fbs: r.stocks[item.offer_id]?.fbs ?? item.fbs,
       }));
-      renderStockManage();
+      applyFiltersAndRender();
     }
   } catch(e) {
     console.error('Stock sync error:', e);
   }
+}
+
+// =====================================================================
+// ЧЕКБОКСЫ
+// =====================================================================
+function toggleCheck(offerId, checked) {
+  if (checked) smChecked.add(offerId);
+  else smChecked.delete(offerId);
+  updateSelectedCount();
+  updateCheckAllState();
+}
+
+function toggleCheckAll(checked) {
+  const visibleItems = getVisibleItems();
+  visibleItems.forEach(item => {
+    if (checked) smChecked.add(item.offer_id);
+    else smChecked.delete(item.offer_id);
+  });
+  updateSelectedCount();
+  renderStockManage();
+}
+
+function updateSelectedCount() {
+  const el = document.getElementById('sm-selected-count');
+  if (smChecked.size > 0) {
+    el.textContent = `✓ Выбрано: ${smChecked.size}`;
+  } else {
+    el.textContent = '';
+  }
+}
+
+function updateCheckAllState() {
+  const checkbox = document.getElementById('sm-check-all');
+  if (!checkbox) return;
+  const visible = getVisibleItems();
+  const checkedVisible = visible.filter(i => smChecked.has(i.offer_id)).length;
+  checkbox.indeterminate = checkedVisible > 0 && checkedVisible < visible.length;
+  checkbox.checked = visible.length > 0 && checkedVisible === visible.length;
 }
 
 // =====================================================================
@@ -137,14 +201,8 @@ function copySmCell(text, el) {
 // =====================================================================
 // РЕНДЕР ТАБЛИЦЫ
 // =====================================================================
-function renderStockManage() {
-  const tbody = document.getElementById('sm-tbody');
-  if (!smItems.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="state-msg">НЕТ ДАННЫХ — нажмите «Импорт из Google» для загрузки артикулов</td></tr>';
-    return;
-  }
-
-  let items = [...smItems];
+function getVisibleItems() {
+  let items = [...smFiltered];
   if (smSortField) {
     items.sort((a, b) => {
       let av, bv;
@@ -157,8 +215,21 @@ function renderStockManage() {
       return smSortDir === 'desc' ? bv - av : av - bv;
     });
   }
+  // Пагинация
+  const start = (smPage - 1) * SM_PER_PAGE;
+  return items.slice(start, start + SM_PER_PAGE);
+}
 
-  tbody.innerHTML = items.map(item => {
+function renderStockManage() {
+  const tbody = document.getElementById('sm-tbody');
+  if (!smFiltered.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="state-msg">НЕТ ДАННЫХ — нажмите «Импорт из Google» для загрузки артикулов</td></tr>';
+    return;
+  }
+
+  const visibleItems = getVisibleItems();
+
+  tbody.innerHTML = visibleItems.map(item => {
     const warehouseStock = googleStock[item.offer_id] ?? '—';
     const currentOverride = smOverrides[item.offer_id];
     const displayValue = currentOverride !== undefined ? currentOverride
@@ -168,8 +239,14 @@ function renderStockManage() {
     const fbsColor = item.fbs > 0 ? 'var(--accent)' : 'var(--text-dim)';
     const warehouseColor = warehouseStock === 0 ? 'var(--red)' : warehouseStock === '—' ? 'var(--text-dim)' : 'var(--green)';
     const hasOverride = currentOverride !== undefined || (item.fbs_override !== null && item.fbs_override !== undefined);
+    const isChecked = smChecked.has(item.offer_id);
 
-    return `<tr style="${hasOverride ? 'background:rgba(255,106,0,0.06)' : ''}">
+    return `<tr style="${isChecked ? 'background:rgba(255,106,0,0.1)' : hasOverride ? 'background:rgba(255,106,0,0.04)' : ''}">
+      <td style="text-align:center">
+        <input type="checkbox" ${isChecked ? 'checked' : ''}
+          onchange="toggleCheck('${item.offer_id}', this.checked)"
+          style="width:15px;height:15px;cursor:pointer">
+      </td>
       <td style="color:var(--accent);font-family:monospace;font-size:11px;cursor:pointer"
         onclick="copySmCell('${item.offer_id}', this)"
         title="Нажмите для копирования">${item.offer_id}</td>
@@ -192,6 +269,8 @@ function renderStockManage() {
       </td>
     </tr>`;
   }).join('');
+
+  updateCheckAllState();
 }
 
 function setOverride(offerId, value) {
@@ -207,26 +286,45 @@ function clearOverride(offerId) {
   renderStockManage();
 }
 
-function applyAdjustment() {
+// selectedOnly=true — только выбранные; false — все видимые
+function applyAdjustment(selectedOnly = false) {
   const pct = parseFloat(document.getElementById('sm-adjust-pct').value);
   if (isNaN(pct)) { showToast('Введите корректный %', 'error'); return; }
-  smItems.forEach(item => {
+
+  const targets = selectedOnly
+    ? smFiltered.filter(item => smChecked.has(item.offer_id))
+    : smFiltered;
+
+  if (selectedOnly && targets.length === 0) {
+    showToast('Нет выбранных артикулов', 'error');
+    return;
+  }
+
+  targets.forEach(item => {
     const base = googleStock[item.offer_id];
     if (base !== undefined && base !== null && base !== '—') {
       const adjusted = Math.max(0, Math.round(Number(base) * (1 + pct / 100)));
       smOverrides[item.offer_id] = adjusted;
     }
   });
+
   renderStockManage();
-  showToast(`✓ Применена корректировка ${pct > 0 ? '+' : ''}${pct}%`);
+  showToast(`✓ Корректировка ${pct > 0 ? '+' : ''}${pct}% применена к ${targets.length} позициям`);
 }
 
 // =====================================================================
 // ПЕРЕДАЧА FBS В OZON
 // =====================================================================
 async function pushFbsToOzon() {
+  const hasChecked = smChecked.size > 0;
+
+  // Если есть выбранные — передаём только их, иначе все с данными
+  const targets = hasChecked
+    ? smFiltered.filter(item => smChecked.has(item.offer_id))
+    : smFiltered;
+
   const stocks = [];
-  smItems.forEach(item => {
+  targets.forEach(item => {
     let value = smOverrides[item.offer_id];
     if (value === undefined) {
       const gs = googleStock[item.offer_id];
@@ -242,8 +340,9 @@ async function pushFbsToOzon() {
     return;
   }
 
+  const scope = hasChecked ? `${smChecked.size} выбранных` : `всех ${stocks.length}`;
   if (!await smConfirm(
-    `Передать FBS остатки для ${stocks.length} позиций в Ozon?\nЭто обновит реальные остатки на маркетплейсе.`,
+    `Передать FBS остатки для ${scope} позиций в Ozon?\nЭто обновит реальные остатки на маркетплейсе.`,
     'Передача остатков в Ozon'
   )) return;
 
@@ -263,6 +362,7 @@ async function pushFbsToOzon() {
     } else {
       showToast(`✓ FBS обновлён для ${r.total} позиций`);
       smOverrides = {};
+      smChecked.clear();
       await loadStockManage(smPage);
     }
   } catch {
@@ -336,22 +436,32 @@ async function importFromGoogle() {
 // =====================================================================
 function renderSmPagination() {
   const el = document.getElementById('sm-pagination');
-  const totalPages = Math.ceil(smTotal / SM_PER_PAGE);
+  const totalPages = Math.ceil(smFiltered.length / SM_PER_PAGE);
   if (totalPages <= 1) { el.innerHTML = ''; return; }
+
   const btnStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;margin:0 2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;';
   const activeBtnStyle = btnStyle + 'border-color:var(--accent);color:var(--accent);background:rgba(255,106,0,0.1);';
   const dimBtnStyle = btnStyle + 'color:var(--text-dim);cursor:default;';
+
   let html = '<div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:16px 0;flex-wrap:wrap">';
-  html += smPage > 1 ? `<button style="${btnStyle}" onclick="loadStockManage(${smPage-1})">‹</button>` : `<button style="${dimBtnStyle}" disabled>‹</button>`;
+  html += smPage > 1 ? `<button style="${btnStyle}" onclick="goSmPage(${smPage-1})">‹</button>` : `<button style="${dimBtnStyle}" disabled>‹</button>`;
+
   const pages = buildSmPages(smPage, totalPages);
   for (const p of pages) {
     if (p === '...') html += `<span style="${dimBtnStyle}">…</span>`;
     else if (p === smPage) html += `<button style="${activeBtnStyle}">${p}</button>`;
-    else html += `<button style="${btnStyle}" onclick="loadStockManage(${p})">${p}</button>`;
+    else html += `<button style="${btnStyle}" onclick="goSmPage(${p})">${p}</button>`;
   }
-  html += smPage < totalPages ? `<button style="${btnStyle}" onclick="loadStockManage(${smPage+1})">›</button>` : `<button style="${dimBtnStyle}" disabled>›</button>`;
+
+  html += smPage < totalPages ? `<button style="${btnStyle}" onclick="goSmPage(${smPage+1})">›</button>` : `<button style="${dimBtnStyle}" disabled>›</button>`;
   html += `<span style="margin-left:12px;font-size:11px;color:var(--text-dim)">стр. ${smPage} из ${totalPages}</span></div>`;
   el.innerHTML = html;
+}
+
+function goSmPage(page) {
+  smPage = page;
+  renderStockManage();
+  renderSmPagination();
 }
 
 function buildSmPages(current, total) {
@@ -381,6 +491,7 @@ style.textContent = `
 .data-table thead th { position:sticky; top:0; background:var(--surface); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); }
 .data-table thead th.sortable { cursor:pointer; user-select:none; }
 .data-table thead th.sortable:hover { color:var(--accent); }
+input[type=checkbox] { accent-color: var(--accent); }
 input[type=number]::-webkit-inner-spin-button { opacity: 0.5; }
 `;
 document.head.appendChild(style);
