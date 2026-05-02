@@ -497,7 +497,7 @@ function buildSmPages(current, total) {
 // =====================================================================
 const style = document.createElement('style');
 style.textContent = `
-.stock-manage-wrap { padding: 20px; }
+.stock-manage-wrap { padding: 8px 16px; }
 .analytics-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
 .toolbar-left { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .toolbar-right { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
