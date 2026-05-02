@@ -497,7 +497,8 @@ function buildSmPages(current, total) {
 // =====================================================================
 const style = document.createElement('style');
 style.textContent = `
-.stock-manage-wrap { padding: 8px 16px; }
+.stock-manage-wrap { padding: 8px 16px; display:flex; flex-direction:column; height:calc(100vh - 60px); overflow:hidden; }
+.analytics-table-wrap { flex:1; overflow:hidden; }
 .analytics-toolbar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
 .toolbar-left { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .toolbar-right { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
