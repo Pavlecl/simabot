@@ -412,5 +412,4 @@ loadOzonStocks(); // загружаем FBO/FBS напрямую из Ozon
 document.getElementById('sm-export-btn').addEventListener('click', exportStockList);
 document.getElementById('sm-google-btn').addEventListener('click', loadGoogleStock);
 document.getElementById('sm-google-import-btn').addEventListener('click', importFromGoogle);
-document.getElementById('sm-sync-fbo-btn').addEventListener('click', syncFboFbs);
 document.getElementById('sm-push-btn').addEventListener('click', pushFbsToOzon);
