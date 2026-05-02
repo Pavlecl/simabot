@@ -328,7 +328,6 @@ function applyAdjustment(selectedOnly = false) {
 async function pushFbsToOzon() {
   const hasChecked = smChecked.size > 0;
 
-  // Если есть выбранные — передаём только их, иначе все с данными
   const targets = hasChecked
     ? smFiltered.filter(item => smChecked.has(item.offer_id))
     : smFiltered;
@@ -373,7 +372,9 @@ async function pushFbsToOzon() {
       showToast(`✓ FBS обновлён для ${r.total} позиций`);
       smOverrides = {};
       smChecked.clear();
+      btn.textContent = '⏳ Обновляем данные...';
       await loadStockManage(smPage);
+      await loadOzonStocks();
     }
   } catch {
     showToast('Ошибка передачи в Ozon', 'error');
