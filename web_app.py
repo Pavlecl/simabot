@@ -2651,7 +2651,7 @@ async def api_stock_manage_import(
             continue
         offer_id = str(row[0]).strip()
         name = str(row[1]).strip() if row[1] else ""
-        enabled = str(row[3]).strip().lower() in ("да", "yes", "+", "1", "true") if len(row) > 3 and row[3] else False
+        enabled = str(row[2]).strip().lower() in ("да", "yes", "+", "1", "true") if len(row) > 2 and row[2] else False
         stmt = pg_insert(StockItem).values(
             offer_id=offer_id,
             name=name,
