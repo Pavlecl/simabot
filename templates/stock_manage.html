@@ -11,6 +11,11 @@
         <option value="has_fbs">FBS > 0</option>
         <option value="no_fbs">FBS = 0</option>
       </select>
+        <select id="sm-filter-fbo" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+          <option value="">FBO: все</option>
+          <option value="has_fbo">FBO > 0</option>
+          <option value="no_fbo">FBO = 0</option>
+        </select>
       <select id="sm-filter-google" onchange="applySmFilter()" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
         <option value="">Склад: все</option>
         <option value="has_stock">Склад > 0</option>
@@ -94,5 +99,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="/static/js/stock_manage.js?v=1777714000"></script>
+<script src="/static/js/stock_manage.js?v=1777715000"></script>
 {% endblock %}

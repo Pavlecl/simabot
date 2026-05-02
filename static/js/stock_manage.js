@@ -50,6 +50,7 @@ function clearSmFilters() {
   document.getElementById('sm-search').value = '';
   document.getElementById('sm-filter-fbs').value = '';
   document.getElementById('sm-filter-google').value = '';
+  document.getElementById('sm-filter-fbo').value = '';
   loadStockManage(1);
 }
 
@@ -84,7 +85,11 @@ function applyFiltersAndRender() {
   const filterFbs = document.getElementById('sm-filter-fbs')?.value || '';
   const filterGoogle = document.getElementById('sm-filter-google')?.value || '';
 
+  const filterFbo = document.getElementById('sm-filter-fbo')?.value || '';
+
   smFiltered = smItems.filter(item => {
+    if (filterFbo === 'has_fbo' && item.fbo <= 0) return false;
+    if (filterFbo === 'no_fbo' && item.fbo > 0) return false;
     if (filterFbs === 'has_fbs' && item.fbs <= 0) return false;
     if (filterFbs === 'no_fbs' && item.fbs > 0) return false;
     const gs = googleStock[item.offer_id];
