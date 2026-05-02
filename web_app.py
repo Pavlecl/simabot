@@ -2564,33 +2564,34 @@ async def api_stock_manage_push_fbs(
 
 @app.get("/api/stock-manage/export-list")
 async def api_stock_manage_export(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Скачать Excel со всеми артикулами из products для разметки"""
+    """Скачать Excel с включёнными артикулами из stock_items"""
     import openpyxl
     from fastapi.responses import StreamingResponse
     import io as sio
 
-    products_r = await db.execute(select(Product).order_by(Product.offer_id))
-    products = products_r.scalars().all()
-
-    enabled_r = await db.execute(select(StockItem.offer_id).where(StockItem.enabled == True))
-    enabled_ids = {r[0] for r in enabled_r.fetchall()}
+    items_r = await db.execute(
+        select(StockItem).where(StockItem.enabled == True).order_by(StockItem.offer_id)
+    )
+    items = items_r.scalars().all()
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Артикулы"
-    ws.append(["Артикул", "Название", "Бренд", "Включить (Да/-)"])
-    for p in products:
-        ws.append([p.offer_id, p.name or "", p.brand or "", "Да" if p.offer_id in enabled_ids else "—"])
-    ws.column_dimensions["A"].width = 20
-    ws.column_dimensions["B"].width = 40
-    ws.column_dimensions["C"].width = 20
-    ws.column_dimensions["D"].width = 15
+    ws.append(["Артикул", "Название", "Включить (Да/-)"])
+    for item in items:
+        ws.append([item.offer_id, item.name or "", "Да"])
+    ws.column_dimensions["A"].width = 25
+    ws.column_dimensions["B"].width = 45
+    ws.column_dimensions["C"].width = 15
 
     buf = sio.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": "attachment; filename=stock_items.xlsx"})
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=stock_items.xlsx"}
+    )
 
 @app.post("/api/stock-manage/sync-stocks")
 async def api_stock_manage_sync_stocks(
