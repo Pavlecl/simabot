@@ -2572,7 +2572,7 @@ async def api_stock_manage_export(user: dict = Depends(require_admin), db: Async
     products_r = await db.execute(select(Product).order_by(Product.offer_id))
     products = products_r.scalars().all()
 
-    enabled_r = await db.execute(select(StockItem.offer_id))
+    enabled_r = await db.execute(select(StockItem.offer_id).where(StockItem.enabled == True))
     enabled_ids = {r[0] for r in enabled_r.fetchall()}
 
     wb = openpyxl.Workbook()
@@ -2580,7 +2580,7 @@ async def api_stock_manage_export(user: dict = Depends(require_admin), db: Async
     ws.title = "Артикулы"
     ws.append(["Артикул", "Название", "Бренд", "Включить (Да/-)"])
     for p in products:
-        ws.append([p.offer_id, p.name or "", p.brand or "", "Да" if p.offer_id in enabled_ids else ""])
+        ws.append([p.offer_id, p.name or "", p.brand or "", "Да" if p.offer_id in enabled_ids else "—"])
     ws.column_dimensions["A"].width = 20
     ws.column_dimensions["B"].width = 40
     ws.column_dimensions["C"].width = 20
