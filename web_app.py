@@ -2615,7 +2615,7 @@ async def api_stock_manage_sync_stocks(
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    for item in data.get("result", {}).get("items", []):
+                    for item in data.get("items", []):
                         oid = item.get("offer_id")
                         if not oid:
                             continue
