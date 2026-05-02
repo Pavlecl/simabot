@@ -64,7 +64,15 @@ async function loadStockManage(page = 1) {
   try {
     const params = new URLSearchParams({ page: 1, per_page: 10000, search });
     const r = await fetch(`/api/stock-manage/items?${params}`).then(r => r.json());
-    smItems = r.items || [];
+    // Сохраняем Ozon остатки если они уже загружены
+    const ozonCache = {};
+    smItems.forEach(i => { ozonCache[i.offer_id] = {fbo: i.fbo, fbs: i.fbs}; });
+
+    smItems = (r.items || []).map(item => ({
+      ...item,
+      fbo: ozonCache[item.offer_id]?.fbo ?? item.fbo,
+      fbs: ozonCache[item.offer_id]?.fbs ?? item.fbs,
+    }));
     smTotal = r.total || 0;
     applyFiltersAndRender();
   } catch(e) {
