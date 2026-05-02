@@ -2558,6 +2558,8 @@ async def api_stock_manage_push_fbs(
             data = await resp.json()
 
     errors = [r for r in data.get("result", []) if not r.get("updated")]
+    if errors:
+        print(f"PUSH FBS ERRORS: {errors[:3]}", flush=True)
     return {"ok": True, "total": len(payload), "errors": errors}
 
 @app.get("/api/stock-manage/export-list")
