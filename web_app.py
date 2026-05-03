@@ -78,12 +78,14 @@ OZON_HEADERS = {
 
 async def load_active_account():
     global _active_account, OZON_HEADERS
+    print("load_active_account called", flush=True)
     try:
         async with AsyncSessionLocal() as db:
             r = await db.execute(
                 select(OzonAccount).where(OzonAccount.is_active == True).limit(1)
             )
             account = r.scalars().first()
+            print(f"load_active_account found: {account}", flush=True)
             if account:
                 _active_account = {
                     "id": account.id,
