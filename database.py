@@ -344,3 +344,16 @@ class StockItem(Base):
     enabled = Column(Boolean, default=False)
     fbs_override = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
+
+
+class OzonAccount(Base):
+    """Кабинеты Ozon"""
+    __tablename__ = "ozon_accounts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    client_id = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)
+    warehouse_id_uzspace = Column(BigInteger, default=0)
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+

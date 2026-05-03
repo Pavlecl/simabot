@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
-                      FboWatchlist, StockItem,  init_db)
+                      FboWatchlist, StockItem, OzonAccount, init_db)
 
 # --- КОНФИГУРАЦИЯ ---
 # SECRET_KEY используется для подписи JWT. Если утечёт — злоумышленник сможет
@@ -57,6 +57,56 @@ try:
     OZON_WAREHOUSE_ID = int(os.getenv("OZON_WAREHOUSE_ID", "0"))
 except:
     OZON_WAREHOUSE_ID = 0
+try:
+    OZON_WAREHOUSE_ID_UZSPACE = int(os.getenv("OZON_WAREHOUSE_ID_UZSPACE", "0"))
+except:
+    OZON_WAREHOUSE_ID_UZSPACE = 0
+
+_active_account = {
+    "id": None,
+    "name": "Основной",
+    "client_id": OZON_CLIENT_ID,
+    "api_key": OZON_API_KEY,
+    "warehouse_id_uzspace": OZON_WAREHOUSE_ID_UZSPACE,
+}
+
+OZON_HEADERS = {
+    "Client-Id": OZON_CLIENT_ID,
+    "Api-Key": OZON_API_KEY,
+    "Content-Type": "application/json"
+}
+
+async def load_active_account():
+    global _active_account, OZON_HEADERS
+    try:
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(
+                select(OzonAccount).where(OzonAccount.is_active == True).limit(1)
+            )
+            account = r.scalars().first()
+            if account:
+                _active_account = {
+                    "id": account.id,
+                    "name": account.name,
+                    "client_id": account.client_id,
+                    "api_key": account.api_key,
+                    "warehouse_id_uzspace": account.warehouse_id_uzspace or 0,
+                }
+                OZON_HEADERS = {
+                    "Client-Id": account.client_id,
+                    "Api-Key": account.api_key,
+                    "Content-Type": "application/json"
+                }
+                print(f"Active account: {account.name}", flush=True)
+    except Exception as e:
+        print(f"load_active_account error: {e}", flush=True)
+
+def get_ozon_headers():
+    return {
+        "Client-Id": _active_account["client_id"],
+        "Api-Key": _active_account["api_key"],
+        "Content-Type": "application/json"
+    }
 
 OZON_HEADERS = {
     "Client-Id": OZON_CLIENT_ID,
@@ -2681,15 +2731,65 @@ async def api_stock_manage_fbs_override(
     await db.commit()
     return {"ok": True}
 
+# =====================================================================
+# КАБИНЕТЫ OZON
+# =====================================================================
+
+@app.get("/api/accounts")
+async def api_get_accounts(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    r = await db.execute(select(OzonAccount).order_by(OzonAccount.id))
+    accounts = r.scalars().all()
+    return {"accounts": [
+        {"id": a.id, "name": a.name, "client_id": a.client_id,
+         "warehouse_id_uzspace": a.warehouse_id_uzspace, "is_active": a.is_active}
+        for a in accounts
+    ]}
+
+@app.post("/api/accounts")
+async def api_create_account(request: Request, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    account = OzonAccount(
+        name=body["name"],
+        client_id=body["client_id"],
+        api_key=body["api_key"],
+        warehouse_id_uzspace=int(body.get("warehouse_id_uzspace") or 0),
+        is_active=False
+    )
+    db.add(account)
+    await db.commit()
+    return {"ok": True, "id": account.id}
+
+@app.post("/api/accounts/{account_id}/activate")
+async def api_activate_account(account_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    # Деактивируем все
+    await db.execute(update(OzonAccount).values(is_active=False))
+    # Активируем нужный
+    await db.execute(update(OzonAccount).where(OzonAccount.id == account_id).values(is_active=True))
+    await db.commit()
+    # Перезагружаем активный кабинет
+    await load_active_account()
+    return {"ok": True, "active": _active_account["name"]}
+
+@app.delete("/api/accounts/{account_id}")
+async def api_delete_account(account_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(OzonAccount).where(OzonAccount.id == account_id))
+    await db.commit()
+    return {"ok": True}
+
+@app.get("/api/accounts/current")
+async def api_current_account(user: dict = Depends(require_any_role)):
+    return {"name": _active_account["name"], "id": _active_account["id"]}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # Синхронизируемся с Ozon при старте (в фоне, не блокируем запуск)
+    await load_active_account()
     import asyncio
     asyncio.create_task(sync_from_ozon())
     yield
 
 app.router.lifespan_context = lifespan
+
 
 if __name__ == "__main__":
     import uvicorn
