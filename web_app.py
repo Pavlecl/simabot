@@ -2780,6 +2780,29 @@ async def api_delete_account(account_id: int, user: dict = Depends(require_admin
 async def api_current_account(user: dict = Depends(require_any_role)):
     return {"name": _active_account["name"], "id": _active_account["id"]}
 
+@app.post("/api/accounts/warehouses")
+async def api_get_warehouses(request: Request, user: dict = Depends(require_admin)):
+    """Получает список FBS складов по переданным учётным данным"""
+    body = await request.json()
+    client_id = body.get("client_id", "")
+    api_key = body.get("api_key", "")
+    headers = {"Client-Id": client_id, "Api-Key": api_key, "Content-Type": "application/json"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api-seller.ozon.ru/v2/warehouse/list",
+                headers=headers,
+                json={}
+            ) as resp:
+                data = await resp.json()
+        warehouses = [
+            {"id": w["warehouse_id"], "name": w["name"], "type": w.get("warehouse_type", "fbs")}
+            for w in data.get("warehouses", [])
+        ]
+        return {"ok": True, "warehouses": warehouses}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "warehouses": []}
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()

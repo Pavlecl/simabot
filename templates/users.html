@@ -82,8 +82,13 @@
               <input type="text" id="acc-api-key" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
             </div>
             <div class="field-group">
-              <label>Warehouse ID (FBS)</label>
-              <input type="text" id="acc-warehouse-id" placeholder="1020000789244000">
+              <label>Склад FBS</label>
+              <div style="display:flex;gap:8px">
+                <button class="btn" type="button" onclick="loadWarehouses()" style="font-size:11px;white-space:nowrap">⟳ Получить склады</button>
+              </div>
+              <select id="acc-warehouse-id" style="margin-top:8px;width:100%;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+                <option value="">— Сначала введите Client-Id и Api-Key —</option>
+              </select>
             </div>
             <button class="btn primary" onclick="createAccount()">Добавить кабинет</button>
             <div id="acc-msg" style="font-size:11px;min-height:16px;margin-top:8px"></div>
@@ -165,6 +170,39 @@ async function deleteAccount(id, name) {
   const r = await fetch(`/api/accounts/${id}`, {method: 'DELETE'}).then(r => r.json());
   if (r.ok) { showToast('✓ Удалено'); loadAccounts(); }
   else showToast('Ошибка удаления', 'error');
+}
+
+async function loadWarehouses() {
+  const clientId = document.getElementById('acc-client-id').value.trim();
+  const apiKey = document.getElementById('acc-api-key').value.trim();
+  const sel = document.getElementById('acc-warehouse-id');
+  const msg = document.getElementById('acc-msg');
+
+  if (!clientId || !apiKey) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Введите Client-Id и Api-Key';
+    return;
+  }
+
+  msg.style.color = 'var(--text-dim)';
+  msg.textContent = '⏳ Загружаем склады...';
+
+  const r = await fetch('/api/accounts/warehouses', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({client_id: clientId, api_key: apiKey})
+  }).then(r => r.json());
+
+  if (r.ok && r.warehouses.length) {
+    sel.innerHTML = r.warehouses.map(w =>
+      `<option value="${w.id}">${w.name} (${w.type})</option>`
+    ).join('');
+    msg.textContent = `✓ Найдено складов: ${r.warehouses.length}`;
+    msg.style.color = 'var(--green)';
+  } else {
+    msg.style.color = 'var(--red)';
+    msg.textContent = r.error || 'Склады не найдены';
+  }
 }
 
 async function createAccount() {
