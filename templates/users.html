@@ -1,41 +1,210 @@
 {% extends "base.html" %}
 {% block content %}
   <div class="tab-panel {{ 'active' if active_tab == 'users' }}" id="tab-users">
-    <div class="users-grid">
-      <div>
-        <div class="users-list">
-          <div class="users-list-header">Пользователи системы</div>
-          <div id="users-list-body">
-            <div class="state-msg">ЗАГРУЗКА...</div>
+
+    {% if user.role == 'admin' %}
+    <!-- Вкладки -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px">
+      <button id="tab-btn-users" onclick="switchTab('users')"
+        style="padding:8px 20px;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:1px">
+        Пользователи
+      </button>
+      <button id="tab-btn-accounts" onclick="switchTab('accounts')"
+        style="padding:8px 20px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:1px">
+        Кабинеты Ozon
+      </button>
+    </div>
+    {% endif %}
+
+    <!-- Панель: Пользователи -->
+    <div id="panel-users">
+      <div class="users-grid">
+        <div>
+          <div class="users-list">
+            <div class="users-list-header">Пользователи системы</div>
+            <div id="users-list-body">
+              <div class="state-msg">ЗАГРУЗКА...</div>
+            </div>
           </div>
         </div>
-      </div>
-
-      <div class="create-user-form">
-        <div class="create-user-form-header">Создать пользователя</div>
-        <div class="create-user-form-body">
-          <div class="field-group">
-            <label>Логин</label>
-            <input type="text" id="new-username" placeholder="например: ff_operator">
+        <div class="create-user-form">
+          <div class="create-user-form-header">Создать пользователя</div>
+          <div class="create-user-form-body">
+            <div class="field-group">
+              <label>Логин</label>
+              <input type="text" id="new-username" placeholder="например: ff_operator">
+            </div>
+            <div class="field-group">
+              <label>Пароль</label>
+              <input type="text" id="new-password" placeholder="минимум 6 символов">
+            </div>
+            <div class="field-group">
+              <label>Роль</label>
+              <select id="new-role">
+                <option value="fulfillment">Fulfillment (сборка)</option>
+                <option value="admin">Admin (полный доступ)</option>
+              </select>
+            </div>
+            <button class="btn primary" id="create-user-btn">Создать пользователя</button>
+            <div id="create-user-msg" style="font-size:11px; min-height:16px;"></div>
           </div>
-          <div class="field-group">
-            <label>Пароль</label>
-            <input type="text" id="new-password" placeholder="минимум 6 символов">
-          </div>
-          <div class="field-group">
-            <label>Роль</label>
-            <select id="new-role">
-              <option value="fulfillment">Fulfillment (сборка)</option>
-              <option value="admin">Admin (полный доступ)</option>
-            </select>
-          </div>
-          <button class="btn primary" id="create-user-btn">Создать пользователя</button>
-          <div id="create-user-msg" style="font-size:11px; min-height:16px;"></div>
         </div>
       </div>
     </div>
+
+    {% if user.role == 'admin' %}
+    <!-- Панель: Кабинеты -->
+    <div id="panel-accounts" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 380px;gap:24px;max-width:1100px">
+
+        <!-- Список кабинетов -->
+        <div>
+          <div class="users-list-header" style="margin-bottom:12px">Кабинеты Ozon</div>
+          <div id="accounts-list">
+            <div class="state-msg">Загрузка...</div>
+          </div>
+        </div>
+
+        <!-- Форма добавления -->
+        <div class="create-user-form">
+          <div class="create-user-form-header">Добавить кабинет</div>
+          <div class="create-user-form-body">
+            <div class="field-group">
+              <label>Название</label>
+              <input type="text" id="acc-name" placeholder="например: UZSPACE">
+            </div>
+            <div class="field-group">
+              <label>Client-Id</label>
+              <input type="text" id="acc-client-id" placeholder="12345">
+            </div>
+            <div class="field-group">
+              <label>Api-Key</label>
+              <input type="text" id="acc-api-key" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="field-group">
+              <label>Warehouse ID (FBS)</label>
+              <input type="text" id="acc-warehouse-id" placeholder="1020000789244000">
+            </div>
+            <button class="btn primary" onclick="createAccount()">Добавить кабинет</button>
+            <div id="acc-msg" style="font-size:11px;min-height:16px;margin-top:8px"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    {% endif %}
+
   </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/users.js?v=1773178100"></script>
+<script src="/static/js/users.js?v=1777760000"></script>
+<script>
+{% if user.role == 'admin' %}
+// ---- Вкладки ----
+function switchTab(tab) {
+  document.getElementById('panel-users').style.display = tab === 'users' ? '' : 'none';
+  document.getElementById('panel-accounts').style.display = tab === 'accounts' ? '' : 'none';
+  document.getElementById('tab-btn-users').style.borderBottomColor = tab === 'users' ? 'var(--accent)' : 'transparent';
+  document.getElementById('tab-btn-users').style.color = tab === 'users' ? 'var(--accent)' : 'var(--text-dim)';
+  document.getElementById('tab-btn-accounts').style.borderBottomColor = tab === 'accounts' ? 'var(--accent)' : 'transparent';
+  document.getElementById('tab-btn-accounts').style.color = tab === 'accounts' ? 'var(--accent)' : 'var(--text-dim)';
+  if (tab === 'accounts') loadAccounts();
+}
+
+// Открыть вкладку кабинетов если в URL есть #accounts
+if (window.location.hash === '#accounts') switchTab('accounts');
+
+// ---- Кабинеты ----
+async function loadAccounts() {
+  const el = document.getElementById('accounts-list');
+  el.innerHTML = '<div class="state-msg">Загрузка...</div>';
+  const r = await fetch('/api/accounts').then(r => r.json());
+  const accounts = r.accounts || [];
+  if (!accounts.length) {
+    el.innerHTML = '<div class="state-msg">Нет кабинетов</div>';
+    return;
+  }
+  el.innerHTML = accounts.map(a => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;
+      border:1px solid var(--border);margin-bottom:8px;
+      background:${a.is_active ? 'rgba(255,106,0,0.08)' : 'var(--surface)'}">
+      <div>
+        <div style="font-weight:600;font-size:13px;color:${a.is_active ? 'var(--accent)' : 'var(--text)'}">
+          ${a.is_active ? '● ' : '○ '}${a.name}
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+          Client-Id: ${a.client_id} &nbsp;|&nbsp; WH: ${a.warehouse_id_uzspace || '—'}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${!a.is_active ? `<button class="btn primary" style="font-size:11px;padding:3px 10px"
+          onclick="activateAccount(${a.id})">Активировать</button>` :
+          `<span style="font-size:11px;color:var(--accent);padding:3px 10px">Активен</span>`}
+        <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--red)"
+          onclick="deleteAccount(${a.id}, '${a.name}')">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function activateAccount(id) {
+  const r = await fetch(`/api/accounts/${id}/activate`, {method: 'POST'}).then(r => r.json());
+  if (r.ok) {
+    showToast(`✓ Активирован кабинет: ${r.active}`);
+    loadAccounts();
+    // Обновить бейдж в шапке
+    const badge = document.getElementById('active-account-badge');
+    if (badge) badge.textContent = '⚙ ' + r.active;
+  } else {
+    showToast('Ошибка активации', 'error');
+  }
+}
+
+async function deleteAccount(id, name) {
+  if (!confirm(`Удалить кабинет "${name}"?`)) return;
+  const r = await fetch(`/api/accounts/${id}`, {method: 'DELETE'}).then(r => r.json());
+  if (r.ok) { showToast('✓ Удалено'); loadAccounts(); }
+  else showToast('Ошибка удаления', 'error');
+}
+
+async function createAccount() {
+  const name = document.getElementById('acc-name').value.trim();
+  const clientId = document.getElementById('acc-client-id').value.trim();
+  const apiKey = document.getElementById('acc-api-key').value.trim();
+  const warehouseId = document.getElementById('acc-warehouse-id').value.trim();
+  const msg = document.getElementById('acc-msg');
+
+  if (!name || !clientId || !apiKey) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Заполните все обязательные поля';
+    return;
+  }
+
+  const r = await fetch('/api/accounts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, client_id: clientId, api_key: apiKey, warehouse_id_uzspace: warehouseId || 0})
+  }).then(r => r.json());
+
+  if (r.ok) {
+    msg.style.color = 'var(--green)';
+    msg.textContent = '✓ Кабинет добавлен';
+    document.getElementById('acc-name').value = '';
+    document.getElementById('acc-client-id').value = '';
+    document.getElementById('acc-api-key').value = '';
+    document.getElementById('acc-warehouse-id').value = '';
+    loadAccounts();
+  } else {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Ошибка добавления';
+  }
+}
+
+// Загружаем название активного кабинета в шапку
+fetch('/api/accounts/current').then(r => r.json()).then(d => {
+  const badge = document.getElementById('active-account-badge');
+  if (badge && d.name) badge.textContent = '⚙ ' + d.name;
+});
+{% endif %}
+</script>
 {% endblock %}

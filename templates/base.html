@@ -41,6 +41,9 @@
   </nav>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему" id="theme-btn">☀️</button>
+    {% if user.role == 'admin' %}
+    <a href="/users#accounts" style="font-size:11px;color:var(--accent);border:1px solid var(--accent);padding:2px 8px;text-decoration:none" id="active-account-badge">⚙ ...</a>
+    {% endif %}
     <span>{{ user.username }}</span>
     <span class="role-badge">{{ user.role }}</span>
     <a href="/logout" class="logout-link">Выйти →</a>
