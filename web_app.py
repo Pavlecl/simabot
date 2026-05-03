@@ -2763,7 +2763,7 @@ async def api_create_account(request: Request, user: dict = Depends(require_admi
 
 @app.post("/api/accounts/{account_id}/activate")
 async def api_activate_account(account_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    global _stock_cache, _ozon_sync_status
+    global _stock_cache, _ozon_sync_status, _active_account, OZON_HEADERS
     await db.execute(update(OzonAccount).values(is_active=False))
     await db.execute(update(OzonAccount).where(OzonAccount.id == account_id).values(is_active=True))
     await db.commit()
