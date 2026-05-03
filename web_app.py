@@ -2761,13 +2761,15 @@ async def api_create_account(request: Request, user: dict = Depends(require_admi
 
 @app.post("/api/accounts/{account_id}/activate")
 async def api_activate_account(account_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    # Деактивируем все
+    global _stock_cache, _ozon_sync_status
     await db.execute(update(OzonAccount).values(is_active=False))
-    # Активируем нужный
     await db.execute(update(OzonAccount).where(OzonAccount.id == account_id).values(is_active=True))
     await db.commit()
-    # Перезагружаем активный кабинет
     await load_active_account()
+    # Сбрасываем кэш остатков и запускаем синхронизацию для нового кабинета
+    _stock_cache = {"items": [], "warehouses": [], "total": 0, "loading": False, "updated_at": None, "watchlist": []}
+    _ozon_sync_status = {"running": False, "fetched": 0, "total": 0, "saved": 0, "done": False}
+    asyncio.create_task(sync_stock_cache())
     return {"ok": True, "active": _active_account["name"]}
 
 @app.delete("/api/accounts/{account_id}")
