@@ -2605,7 +2605,7 @@ async def api_stock_manage_push_fbs(
     if not stocks:
         raise HTTPException(status_code=400, detail="stocks пустой")
 
-    warehouse_id = int(os.getenv("OZON_WAREHOUSE_ID_UZSPACE", os.getenv("OZON_WAREHOUSE_ID", "0")))
+    warehouse_id = _active_account.get("warehouse_id_uzspace") or int(os.getenv("OZON_WAREHOUSE_ID_UZSPACE", os.getenv("OZON_WAREHOUSE_ID", "0")))
     payload = [{"offer_id": s["offer_id"], "stock": s["stock"], "warehouse_id": warehouse_id} for s in stocks]
 
     async with aiohttp.ClientSession() as session:
