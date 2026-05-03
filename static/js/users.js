@@ -18,11 +18,11 @@ async function loadUsers() {
           <div class="user-created" style="margin-top:4px">
             ${u.role === 'admin' ? '<span style="color:var(--text-dim);font-size:11px">Полный доступ (admin)</span>' : `
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-              ${['dashboard','orders','queue','repricer','costs'].map(p => `
+              ${['dashboard','orders','queue','repricer','costs','stock','stock-manage'].map(p => `
                 <label style="font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer">
                   <input type="checkbox" ${u.permissions.includes(p) ? 'checked' : ''}
                     onchange="updatePermission(${u.id}, '${p}', this.checked)">
-                  ${{'dashboard':'Дашборд','orders':'Заказы','queue':'Очередь','repricer':'Репрайсер','costs':'Себестоимость'}[p]}
+                  ${{'dashboard':'Дашборд','orders':'Заказы','queue':'Очередь','repricer':'Репрайсер','costs':'Себестоимость','stock':'Остатки FBO','stock-manage':'Остатки WB'}[p]}
                 </label>`).join('')}
             </div>`}
           </div>
@@ -91,7 +91,7 @@ async function updatePermission(userId, page, enabled) {
     .map(cb => cb.closest('label').querySelector('input').getAttribute('onchange').match(/'(\w+)'/)[1]);
 
   // Пересобираем permissions из всех чекбоксов этого пользователя
-  const pages = ['dashboard','orders','queue','repricer','costs'];
+  const pages = ['dashboard','orders','queue','repricer','costs','stock','stock-manage'];
   const currentPerms = pages.filter((p, i) => checkboxes[i]?.checked);
   currentPerms.push('queue'); // queue всегда доступна
   const unique = [...new Set(currentPerms)];
