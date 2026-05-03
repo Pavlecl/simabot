@@ -76,6 +76,13 @@ OZON_HEADERS = {
     "Content-Type": "application/json"
 }
 
+def get_active_headers():
+    return {
+        "Client-Id": _active_account["client_id"],
+        "Api-Key": _active_account["api_key"],
+        "Content-Type": "application/json"
+    }
+
 async def load_active_account():
     global _active_account, OZON_HEADERS
     print("load_active_account called", flush=True)
@@ -142,7 +149,7 @@ async def fetch_ozon_postings(statuses: list) -> list:
                 "with": {"analytics_data": False, "financial_data": False}
             }
             try:
-                async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+                async with session.post(url, json=payload, headers=get_active_headers()) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         all_postings.extend(data.get("result", {}).get("postings", []))
@@ -163,7 +170,7 @@ async def fetch_images_for_skus(skus: list) -> dict:
         for i in range(0, len(skus), 100):
             batch = skus[i:i+100]
             try:
-                async with session.post(url, json={"sku": batch}, headers=OZON_HEADERS) as resp:
+                async with session.post(url, json={"sku": batch}, headers=get_active_headers()) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         # Ответ: {"items": [...]} без обёртки result
@@ -281,7 +288,7 @@ async def sync_from_ozon() -> dict:
                         async with check_session.post(
                             url,
                             json={"posting_number": p_num},
-                            headers=OZON_HEADERS
+                            headers=get_active_headers()
                         ) as resp:
                             if resp.status == 200:
                                 data = await resp.json()
@@ -864,7 +871,7 @@ async def fetch_products_prices_offset(offset: int = 0, limit: int = 1000) -> di
     async with aiohttp.ClientSession() as session:
         async with session.post(url,
             json={"filter": {"visibility": "ALL"}, "limit": limit, "offset": offset},
-            headers=OZON_HEADERS) as resp:
+            headers=get_active_headers()) as resp:
             if resp.status == 200:
                 return await resp.json()
     return {}
@@ -885,7 +892,7 @@ async def sync_products_catalog() -> dict:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                         "https://api-seller.ozon.ru/v3/product/list",
-                        headers=OZON_HEADERS,
+                        headers=get_active_headers(),
                         json={"filter": {"visibility": "ALL"}, "last_id": last_id, "limit": limit}
                 ) as resp:
                     list_data = await resp.json()
@@ -930,7 +937,7 @@ async def sync_products_catalog() -> dict:
                 async with session.post(
                         "https://api-seller.ozon.ru/v1/warehouse/list",
                         json={},
-                        headers=OZON_HEADERS
+                        headers=get_active_headers()
                 ) as resp:
                     if resp.status == 200:
                         wh_data = await resp.json()
@@ -952,7 +959,7 @@ async def sync_products_catalog() -> dict:
                 async with session.post(
                         "https://api-seller.ozon.ru/v1/description-category/tree",
                         json={"language": "RU"},
-                        headers=OZON_HEADERS
+                        headers=get_active_headers()
                 ) as resp:
                     if resp.status == 200:
                         cat_data = await resp.json()
@@ -977,7 +984,7 @@ async def sync_products_catalog() -> dict:
             for i in range(0, len(product_ids), 100):
                 batch = product_ids[i:i+100]
                 try:
-                    async with session.post(url_info, json={"product_id": batch}, headers=OZON_HEADERS) as resp:
+                    async with session.post(url_info, json={"product_id": batch}, headers=get_active_headers()) as resp:
                         if resp.status == 200:
                             d = await resp.json()
                             for it in d.get("items", []):
@@ -1024,7 +1031,7 @@ async def sync_products_catalog() -> dict:
                 try:
                     async with session.post(url_attrs,
                         json={"filter": {"offer_id": batch}, "limit": len(batch)},
-                        headers=OZON_HEADERS) as resp:
+                        headers=get_active_headers()) as resp:
                         if resp.status == 200:
                             d = await resp.json()
                             for it in d.get("result", []):
@@ -1454,7 +1461,7 @@ async def api_apply_price(
     }]}
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+        async with session.post(url, json=payload, headers=get_active_headers()) as resp:
             data = await resp.json()
             result_item = data.get("result", [{}])[0]
 
@@ -1681,7 +1688,7 @@ async def _sync_ozon_task():
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     "https://api-seller.ozon.ru/v3/product/list",
-                    headers=OZON_HEADERS,
+                    headers=get_active_headers(),
                     json={"filter": {"visibility": "ALL"}, "last_id": last_id, "limit": limit}
                 ) as resp:
                     data = await resp.json()
@@ -1850,7 +1857,7 @@ async def sync_sales_from_ozon():
                     "with": {"analytics_data": False, "financial_data": False}
                 }
                 try:
-                    async with session.post(url, json=payload, headers=OZON_HEADERS) as resp:
+                    async with session.post(url, json=payload, headers=get_active_headers()) as resp:
                         if resp.status != 200:
                             break
                         data = await resp.json()
@@ -2068,7 +2075,7 @@ async def api_analytics_ozon_chart(
                     "limit": 1000,
                     "offset": 0
                 },
-                headers=OZON_HEADERS
+                headers=get_active_headers()
             ) as resp:
                 if resp.status != 200:
                     return {"chart": []}
@@ -2114,7 +2121,7 @@ async def api_analytics_top_by_orders(
                         "limit": 1000,
                         "offset": offset
                     },
-                    headers=OZON_HEADERS
+                    headers=get_active_headers()
                 ) as resp:
                     if resp.status != 200:
                         break
@@ -2171,7 +2178,7 @@ async def api_analytics_top_by_orders(
                             async with session.post(
                                     "https://api-seller.ozon.ru/v3/product/info/list",
                                     json={"sku": batch},
-                                    headers=OZON_HEADERS
+                                    headers=get_active_headers()
                             ) as resp:
                                 if resp.status == 200:
                                     d = await resp.json()
@@ -2238,7 +2245,7 @@ async def sync_stock_cache():
                     async with session.post(
                         "https://api-seller.ozon.ru/v2/analytics/stock_on_warehouses",
                         json={"limit": 1000, "offset": offset, "warehouse_type": "ALL"},
-                        headers=OZON_HEADERS
+                        headers=get_active_headers()
                     ) as resp:
                         if resp.status != 200:
                             print(f"STOCK FBO error status: {resp.status}", flush=True)
@@ -2266,7 +2273,7 @@ async def sync_stock_cache():
                     async with session.post(
                         "https://api-seller.ozon.ru/v4/product/info/stocks",
                         json=payload,
-                        headers=OZON_HEADERS
+                        headers=get_active_headers()
                     ) as resp:
                         if resp.status != 200:
                             print(f"STOCK FBS error status: {resp.status}", flush=True)
@@ -2420,7 +2427,7 @@ async def api_fbs_zero(request: Request, user: dict = Depends(require_admin)):
     async with aiohttp.ClientSession() as session:
         async with session.post(
                 "https://api-seller.ozon.ru/v2/products/stocks",
-                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+                headers={"Client-Id": _active_account["client_id"], "Api-Key": _active_account["api_key"], "Content-Type": "application/json"},
                 json={"stocks": stocks_payload}
         ) as resp:
             data = await resp.json()
@@ -2604,7 +2611,7 @@ async def api_stock_manage_push_fbs(
     async with aiohttp.ClientSession() as session:
         async with session.post(
             "https://api-seller.ozon.ru/v2/products/stocks",
-            headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+            headers=get_active_headers(),
             json={"stocks": payload}
         ) as resp:
             data = await resp.json()
@@ -2665,7 +2672,7 @@ async def api_stock_manage_sync_stocks(
             batch = offer_ids[i:i+100]
             async with session.post(
                 "https://api-seller.ozon.ru/v4/product/info/stocks",
-                headers={"Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY},
+                headers=get_active_headers(),
                 json={"filter": {"offer_id": batch, "visibility": "ALL"}, "limit": 100, "offset": 0}
             ) as resp:
                 if resp.status == 200:
