@@ -97,6 +97,7 @@ class Product(Base):
 
     # Себестоимость и правила (задаёт пользователь)
     cost_price = Column(Integer, nullable=True)               # Закупочная цена (руб)
+    ff_cost = Column(Integer, default=80, nullable=True)
     target_margin_pct = Column(Integer, nullable=True)        # Целевая маржа %
     auto_reprice_enabled = Column(Boolean, default=False)     # Авто-репрайсинг вкл/выкл
     auto_rule = Column(String, nullable=True)                 # Правило: "margin" / "competitor"
