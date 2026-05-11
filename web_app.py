@@ -2879,7 +2879,7 @@ async def api_unit_economics_products(
                 "price": p.price or 0,
                 "old_price": p.old_price or 0,
                 "min_price": p.min_price or 0,
-                "cost_price": p.cost_price or 0,
+                "cost_price": (p.cost_price or 0) + (p.ff_cost or 80),
                 "commission_fbs_percent": p.commission_fbs_percent or 0,
                 "commission_fbs_logistics": p.commission_fbs_logistics or 0,
             }
@@ -2951,37 +2951,36 @@ async def _ue_sync_task():
 
         _ue_sync_status["progress"] = f"Загружаем цены ({len(all_items)})..."
 
-        # ШАГ 2: Цены через cursor пагинацию
+        # ШАГ 2: Цены по product_id батчами
+        _ue_sync_status["progress"] = f"Загружаем цены..."
         price_map = {}
-        cursor = ""
-        while True:
-            async with aiohttp.ClientSession() as session:
+        product_ids = [item.get("product_id") for item in all_items if item.get("product_id")]
+
+        async with aiohttp.ClientSession() as session:
+            for i in range(0, len(product_ids), 1000):
+                batch = product_ids[i:i + 1000]
                 async with session.post(
-                    "https://api-seller.ozon.ru/v5/product/info/prices",
-                    headers=get_active_headers(),
-                    json={"filter": {"visibility": "ALL"}, "limit": 1000, "last_id": cursor}
+                        "https://api-seller.ozon.ru/v5/product/info/prices",
+                        headers=get_active_headers(),
+                        json={"filter": {"product_id": batch, "visibility": "ALL"}, "limit": 1000, "last_id": ""}
                 ) as resp:
                     data = await resp.json()
-            items = data.get("items", [])
-            if not items:
-                break
-            for item in items:
-                oid = item.get("offer_id")
-                if oid:
+                for item in data.get("items", []):
+                    oid = item.get("offer_id")
+                    if not oid:
+                        continue
                     price_data = item.get("price") or {}
                     comm = item.get("commissions") or {}
                     price_map[oid] = {
                         "price": int(float(price_data.get("price") or 0)),
                         "old_price": int(float(price_data.get("old_price") or 0)),
                         "min_price": int(float(price_data.get("min_price") or 0)),
-                        "commission_fbs_percent": int(float(comm.get("fbs_direct_flow_trans_min_amount") or 0) and comm.get("percent") or 0),
-                        "commission_fbs_logistics": int(float(comm.get("fbs_direct_flow_trans_max_amount") or 0) + float(comm.get("fbs_deliv_to_customer_amount") or 0)),
+                        "commission_fbs_percent": int(float(comm.get("sales_percent_fbs") or 0)),
+                        "commission_fbs_logistics": int(
+                            float(comm.get("fbs_direct_flow_trans_max_amount") or 0) + float(
+                                comm.get("fbs_deliv_to_customer_amount") or 0)),
                     }
-            new_cursor = data.get("cursor", "")
-            if not new_cursor or new_cursor == cursor or len(items) < 1000:
-                break
-            cursor = new_cursor
-            _ue_sync_status["progress"] = f"Цены: {len(price_map)}..."
+                _ue_sync_status["progress"] = f"Цены: {len(price_map)}/{len(product_ids)}..."
 
         # ШАГ 3: Сохраняем в БД
         _ue_sync_status["progress"] = f"Сохраняем {len(price_map)} записей..."
