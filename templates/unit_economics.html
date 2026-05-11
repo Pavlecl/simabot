@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="padding:8px 16px">
+
+  <!-- TOOLBAR -->
+  <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px">
+    <input type="text" id="ue-search" placeholder="Артикул / название..." oninput="debounceUE()" style="width:200px">
+    <select id="ue-brand" onchange="loadUE(1)" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+      <option value="">Все бренды</option>
+    </select>
+    <select id="ue-mode" onchange="loadUE(1)" style="padding:4px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+      <option value="fbs">FBS</option>
+      <option value="fbo">FBO</option>
+    </select>
+    <button class="btn" onclick="clearUEFilters()">Сбросить</button>
+    <span id="ue-count" style="font-size:11px;color:var(--text-dim)"></span>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <span id="ue-selected-count" style="font-size:11px;color:var(--accent)"></span>
+      <button class="btn primary" id="ue-send-btn" disabled>→ Передать цены в Ozon (<span id="ue-send-count">0</span>)</button>
+    </div>
+  </div>
+
+  <!-- ГЛОБАЛЬНЫЕ ПАРАМЕТРЫ -->
+  <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:8px 12px;background:var(--surface);border:1px solid var(--border);margin-bottom:6px;font-size:12px">
+    <span style="color:var(--text-dim);font-weight:600">Параметры:</span>
+    <label style="display:flex;align-items:center;gap:4px;color:var(--text-dim)">
+      Эквайринг %
+      <input type="number" id="ue-acquiring" value="1.5" min="0" max="10" step="0.1"
+        style="width:60px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px"
+        oninput="recalcAll()">
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;color:var(--text-dim)">
+      Реклама %
+      <input type="number" id="ue-ads" value="0" min="0" max="50" step="0.1"
+        style="width:60px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px"
+        oninput="recalcAll()">
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;color:var(--text-dim)">
+      Возвратность %
+      <input type="number" id="ue-returns" value="5" min="0" max="100" step="1"
+        style="width:60px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px"
+        oninput="recalcAll()">
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;color:var(--text-dim)">
+      Целевая маржа %
+      <input type="number" id="ue-target-margin" value="" min="0" max="100" placeholder="—"
+        style="width:60px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px"
+        oninput="applyTargetMarginAll()">
+    </label>
+    <button class="btn" style="font-size:11px;padding:3px 10px" onclick="applyTargetMarginAll()">Применить ко всем</button>
+  </div>
+
+  <!-- TABLE -->
+  <div style="background:var(--surface);border:1px solid var(--border);overflow-x:auto">
+    <div style="max-height:calc(100vh - 260px);overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:var(--surface);position:sticky;top:0;z-index:10">
+            <th style="width:36px;padding:8px;border-bottom:1px solid var(--border);text-align:center">
+              <input type="checkbox" id="ue-check-all" onchange="toggleUEAll(this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent)">
+            </th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);white-space:nowrap">Артикул</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim)">Название</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">Себест.</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right;min-width:100px">Цена</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">Комиссия</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">Логистика</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">Прочие</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">К выплате</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">Прибыль ₽</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right;min-width:90px">Цел. Маржа%</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">Маржа%</th>
+            <th style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;color:var(--text-dim);text-align:right">ROI%</th>
+          </tr>
+        </thead>
+        <tbody id="ue-tbody">
+          <tr><td colspan="13" class="state-msg">Загрузка...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- PAGINATION -->
+  <div id="ue-pagination"></div>
+
+  <!-- CONFIRM MODAL -->
+  <div id="ue-confirm-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:2000;background:rgba(0,0,0,0.75);align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);padding:28px 32px;min-width:360px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+      <div id="ue-confirm-title" style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:10px"></div>
+      <div id="ue-confirm-body" style="font-size:13px;color:var(--text);margin-bottom:24px;max-height:300px;overflow-y:auto"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button id="ue-confirm-cancel" class="btn" style="min-width:90px">Отмена</button>
+        <button id="ue-confirm-ok" class="btn primary" style="min-width:90px">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/unit_economics.js?v=1777810000"></script>
+{% endblock %}
