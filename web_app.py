@@ -2825,6 +2825,94 @@ async def lifespan(app: FastAPI):
 app.router.lifespan_context = lifespan
 
 
+# =====================================================================
+# ЮНИ-ЭКОНОМИКА
+# =====================================================================
+
+@app.get("/unit-economics", response_class=HTMLResponse)
+async def unit_economics_page(request: Request, user: dict = Depends(require_any_role)):
+    return templates.TemplateResponse("unit_economics.html", {
+        "request": request, "user": user, "active_tab": "unit-economics"
+    })
+
+@app.get("/api/unit-economics/products")
+async def api_unit_economics_products(
+    page: int = 1,
+    per_page: int = 100,
+    search: str = "",
+    brand: str = "",
+    direction: str = "",
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(Product).where(Product.price != None, Product.price > 0)
+    count_q = select(func.count(Product.offer_id)).where(Product.price != None, Product.price > 0)
+    if search:
+        like = f"%{search}%"
+        query = query.where(or_(Product.offer_id.ilike(like), Product.name.ilike(like)))
+        count_q = count_q.where(or_(Product.offer_id.ilike(like), Product.name.ilike(like)))
+    if brand:
+        query = query.where(Product.brand == brand)
+        count_q = count_q.where(Product.brand == brand)
+    if direction == "uzspace":
+        query = query.where(Product.offer_id.notlike("%/%") == False)
+        count_q = count_q.where(Product.offer_id.notlike("%/%") == False)
+    elif direction == "sima":
+        query = query.where(Product.brand == "Сима-ленд")
+        count_q = count_q.where(Product.brand == "Сима-ленд")
+
+    total = (await db.execute(count_q)).scalar()
+    products_r = await db.execute(
+        query.order_by(Product.offer_id).limit(per_page).offset((page-1)*per_page)
+    )
+    products = products_r.scalars().all()
+
+    return {
+        "total": total,
+        "products": [
+            {
+                "offer_id": p.offer_id,
+                "product_id": p.product_id,
+                "name": p.name or "",
+                "brand": p.brand or "",
+                "image_url": p.image_url or "",
+                "price": p.price or 0,
+                "old_price": p.old_price or 0,
+                "min_price": p.min_price or 0,
+                "cost_price": p.cost_price or 0,
+                "commission_fbs_percent": p.commission_fbs_percent or 0,
+                "commission_fbs_logistics": p.commission_fbs_logistics or 0,
+            }
+            for p in products
+        ]
+    }
+
+@app.post("/api/unit-economics/update-prices")
+async def api_unit_economics_update_prices(
+    request: Request,
+    user: dict = Depends(require_admin),
+):
+    body = await request.json()
+    prices = body.get("prices", [])
+    if not prices:
+        raise HTTPException(status_code=400, detail="prices пустой")
+
+    # Разбиваем на батчи по 1000
+    results = []
+    async with aiohttp.ClientSession() as session:
+        for i in range(0, len(prices), 1000):
+            batch = prices[i:i+1000]
+            async with session.post(
+                "https://api-seller.ozon.ru/v1/product/import/prices",
+                headers=get_active_headers(),
+                json={"prices": batch}
+            ) as resp:
+                data = await resp.json()
+                results.extend(data.get("result", []))
+
+    errors = [r for r in results if not r.get("updated")]
+    return {"ok": True, "total": len(prices), "errors": len(errors), "error_items": errors[:5]}
+
 if __name__ == "__main__":
     import uvicorn
     # reload=True — при изменении файлов сервер перезапускается автоматически.
