@@ -409,6 +409,35 @@ function buildUEPages(current, total) {
   return pages;
 }
 
+async function syncUEProducts() {
+  const btn = document.getElementById('ue-sync-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Запускаем...';
+  try {
+    await fetch('/api/unit-economics/sync', {method: 'POST'});
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      const s = await fetch('/api/unit-economics/sync/status').then(r => r.json());
+      if (s.running) {
+        btn.textContent = `⏳ ${s.progress || 'Синхронизация...'}`;
+      } else if (s.error) {
+        showToast(`Ошибка: ${s.error}`, 'error');
+        break;
+      } else {
+        showToast(`✓ Синхронизировано ${s.synced.toLocaleString('ru')} товаров`);
+        loadUE(1);
+        break;
+      }
+    }
+  } catch {
+    showToast('Ошибка синхронизации', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Синхронизировать';
+  }
+}
+
+
 // =====================================================================
 // ИНИЦИАЛИЗАЦИЯ
 // =====================================================================

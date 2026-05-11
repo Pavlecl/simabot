@@ -2913,6 +2913,116 @@ async def api_unit_economics_update_prices(
     errors = [r for r in results if not r.get("updated")]
     return {"ok": True, "total": len(prices), "errors": len(errors), "error_items": errors[:5]}
 
+_ue_sync_status = {"running": False, "progress": "", "synced": 0, "error": ""}
+
+@app.get("/api/unit-economics/sync/status")
+async def api_ue_sync_status(user: dict = Depends(require_any_role)):
+    return _ue_sync_status
+
+@app.post("/api/unit-economics/sync")
+async def api_ue_sync(user: dict = Depends(require_admin)):
+    asyncio.create_task(_ue_sync_task())
+    return {"ok": True}
+
+async def _ue_sync_task():
+    global _ue_sync_status
+    _ue_sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
+    try:
+        # ШАГ 1: Все артикулы через last_id
+        all_items = []
+        last_id = ""
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v3/product/list",
+                    headers=get_active_headers(),
+                    json={"filter": {"visibility": "ALL"}, "last_id": last_id, "limit": 1000}
+                ) as resp:
+                    data = await resp.json()
+            result = data.get("result", {})
+            items = result.get("items", [])
+            if not items:
+                break
+            all_items.extend(items)
+            last_id = result.get("last_id", "")
+            _ue_sync_status["progress"] = f"Артикулы: {len(all_items)}..."
+            if not last_id or len(items) < 1000:
+                break
+
+        _ue_sync_status["progress"] = f"Загружаем цены ({len(all_items)})..."
+
+        # ШАГ 2: Цены через cursor пагинацию
+        price_map = {}
+        cursor = ""
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v5/product/info/prices",
+                    headers=get_active_headers(),
+                    json={"filter": {"visibility": "ALL"}, "limit": 1000, "last_id": cursor}
+                ) as resp:
+                    data = await resp.json()
+            items = data.get("items", [])
+            if not items:
+                break
+            for item in items:
+                oid = item.get("offer_id")
+                if oid:
+                    price_data = item.get("price") or {}
+                    comm = item.get("commissions") or {}
+                    price_map[oid] = {
+                        "price": int(float(price_data.get("price") or 0)),
+                        "old_price": int(float(price_data.get("old_price") or 0)),
+                        "min_price": int(float(price_data.get("min_price") or 0)),
+                        "commission_fbs_percent": int(float(comm.get("fbs_direct_flow_trans_min_amount") or 0) and comm.get("percent") or 0),
+                        "commission_fbs_logistics": int(float(comm.get("fbs_direct_flow_trans_max_amount") or 0) + float(comm.get("fbs_deliv_to_customer_amount") or 0)),
+                    }
+            new_cursor = data.get("cursor", "")
+            if not new_cursor or new_cursor == cursor or len(items) < 1000:
+                break
+            cursor = new_cursor
+            _ue_sync_status["progress"] = f"Цены: {len(price_map)}..."
+
+        # ШАГ 3: Сохраняем в БД
+        _ue_sync_status["progress"] = f"Сохраняем {len(price_map)} записей..."
+        saved = 0
+        async with AsyncSessionLocal() as db:
+            for i in range(0, len(all_items), 500):
+                batch = all_items[i:i+500]
+                for item in batch:
+                    oid = str(item.get("offer_id", "")).strip()
+                    if not oid:
+                        continue
+                    pd = price_map.get(oid, {})
+                    stmt = pg_insert(Product).values(
+                        offer_id=oid,
+                        product_id=item.get("product_id"),
+                        price=pd.get("price") or None,
+                        old_price=pd.get("old_price") or None,
+                        min_price=pd.get("min_price") or None,
+                        commission_fbs_percent=pd.get("commission_fbs_percent") or None,
+                        commission_fbs_logistics=pd.get("commission_fbs_logistics") or None,
+                    ).on_conflict_do_update(
+                        index_elements=["offer_id"],
+                        set_={
+                            "price": pd.get("price") or None,
+                            "old_price": pd.get("old_price") or None,
+                            "min_price": pd.get("min_price") or None,
+                            "commission_fbs_percent": pd.get("commission_fbs_percent") or None,
+                            "commission_fbs_logistics": pd.get("commission_fbs_logistics") or None,
+                        }
+                    )
+                    await db.execute(stmt)
+                    saved += 1
+                await db.commit()
+                _ue_sync_status["synced"] = saved
+        _ue_sync_status = {"running": False, "progress": "", "synced": saved, "error": ""}
+        print(f"UE SYNC DONE: {saved}", flush=True)
+    except Exception as e:
+        import traceback
+        _ue_sync_status = {"running": False, "progress": "", "synced": 0, "error": str(e)}
+        print(f"UE SYNC ERROR: {traceback.format_exc()}", flush=True)
+
 if __name__ == "__main__":
     import uvicorn
     # reload=True — при изменении файлов сервер перезапускается автоматически.
