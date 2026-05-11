@@ -2845,8 +2845,8 @@ async def api_unit_economics_products(
     user: dict = Depends(require_any_role),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(Product).where(Product.price != None, Product.price > 0)
-    count_q = select(func.count(Product.offer_id)).where(Product.price != None, Product.price > 0)
+    query = select(Product).where(Product.offer_id != None)
+    count_q = select(func.count(Product.offer_id)).where(Product.offer_id != None)
     if search:
         like = f"%{search}%"
         query = query.where(or_(Product.offer_id.ilike(like), Product.name.ilike(like)))
