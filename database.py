@@ -112,6 +112,8 @@ class Product(Base):
     brand = Column(String, nullable=True)                     # Бренд (attribute_id=85)
     category_id = Column(BigInteger, nullable=True)           # ID категории Ozon
     category_name = Column(String, nullable=True)             # Название категории
+    volume_liters = Column(Float, nullable=True)
+    weight_kg = Column(Float, nullable=True)
     warehouse_type = Column(String, nullable=True)            # fbs/fbo/sds
     sku_fbs = Column(BigInteger, nullable=True)  # SKU для FBS
     sku_sds = Column(BigInteger, nullable=True)  # SKU для SDS

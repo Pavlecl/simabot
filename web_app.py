@@ -2882,6 +2882,7 @@ async def api_unit_economics_products(
                 "cost_price": (p.cost_price or 0) + (p.ff_cost or 80),
                 "commission_fbs_percent": p.commission_fbs_percent or 0,
                 "commission_fbs_logistics": p.commission_fbs_logistics or 0,
+                "volume_liters": p.volume_liters or 0,
             }
             for p in products
         ]
@@ -2926,7 +2927,7 @@ async def api_ue_sync(user: dict = Depends(require_admin)):
 
 async def _ue_sync_task():
     global _ue_sync_status
-    _ue_sync_status = {"running": True, "progress": "Загружаем цены...", "synced": 0, "error": ""}
+    _ue_sync_status = {"running": True, "progress": "Загружаем артикулы...", "synced": 0, "error": ""}
     try:
         # ШАГ 1: Все артикулы через last_id
         all_items = []
@@ -2949,20 +2950,18 @@ async def _ue_sync_task():
             if not last_id or len(items) < 1000:
                 break
 
-        _ue_sync_status["progress"] = f"Загружаем цены ({len(all_items)})..."
-
-        # ШАГ 2: Цены по product_id батчами
-        _ue_sync_status["progress"] = f"Загружаем цены..."
-        price_map = {}
         product_ids = [item.get("product_id") for item in all_items if item.get("product_id")]
 
+        # ШАГ 2: Цены и комиссии
+        price_map = {}
         async with aiohttp.ClientSession() as session:
             for i in range(0, len(product_ids), 1000):
-                batch = product_ids[i:i + 1000]
+                batch = product_ids[i:i+1000]
+                _ue_sync_status["progress"] = f"Цены: {i}/{len(product_ids)}..."
                 async with session.post(
-                        "https://api-seller.ozon.ru/v5/product/info/prices",
-                        headers=get_active_headers(),
-                        json={"filter": {"product_id": batch, "visibility": "ALL"}, "limit": 1000, "last_id": ""}
+                    "https://api-seller.ozon.ru/v5/product/info/prices",
+                    headers=get_active_headers(),
+                    json={"filter": {"product_id": batch, "visibility": "ALL"}, "limit": 1000, "last_id": ""}
                 ) as resp:
                     data = await resp.json()
                 for item in data.get("items", []):
@@ -2977,13 +2976,39 @@ async def _ue_sync_task():
                         "min_price": int(float(price_data.get("min_price") or 0)),
                         "commission_fbs_percent": int(float(comm.get("sales_percent_fbs") or 0)),
                         "commission_fbs_logistics": int(
-                            float(comm.get("fbs_direct_flow_trans_max_amount") or 0) + float(
-                                comm.get("fbs_deliv_to_customer_amount") or 0)),
+                            float(comm.get("fbs_direct_flow_trans_max_amount") or 0) +
+                            float(comm.get("fbs_deliv_to_customer_amount") or 0)),
                     }
-                _ue_sync_status["progress"] = f"Цены: {len(price_map)}/{len(product_ids)}..."
 
-        # ШАГ 3: Сохраняем в БД
-        _ue_sync_status["progress"] = f"Сохраняем {len(price_map)} записей..."
+        # ШАГ 3: Объём и габариты через /v3/product/info/list
+        volume_map = {}
+        async with aiohttp.ClientSession() as session:
+            for i in range(0, len(product_ids), 100):
+                batch = product_ids[i:i+100]
+                _ue_sync_status["progress"] = f"Габариты: {i}/{len(product_ids)}..."
+                try:
+                    async with session.post(
+                        "https://api-seller.ozon.ru/v3/product/info/list",
+                        headers=get_active_headers(),
+                        json={"product_id": batch}
+                    ) as resp:
+                        data = await resp.json()
+                    for item in data.get("items", []):
+                        oid = item.get("offer_id")
+                        if not oid:
+                            continue
+                        dim = item.get("item_dimensions") or {}
+                        h = float(dim.get("height") or 0) / 10  # мм → см
+                        w = float(dim.get("width") or 0) / 10
+                        l = float(dim.get("length") or 0) / 10
+                        weight = float(dim.get("weight") or 0) / 1000  # г → кг
+                        vol = (h * w * l) / 1000 if h and w and l else 0  # см³ → л
+                        volume_map[oid] = {"volume_liters": round(vol, 3), "weight_kg": round(weight, 3)}
+                except Exception as e:
+                    print(f"volume batch error: {e}", flush=True)
+
+        # ШАГ 4: Сохраняем в БД
+        _ue_sync_status["progress"] = f"Сохраняем {len(all_items)} записей..."
         saved = 0
         async with AsyncSessionLocal() as db:
             for i in range(0, len(all_items), 500):
@@ -2993,6 +3018,7 @@ async def _ue_sync_task():
                     if not oid:
                         continue
                     pd = price_map.get(oid, {})
+                    vd = volume_map.get(oid, {})
                     stmt = pg_insert(Product).values(
                         offer_id=oid,
                         product_id=item.get("product_id"),
@@ -3001,6 +3027,8 @@ async def _ue_sync_task():
                         min_price=pd.get("min_price") or None,
                         commission_fbs_percent=pd.get("commission_fbs_percent") or None,
                         commission_fbs_logistics=pd.get("commission_fbs_logistics") or None,
+                        volume_liters=vd.get("volume_liters") or None,
+                        weight_kg=vd.get("weight_kg") or None,
                     ).on_conflict_do_update(
                         index_elements=["offer_id"],
                         set_={
@@ -3009,6 +3037,8 @@ async def _ue_sync_task():
                             "min_price": pd.get("min_price") or None,
                             "commission_fbs_percent": pd.get("commission_fbs_percent") or None,
                             "commission_fbs_logistics": pd.get("commission_fbs_logistics") or None,
+                            "volume_liters": vd.get("volume_liters") or None,
+                            "weight_kg": vd.get("weight_kg") or None,
                         }
                     )
                     await db.execute(stmt)
