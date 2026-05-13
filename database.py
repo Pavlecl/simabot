@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Text, Boolean, select, delete, update, func
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Text, Boolean, select, delete, update, func, Float
 from sqlalchemy.dialects.postgresql import insert
 
 # --- КОНФИГУРАЦИЯ ПОДКЛЮЧЕНИЯ ---
