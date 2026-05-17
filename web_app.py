@@ -2929,7 +2929,7 @@ async def api_unit_economics_update_prices(
                             break
 
                     volume_map[oid] = {
-                        "volume_liters": round(volume_liters, 3),
+                        "volume_liters": round(volume_weight * 5, 3),
                         "weight_kg": volume_weight,
                         "fbs_delivery": fbs_delivery,
                         "fbs_return": fbs_return,
@@ -3032,7 +3032,7 @@ async def _ue_sync_task():
                                 fbs_return = float(comm.get("return_amount") or 0)
                                 break
                         volume_map[oid] = {
-                            "volume_liters": round(volume_weight, 3),
+                            "volume_liters": round(volume_weight * 5, 3),
                             "weight_kg": volume_weight,
                             "fbs_delivery": fbs_delivery,
                             "fbs_return": fbs_return,
