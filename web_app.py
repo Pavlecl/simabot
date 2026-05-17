@@ -2883,6 +2883,8 @@ async def api_unit_economics_products(
                 "commission_fbs_percent": p.commission_fbs_percent or 0,
                 "commission_fbs_logistics": p.commission_fbs_logistics or 0,
                 "volume_liters": p.volume_liters or 0,
+                "fbs_return_amount": p.fbs_return_amount or 0,
+                "volume_liters": p.volume_liters or 0,
             }
             for p in products
         ]
