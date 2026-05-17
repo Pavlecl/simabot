@@ -3010,26 +3010,33 @@ async def _ue_sync_task():
         volume_map = {}
         async with aiohttp.ClientSession() as session:
             for i in range(0, len(product_ids), 100):
-                batch = product_ids[i:i+100]
+                batch = product_ids[i:i + 100]
                 _ue_sync_status["progress"] = f"Габариты: {i}/{len(product_ids)}..."
                 try:
                     async with session.post(
-                        "https://api-seller.ozon.ru/v3/product/info/list",
-                        headers=get_active_headers(),
-                        json={"product_id": batch}
+                            "https://api-seller.ozon.ru/v3/product/info/list",
+                            headers=get_active_headers(),
+                            json={"product_id": batch}
                     ) as resp:
                         data = await resp.json()
                     for item in data.get("items", []):
                         oid = item.get("offer_id")
                         if not oid:
                             continue
-                        dim = item.get("item_dimensions") or {}
-                        h = float(dim.get("height") or 0) / 10  # мм → см
-                        w = float(dim.get("width") or 0) / 10
-                        l = float(dim.get("length") or 0) / 10
-                        weight = float(dim.get("weight") or 0) / 1000  # г → кг
-                        vol = (h * w * l) / 1000 if h and w and l else 0  # см³ → л
-                        volume_map[oid] = {"volume_liters": round(vol, 3), "weight_kg": round(weight, 3)}
+                        volume_weight = float(item.get("volume_weight") or 0)
+                        fbs_delivery = 0
+                        fbs_return = 0
+                        for comm in (item.get("commissions") or []):
+                            if comm.get("sale_schema") == "FBS":
+                                fbs_delivery = float(comm.get("delivery_amount") or 0)
+                                fbs_return = float(comm.get("return_amount") or 0)
+                                break
+                        volume_map[oid] = {
+                            "volume_liters": round(volume_weight, 3),
+                            "weight_kg": volume_weight,
+                            "fbs_delivery": fbs_delivery,
+                            "fbs_return": fbs_return,
+                        }
                 except Exception as e:
                     print(f"volume batch error: {e}", flush=True)
 
