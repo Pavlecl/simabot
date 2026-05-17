@@ -114,6 +114,7 @@ class Product(Base):
     category_name = Column(String, nullable=True)             # Название категории
     volume_liters = Column(Float, nullable=True)
     weight_kg = Column(Float, nullable=True)
+    fbs_return_amount = Column(Integer, nullable=True)
     warehouse_type = Column(String, nullable=True)            # fbs/fbo/sds
     sku_fbs = Column(BigInteger, nullable=True)  # SKU для FBS
     sku_sds = Column(BigInteger, nullable=True)  # SKU для SDS

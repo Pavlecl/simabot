@@ -2901,15 +2901,41 @@ async def api_unit_economics_update_prices(
     # Разбиваем на батчи по 1000
     results = []
     async with aiohttp.ClientSession() as session:
-        for i in range(0, len(prices), 1000):
-            batch = prices[i:i+1000]
-            async with session.post(
-                "https://api-seller.ozon.ru/v1/product/import/prices",
-                headers=get_active_headers(),
-                json={"prices": batch}
-            ) as resp:
-                data = await resp.json()
-                results.extend(data.get("result", []))
+        for i in range(0, len(product_ids), 100):
+            batch = product_ids[i:i + 100]
+            _ue_sync_status["progress"] = f"Габариты: {i}/{len(product_ids)}..."
+            try:
+                async with session.post(
+                        "https://api-seller.ozon.ru/v3/product/info/list",
+                        headers=get_active_headers(),
+                        json={"product_id": batch}
+                ) as resp:
+                    data = await resp.json()
+                for item in data.get("items", []):
+                    oid = item.get("offer_id")
+                    if not oid:
+                        continue
+                    volume_weight = float(item.get("volume_weight") or 0)
+                    # volume_weight в кг → в литры (1 кг объёмного веса = 1 л по тарифу Ozon)
+                    volume_liters = volume_weight
+
+                    # Логистика из commissions
+                    fbs_delivery = 0
+                    fbs_return = 0
+                    for comm in (item.get("commissions") or []):
+                        if comm.get("sale_schema") == "FBS":
+                            fbs_delivery = float(comm.get("delivery_amount") or 0)
+                            fbs_return = float(comm.get("return_amount") or 0)
+                            break
+
+                    volume_map[oid] = {
+                        "volume_liters": round(volume_liters, 3),
+                        "weight_kg": volume_weight,
+                        "fbs_delivery": fbs_delivery,
+                        "fbs_return": fbs_return,
+                    }
+            except Exception as e:
+                print(f"volume batch error: {e}", flush=True)
 
     errors = [r for r in results if not r.get("updated")]
     return {"ok": True, "total": len(prices), "errors": len(errors), "error_items": errors[:5]}
@@ -3026,7 +3052,7 @@ async def _ue_sync_task():
                         old_price=pd.get("old_price") or None,
                         min_price=pd.get("min_price") or None,
                         commission_fbs_percent=pd.get("commission_fbs_percent") or None,
-                        commission_fbs_logistics=pd.get("commission_fbs_logistics") or None,
+                        commission_fbs_logistics=int(vd.get("fbs_delivery") or pd.get("commission_fbs_logistics") or 0),
                         volume_liters=vd.get("volume_liters") or None,
                         weight_kg=vd.get("weight_kg") or None,
                     ).on_conflict_do_update(
@@ -3036,7 +3062,7 @@ async def _ue_sync_task():
                             "old_price": pd.get("old_price") or None,
                             "min_price": pd.get("min_price") or None,
                             "commission_fbs_percent": pd.get("commission_fbs_percent") or None,
-                            "commission_fbs_logistics": pd.get("commission_fbs_logistics") or None,
+                            "commission_fbs_logistics": int(vd.get("fbs_delivery") or pd.get("commission_fbs_logistics") or 0),
                             "volume_liters": vd.get("volume_liters") or None,
                             "weight_kg": vd.get("weight_kg") or None,
                         }
