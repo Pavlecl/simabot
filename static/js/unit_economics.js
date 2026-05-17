@@ -34,6 +34,28 @@ function ueConfirm(title, bodyHtml) {
   });
 }
 
+// ── FBS тарифная таблица по объёму ────────────────────────────────
+const FBS_TARIFFS = [
+  { maxVol: 2,        base: 101.9,  perLiter: 0  },
+  { maxVol: 5,        base: 76.9,   perLiter: 25 },
+  { maxVol: 10,       base: 151.9,  perLiter: 20 },
+  { maxVol: 20,       base: 251.9,  perLiter: 15 },
+  { maxVol: 50,       base: 401.9,  perLiter: 10 },
+  { maxVol: 100,      base: 701.9,  perLiter: 8  },
+  { maxVol: Infinity, base: 1101.9, perLiter: 5  },
+];
+
+function calcLogisticsByVolume(vol) {
+  if (!vol || vol <= 0) return null;
+  let prev = 0;
+  for (const tier of FBS_TARIFFS) {
+    if (vol <= tier.maxVol) {
+      return tier.base + Math.max(0, vol - prev) * tier.perLiter;
+    }
+    prev = tier.maxVol;
+  }
+  return null;
+}
 // =====================================================================
 // РАСЧЁТ ЮНИТ-ЭКОНОМИКИ
 // =====================================================================
@@ -41,7 +63,7 @@ function calcUE(p, priceOverride) {
   const price = priceOverride !== undefined ? priceOverride : (p.price || 0);
   const cost = p.cost_price || 0;
   const commPct = (p.commission_fbs_percent || 0) / 100;
-  const logistics = p.commission_fbs_logistics || 0;
+  const logistics = (p.volume_liters > 0 ? calcLogisticsByVolume(p.volume_liters) : null) ?? p.commission_fbs_logistics ?? 0;
   const acquiringPct = parseFloat(document.getElementById('ue-acquiring')?.value || 1.5) / 100;
   const adsPct = parseFloat(document.getElementById('ue-ads')?.value || 0) / 100;
   const returnsPct = parseFloat(document.getElementById('ue-returns')?.value || 5) / 100;
@@ -71,7 +93,7 @@ function calcPriceFromMargin(p, targetMarginPct) {
 
   const cost = p.cost_price || 0;
   const commPct = (p.commission_fbs_percent || 0) / 100;
-  const logistics = p.commission_fbs_logistics || 0;
+  const logistics = (p.volume_liters > 0 ? calcLogisticsByVolume(p.volume_liters) : null) ?? p.commission_fbs_logistics ?? 0;
   const acquiringPct = parseFloat(document.getElementById('ue-acquiring')?.value || 1.5) / 100;
   const adsPct = parseFloat(document.getElementById('ue-ads')?.value || 0) / 100;
   const returnsPct = parseFloat(document.getElementById('ue-returns')?.value || 5) / 100;
