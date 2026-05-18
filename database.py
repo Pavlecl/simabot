@@ -361,3 +361,13 @@ class OzonAccount(Base):
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
 
+
+class WbAccount(Base):
+    """Кабинеты Wildberries (аналог OzonAccount)"""
+    __tablename__ = "wb_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)  # токен WB (Content API)
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
