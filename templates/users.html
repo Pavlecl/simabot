@@ -13,6 +13,10 @@
         style="padding:8px 20px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:1px">
         Кабинеты Ozon
       </button>
+      <button id="tab-btn-wb" onclick="switchTab('wb')"
+        style="padding:8px 20px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:12px;text-transform:uppercase;letter-spacing:1px">
+        Кабинеты WB
+      </button>
     </div>
     {% endif %}
 
@@ -53,11 +57,10 @@
     </div>
 
     {% if user.role == 'admin' %}
-    <!-- Панель: Кабинеты -->
+    <!-- Панель: Кабинеты Ozon -->
     <div id="panel-accounts" style="display:none">
       <div style="display:grid;grid-template-columns:1fr 380px;gap:24px;max-width:1100px">
 
-        <!-- Список кабинетов -->
         <div>
           <div class="users-list-header" style="margin-bottom:12px">Кабинеты Ozon</div>
           <div id="accounts-list">
@@ -65,7 +68,6 @@
           </div>
         </div>
 
-        <!-- Форма добавления -->
         <div class="create-user-form">
           <div class="create-user-form-header">Добавить кабинет</div>
           <div class="create-user-form-body">
@@ -97,6 +99,39 @@
 
       </div>
     </div>
+
+    <!-- Панель: Кабинеты WB -->
+    <div id="panel-wb" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 380px;gap:24px;max-width:1100px">
+
+        <div>
+          <div class="users-list-header" style="margin-bottom:12px">Кабинеты Wildberries</div>
+          <div id="wb-accounts-list">
+            <div class="state-msg">Загрузка...</div>
+          </div>
+        </div>
+
+        <div class="create-user-form">
+          <div class="create-user-form-header">Добавить кабинет WB</div>
+          <div class="create-user-form-body">
+            <div class="field-group">
+              <label>Название</label>
+              <input type="text" id="wb-acc-name" placeholder="например: ВБ Основной">
+            </div>
+            <div class="field-group">
+              <label>API-токен WB</label>
+              <input type="text" id="wb-acc-key" placeholder="eyJhbGciOiJSUzI1NiIs...">
+              <div style="font-size:10px;color:var(--text-dim);margin-top:4px">
+                Кабинет WB → Настройки → Доступ к API → права: Контент (чтение)
+              </div>
+            </div>
+            <button class="btn primary" onclick="createWbAccount()">Добавить кабинет</button>
+            <div id="wb-acc-msg" style="font-size:11px;min-height:16px;margin-top:8px"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
     {% endif %}
 
   </div>
@@ -106,20 +141,28 @@
 <script>
 {% if user.role == 'admin' %}
 // ---- Вкладки ----
+const ALL_TABS = ['users', 'accounts', 'wb'];
+
 function switchTab(tab) {
-  document.getElementById('panel-users').style.display = tab === 'users' ? '' : 'none';
-  document.getElementById('panel-accounts').style.display = tab === 'accounts' ? '' : 'none';
-  document.getElementById('tab-btn-users').style.borderBottomColor = tab === 'users' ? 'var(--accent)' : 'transparent';
-  document.getElementById('tab-btn-users').style.color = tab === 'users' ? 'var(--accent)' : 'var(--text-dim)';
-  document.getElementById('tab-btn-accounts').style.borderBottomColor = tab === 'accounts' ? 'var(--accent)' : 'transparent';
-  document.getElementById('tab-btn-accounts').style.color = tab === 'accounts' ? 'var(--accent)' : 'var(--text-dim)';
+  ALL_TABS.forEach(t => {
+    const panel = document.getElementById('panel-' + t);
+    const btn   = document.getElementById('tab-btn-' + t);
+    if (!panel || !btn) return;
+    const active = t === tab;
+    panel.style.display = active ? '' : 'none';
+    btn.style.borderBottomColor = active ? 'var(--accent)' : 'transparent';
+    btn.style.color = active ? 'var(--accent)' : 'var(--text-dim)';
+  });
   if (tab === 'accounts') loadAccounts();
+  if (tab === 'wb')       loadWbAccounts();
 }
 
-// Открыть вкладку кабинетов если в URL есть #accounts
-if (window.location.hash === '#accounts') switchTab('accounts');
+// Открыть нужную вкладку по хэшу в URL
+const hash = window.location.hash;
+if (hash === '#accounts') switchTab('accounts');
+else if (hash === '#wb')  switchTab('wb');
 
-// ---- Кабинеты ----
+// ---- Кабинеты Ozon ----
 async function loadAccounts() {
   const el = document.getElementById('accounts-list');
   el.innerHTML = '<div class="state-msg">Загрузка...</div>';
@@ -157,7 +200,6 @@ async function activateAccount(id) {
   if (r.ok) {
     showToast(`✓ Активирован кабинет: ${r.active}`);
     loadAccounts();
-    // Обновить бейдж в шапке
     const badge = document.getElementById('active-account-badge');
     if (badge) badge.textContent = '⚙ ' + r.active;
   } else {
@@ -174,7 +216,7 @@ async function deleteAccount(id, name) {
 
 async function loadWarehouses() {
   const clientId = document.getElementById('acc-client-id').value.trim();
-  const apiKey = document.getElementById('acc-api-key').value.trim();
+  const apiKey   = document.getElementById('acc-api-key').value.trim();
   const sel = document.getElementById('acc-warehouse-id');
   const msg = document.getElementById('acc-msg');
 
@@ -206,11 +248,11 @@ async function loadWarehouses() {
 }
 
 async function createAccount() {
-  const name = document.getElementById('acc-name').value.trim();
-  const clientId = document.getElementById('acc-client-id').value.trim();
-  const apiKey = document.getElementById('acc-api-key').value.trim();
+  const name        = document.getElementById('acc-name').value.trim();
+  const clientId    = document.getElementById('acc-client-id').value.trim();
+  const apiKey      = document.getElementById('acc-api-key').value.trim();
   const warehouseId = document.getElementById('acc-warehouse-id').value.trim();
-  const msg = document.getElementById('acc-msg');
+  const msg         = document.getElementById('acc-msg');
 
   if (!name || !clientId || !apiKey) {
     msg.style.color = 'var(--red)';
@@ -238,7 +280,86 @@ async function createAccount() {
   }
 }
 
-// Загружаем название активного кабинета в шапку
+// ---- Кабинеты WB ----
+async function loadWbAccounts() {
+  const el = document.getElementById('wb-accounts-list');
+  el.innerHTML = '<div class="state-msg">Загрузка...</div>';
+  const accounts = await fetch('/api/wb-accounts').then(r => r.json());
+  if (!accounts.length) {
+    el.innerHTML = '<div class="state-msg">Нет кабинетов WB</div>';
+    return;
+  }
+  el.innerHTML = accounts.map(a => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;
+      border:1px solid var(--border);margin-bottom:8px;
+      background:${a.is_active ? 'rgba(255,106,0,0.08)' : 'var(--surface)'}">
+      <div>
+        <div style="font-weight:600;font-size:13px;color:${a.is_active ? 'var(--accent)' : 'var(--text)'}">
+          ${a.is_active ? '● ' : '○ '}${a.name}
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">
+          Токен: ${a.api_key_hint}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${!a.is_active
+          ? `<button class="btn primary" style="font-size:11px;padding:3px 10px"
+               onclick="activateWbAccount(${a.id})">Активировать</button>`
+          : `<span style="font-size:11px;color:var(--accent);padding:3px 10px">Активен</span>`}
+        <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--red)"
+          onclick="deleteWbAccount(${a.id}, '${a.name}')">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function activateWbAccount(id) {
+  const r = await fetch(`/api/wb-accounts/${id}/activate`, {method: 'POST'}).then(r => r.json());
+  if (r.ok) {
+    showToast('✓ WB-кабинет активирован');
+    loadWbAccounts();
+  } else {
+    showToast('Ошибка активации', 'error');
+  }
+}
+
+async function deleteWbAccount(id, name) {
+  if (!confirm(`Удалить WB-кабинет "${name}"?`)) return;
+  const r = await fetch(`/api/wb-accounts/${id}`, {method: 'DELETE'}).then(r => r.json());
+  if (r.ok) { showToast('✓ Удалено'); loadWbAccounts(); }
+  else showToast('Ошибка удаления', 'error');
+}
+
+async function createWbAccount() {
+  const name = document.getElementById('wb-acc-name').value.trim();
+  const key  = document.getElementById('wb-acc-key').value.trim();
+  const msg  = document.getElementById('wb-acc-msg');
+
+  if (!name || !key) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Заполните название и токен';
+    return;
+  }
+
+  const r = await fetch('/api/wb-accounts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, api_key: key})
+  }).then(r => r.json());
+
+  if (r.ok) {
+    msg.style.color = 'var(--green)';
+    msg.textContent = '✓ Кабинет добавлен';
+    document.getElementById('wb-acc-name').value = '';
+    document.getElementById('wb-acc-key').value  = '';
+    loadWbAccounts();
+  } else {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Ошибка добавления';
+  }
+}
+
+// Загружаем название активного Ozon-кабинета в шапку
 fetch('/api/accounts/current').then(r => r.json()).then(d => {
   const badge = document.getElementById('active-account-badge');
   if (badge && d.name) badge.textContent = '⚙ ' + d.name;

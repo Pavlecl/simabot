@@ -1,145 +1,131 @@
 {% extends "base.html" %}
-{% block title %}Обмен контентом{% endblock %}
-
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">🔄 Обмен контентом Ozon ↔ WB</h4>
-  <div class="d-flex gap-2">
-    <button class="btn btn-outline-secondary btn-sm" id="btnLoad">
-      <i class="bi bi-arrow-clockwise"></i> Загрузить товары
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+  <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">
+    Обмен контентом <span style="color:var(--accent)">Ozon ↔ WB</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span id="match-count" style="font-size:11px;color:var(--text-dim)"></span>
+    <button class="btn" id="btn-load" onclick="loadProducts()">⟳ Загрузить товары</button>
+    <button class="btn primary" id="btn-apply" disabled onclick="applyContent()">
+      ✓ Применить (<span id="sel-count">0</span>)
     </button>
-    <button class="btn btn-primary btn-sm" id="btnApply" disabled>
-      <i class="bi bi-check2-all"></i> Применить (<span id="selCount">0</span>)
-    </button>
   </div>
 </div>
 
-<div class="d-flex gap-3 mb-3 flex-wrap align-items-center">
-  <input type="text" id="filterInput" class="form-control form-control-sm"
-         placeholder="🔍 Артикул или название…" style="max-width:260px">
-  <div class="d-flex gap-2 align-items-center">
-    <span class="text-muted small">Поля:</span>
-    <div class="form-check form-check-inline mb-0">
-      <input class="form-check-input col-toggle" type="checkbox" id="togImages" value="images" checked>
-      <label class="form-check-label" for="togImages">Фото</label>
-    </div>
-    <div class="form-check form-check-inline mb-0">
-      <input class="form-check-input col-toggle" type="checkbox" id="togName" value="name" checked>
-      <label class="form-check-label" for="togName">Название</label>
-    </div>
-    <div class="form-check form-check-inline mb-0">
-      <input class="form-check-input col-toggle" type="checkbox" id="togDesc" value="description" checked>
-      <label class="form-check-label" for="togDesc">Описание</label>
-    </div>
-    <div class="form-check form-check-inline mb-0">
-      <input class="form-check-input col-toggle" type="checkbox" id="togAttrs" value="attributes" checked>
-      <label class="form-check-label" for="togAttrs">Характеристики</label>
-    </div>
+<div style="display:flex;gap:16px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+  <input type="text" id="filter-input" placeholder="🔍 Артикул или название…"
+    oninput="filterRows(this.value)"
+    style="padding:5px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:240px">
+
+  <div style="display:flex;gap:12px;align-items:center">
+    <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px">Поля:</span>
+    <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
+      <input type="checkbox" class="col-toggle" data-col="images"      checked onchange="toggleCol(this)"> Фото
+    </label>
+    <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
+      <input type="checkbox" class="col-toggle" data-col="name"        checked onchange="toggleCol(this)"> Название
+    </label>
+    <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
+      <input type="checkbox" class="col-toggle" data-col="description" checked onchange="toggleCol(this)"> Описание
+    </label>
+    <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
+      <input type="checkbox" class="col-toggle" data-col="attributes"  checked onchange="toggleCol(this)"> Характеристики
+    </label>
   </div>
-  <div class="ms-auto d-flex gap-1">
-    <button class="btn btn-outline-secondary btn-sm" id="btnSelectAll">Все</button>
-    <button class="btn btn-outline-secondary btn-sm" id="btnDeselectAll">Снять</button>
-    <button class="btn btn-outline-warning btn-sm" id="btnSelectDiff">Только отличия</button>
+
+  <div style="margin-left:auto;display:flex;gap:6px">
+    <button class="btn" style="font-size:11px;padding:3px 10px" onclick="selectAll()">Выбрать все</button>
+    <button class="btn" style="font-size:11px;padding:3px 10px" onclick="deselectAll()">Снять все</button>
+    <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--accent);border-color:var(--accent)"
+            onclick="selectDiff()">⚡ Только отличия</button>
   </div>
 </div>
 
-<div id="statusBar" class="alert d-none mb-3"></div>
+<div id="status-bar" style="display:none;margin-bottom:12px;padding:10px 14px;font-size:12px;border-left:3px solid var(--accent)"></div>
 
-<div id="loader" class="text-center py-5 d-none">
-  <div class="spinner-border text-primary" style="width:2.5rem;height:2.5rem"></div>
-  <div class="mt-2 text-muted" id="loaderText">Загружаем товары с обоих маркетплейсов…</div>
+<div id="loader" style="display:none;text-align:center;padding:60px 0;color:var(--text-dim)">
+  <div style="font-size:24px;margin-bottom:8px">⏳</div>
+  <div id="loader-text" style="font-size:12px">Загружаем товары с обоих маркетплейсов…</div>
 </div>
 
-<div id="tableWrap" class="d-none">
-  <div class="text-muted small mb-2">Сопоставлено: <strong id="matchCount">0</strong> товаров</div>
-  <div class="table-responsive">
-    <table class="table table-bordered align-middle" style="font-size:.82rem">
-      <thead class="table-dark sticky-top">
-        <tr>
-          <th style="width:36px"><input type="checkbox" id="checkAll"></th>
-          <th style="width:110px">Артикул</th>
-          <th class="c-images">Фото <small class="text-secondary">WB→Ozon</small></th>
-          <th class="c-name">Название <small class="text-secondary">WB→Ozon</small></th>
-          <th class="c-description">Описание <small class="text-secondary">WB→Ozon</small></th>
-          <th class="c-attributes">Характеристики <small class="text-secondary">WB→Ozon</small></th>
+<div id="table-wrap" style="display:none">
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:12px" id="sync-table">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="width:32px;padding:6px 8px;text-align:center">
+            <input type="checkbox" id="check-all" onchange="toggleAll(this.checked)">
+          </th>
+          <th style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px;width:110px">Артикул</th>
+          <th class="th-images" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
+            Фото <span style="color:var(--accent);font-size:9px">WB→OZ</span>
+          </th>
+          <th class="th-name" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
+            Название <span style="color:var(--accent);font-size:9px">WB→OZ</span>
+          </th>
+          <th class="th-description" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
+            Описание <span style="color:var(--accent);font-size:9px">WB→OZ</span>
+          </th>
+          <th class="th-attributes" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
+            Характеристики <span style="color:var(--accent);font-size:9px">WB→OZ</span>
+          </th>
         </tr>
       </thead>
-      <tbody id="syncBody"></tbody>
+      <tbody id="sync-body"></tbody>
     </table>
   </div>
 </div>
 
-<div class="modal fade" id="resultModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Результат</h5>
-        <button class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body" id="resultBody"></div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
-      </div>
+<div id="result-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);max-width:600px;width:90%;max-height:80vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)">
+      <span style="font-size:12px;text-transform:uppercase;letter-spacing:1px">Результат применения</span>
+      <button onclick="closeResultModal()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:16px">✕</button>
     </div>
-  </div>
-</div>
-
-<div class="card mt-4">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <span>⚙️ WB-аккаунты</span>
-    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#wbAccBlock">
-      Управление
-    </button>
-  </div>
-  <div class="collapse" id="wbAccBlock">
-    <div class="card-body">
-      <div id="wbAccList" class="mb-3"></div>
-      <div class="d-flex gap-2">
-        <input type="text" id="wbAccName" class="form-control form-control-sm" placeholder="Название" style="max-width:160px">
-        <input type="text" id="wbAccKey"  class="form-control form-control-sm" placeholder="API-токен WB" style="max-width:340px">
-        <button class="btn btn-sm btn-success" id="btnAddWbAcc">Добавить</button>
-      </div>
-    </div>
+    <div id="result-body" style="padding:16px;font-size:12px"></div>
   </div>
 </div>
 
 <style>
-.cmp{display:grid;grid-template-columns:1fr 1fr 28px;gap:5px;align-items:start}
-.lbl{font-size:.68rem;color:#888;margin-bottom:2px;text-transform:uppercase}
-.oz{background:#eef5ff;border-radius:4px;padding:3px 5px}
-.wb{background:#fff4ec;border-radius:4px;padding:3px 5px}
-td.diff .wb{background:#fff3cd;border:1px solid #ffc107}
+.cmp{display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;align-items:start}
+.cmp-lbl{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px}
+.val-oz{background:rgba(59,130,246,.08);border-left:2px solid rgba(59,130,246,.3);padding:3px 6px}
+.val-wb{background:rgba(255,106,0,.06);border-left:2px solid rgba(255,106,0,.2);padding:3px 6px}
+td.diff .val-wb{background:rgba(255,193,7,.12);border-left:2px solid rgba(255,193,7,.6)}
 .thumbs{display:flex;gap:3px;flex-wrap:wrap}
-.thumbs img{width:52px;height:52px;object-fit:cover;border-radius:3px}
+.thumbs img{width:48px;height:48px;object-fit:cover}
 .txt3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.attr-box{max-height:110px;overflow-y:auto;font-size:.78rem}
-.attr-box div{border-bottom:1px solid #f0f0f0;padding:1px 0}
-tr.sel{background:rgba(13,110,253,.04)}
-.btn-xs{padding:.1rem .4rem;font-size:.75rem}
+.attr-scroll{max-height:100px;overflow-y:auto}
+.attr-scroll div{border-bottom:1px solid var(--border);padding:1px 0;color:var(--text-dim)}
+.attr-scroll div b{color:var(--text)}
+tr.sel-row{background:rgba(255,106,0,.04)}
+tr{border-bottom:1px solid var(--border)}
+td{padding:8px;vertical-align:top}
 </style>
 
 <script>
 let allProducts=[];
 
-document.getElementById('btnLoad').onclick=loadProducts;
-
 async function loadProducts(){
   setLoader(true);hideStatus();
-  document.getElementById('tableWrap').classList.add('d-none');
+  document.getElementById('table-wrap').style.display='none';
+  document.getElementById('match-count').textContent='';
   try{
     const r=await fetch('/api/content-sync/products');
     const data=await r.json();
     if(!r.ok)throw new Error(data.detail||r.statusText);
     allProducts=data;
     renderTable(data);
-    document.getElementById('matchCount').textContent=data.length;
-    document.getElementById('tableWrap').classList.remove('d-none');
-  }catch(e){showStatus('danger','❌ '+e.message);}
+    document.getElementById('match-count').textContent=data.length+' товаров';
+    document.getElementById('table-wrap').style.display='';
+  }catch(e){showStatus(e.message,'error');}
   finally{setLoader(false);}
 }
 
 function renderTable(products){
-  const tbody=document.getElementById('syncBody');
+  const tbody=document.getElementById('sync-body');
   tbody.innerHTML='';
   products.forEach(p=>tbody.appendChild(makeRow(p)));
   updateBtn();
@@ -150,41 +136,43 @@ function makeRow(p){
   const tr=document.createElement('tr');
   tr.dataset.code=p.vendor_code;
   const imgsDiff=JSON.stringify(o.images)!==JSON.stringify(w.images);
-  const nameDiff=o.name!==w.name;
-  const descDiff=o.description!==w.description;
+  const nameDiff=(o.name||'')!==(w.name||'');
+  const descDiff=(o.description||'')!==(w.description||'');
   const ozImgs=(o.images||[]).slice(0,3).map(u=>`<img src="${u}" onerror="this.style.display='none'">`).join('');
   const wbImgs=(w.images||[]).slice(0,3).map(u=>`<img src="${u}" onerror="this.style.display='none'">`).join('');
   const ozAttrs=(o.attributes||[]).map(a=>`<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
   const wbAttrs=(w.attributes||[]).map(a=>`<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
   tr.innerHTML=`
-    <td class="text-center"><input type="checkbox" class="row-cb" data-code="${p.vendor_code}" onchange="syncRow(this)"></td>
-    <td><strong>${x(p.vendor_code)}</strong></td>
-    <td class="c-images${imgsDiff?' diff':''}">
+    <td style="text-align:center;width:32px">
+      <input type="checkbox" class="row-cb" data-code="${p.vendor_code}" onchange="syncRow(this)">
+    </td>
+    <td><span style="color:var(--accent);font-size:11px">${x(p.vendor_code)}</span></td>
+    <td class="td-images${imgsDiff?' diff':''}">
       <div class="cmp">
-        <div><div class="lbl">Ozon</div><div class="oz thumbs">${ozImgs||'<span class="text-muted">нет</span>'}</div></div>
-        <div><div class="lbl">WB</div><div class="wb thumbs">${wbImgs||'<span class="text-muted">нет</span>'}</div></div>
-        <div><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="images" onchange="updateBtn()"></div>
+        <div><div class="cmp-lbl">Ozon</div><div class="val-oz thumbs">${ozImgs||'<span style="color:var(--text-dim)">нет</span>'}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb thumbs">${wbImgs||'<span style="color:var(--text-dim)">нет</span>'}</div></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="images" onchange="updateBtn()"></div>
       </div>
     </td>
-    <td class="c-name${nameDiff?' diff':''}">
+    <td class="td-name${nameDiff?' diff':''}">
       <div class="cmp">
-        <div><div class="lbl">Ozon</div><div class="oz txt3">${x(o.name)}</div></div>
-        <div><div class="lbl">WB</div><div class="wb txt3">${x(w.name)}</div></div>
-        <div><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="name" onchange="updateBtn()"></div>
+        <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3">${x(o.name)}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb txt3">${x(w.name)}</div></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="name" onchange="updateBtn()"></div>
       </div>
     </td>
-    <td class="c-description${descDiff?' diff':''}">
+    <td class="td-description${descDiff?' diff':''}">
       <div class="cmp">
-        <div><div class="lbl">Ozon</div><div class="oz txt3">${x(o.description)}</div></div>
-        <div><div class="lbl">WB</div><div class="wb txt3">${x(w.description)}</div></div>
-        <div><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="description" onchange="updateBtn()"></div>
+        <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3">${x(o.description)}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb txt3">${x(w.description)}</div></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="description" onchange="updateBtn()"></div>
       </div>
     </td>
-    <td class="c-attributes">
+    <td class="td-attributes">
       <div class="cmp">
-        <div><div class="lbl">Ozon</div><div class="oz attr-box">${ozAttrs||'—'}</div></div>
-        <div><div class="lbl">WB</div><div class="wb attr-box">${wbAttrs||'—'}</div></div>
-        <div><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="attributes" onchange="updateBtn()"></div>
+        <div><div class="cmp-lbl">Ozon</div><div class="val-oz attr-scroll">${ozAttrs||'—'}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb attr-scroll">${wbAttrs||'—'}</div></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="attributes" onchange="updateBtn()"></div>
       </div>
     </td>`;
   return tr;
@@ -193,23 +181,23 @@ function makeRow(p){
 function syncRow(master){
   const code=master.dataset.code;
   document.querySelectorAll(`.field-cb[data-code="${code}"]`).forEach(cb=>cb.checked=master.checked);
-  master.closest('tr').classList.toggle('sel',master.checked);
+  master.closest('tr').classList.toggle('sel-row',master.checked);
   updateBtn();
 }
-document.getElementById('checkAll').onchange=function(){
-  document.querySelectorAll('.row-cb').forEach(cb=>{cb.checked=this.checked;syncRow(cb);});
-};
-document.getElementById('btnSelectAll').onclick=()=>{
+function toggleAll(checked){
+  document.querySelectorAll('.row-cb').forEach(cb=>{cb.checked=checked;syncRow(cb);});
+}
+function selectAll(){
   document.querySelectorAll('.field-cb').forEach(cb=>cb.checked=true);
-  document.querySelectorAll('.row-cb').forEach(cb=>{cb.checked=true;cb.closest('tr').classList.add('sel');});
+  document.querySelectorAll('.row-cb').forEach(cb=>{cb.checked=true;cb.closest('tr').classList.add('sel-row');});
   updateBtn();
-};
-document.getElementById('btnDeselectAll').onclick=()=>{
+}
+function deselectAll(){
   document.querySelectorAll('.field-cb,.row-cb').forEach(cb=>cb.checked=false);
-  document.querySelectorAll('tr').forEach(tr=>tr.classList.remove('sel'));
+  document.querySelectorAll('tr').forEach(tr=>tr.classList.remove('sel-row'));
   updateBtn();
-};
-document.getElementById('btnSelectDiff').onclick=()=>{
+}
+function selectDiff(){
   document.querySelectorAll('.field-cb').forEach(cb=>{
     cb.checked=cb.closest('td')?.classList.contains('diff')||false;
   });
@@ -217,10 +205,10 @@ document.getElementById('btnSelectDiff').onclick=()=>{
     const code=master.dataset.code;
     const any=[...document.querySelectorAll(`.field-cb[data-code="${code}"]`)].some(c=>c.checked);
     master.checked=any;
-    master.closest('tr').classList.toggle('sel',any);
+    master.closest('tr').classList.toggle('sel-row',any);
   });
   updateBtn();
-};
+}
 function collectTasks(){
   const map={};
   document.querySelectorAll('.field-cb:checked').forEach(cb=>{
@@ -232,15 +220,22 @@ function collectTasks(){
 }
 function updateBtn(){
   const n=collectTasks().length;
-  document.getElementById('selCount').textContent=n;
-  document.getElementById('btnApply').disabled=n===0;
+  document.getElementById('sel-count').textContent=n;
+  document.getElementById('btn-apply').disabled=n===0;
+  document.querySelectorAll('.row-cb').forEach(master=>{
+    const code=master.dataset.code;
+    const fields=[...document.querySelectorAll(`.field-cb[data-code="${code}"]`)];
+    const cnt=fields.filter(f=>f.checked).length;
+    master.checked=cnt===fields.length&&cnt>0;
+    master.indeterminate=cnt>0&&cnt<fields.length;
+  });
 }
 
-document.getElementById('btnApply').onclick=async()=>{
+async function applyContent(){
   const tasks=collectTasks();
   if(!tasks.length)return;
   if(!confirm(`Применить WB-контент к ${tasks.length} товарам на Ozon?`))return;
-  document.getElementById('btnApply').disabled=true;
+  document.getElementById('btn-apply').disabled=true;
   setLoader(true,`Применяем контент для ${tasks.length} товаров…`);
   hideStatus();
   try{
@@ -250,78 +245,49 @@ document.getElementById('btnApply').onclick=async()=>{
     const data=await r.json();
     if(!r.ok)throw new Error(data.detail||r.statusText);
     showResults(data);
-  }catch(e){showStatus('danger','❌ '+e.message);}
+  }catch(e){showStatus(e.message,'error');}
   finally{setLoader(false);updateBtn();}
-};
+}
 
 function showResults(data){
   const ok=data.results.filter(r=>r.status==='ok');
   const err=data.results.filter(r=>r.status!=='ok');
-  let html=`<div class="alert alert-success mb-2">✅ Успешно: <b>${ok.length}</b> из ${data.total}</div>`;
+  let html=`<div style="color:var(--green);margin-bottom:10px">✓ Успешно: ${ok.length} из ${data.total}</div>`;
   if(err.length){
-    html+=`<div class="alert alert-warning mb-1">⚠️ Ошибки: ${err.length}</div><ul>`;
-    err.forEach(r=>html+=`<li><code>${x(r.vendor_code)}</code>: ${x(r.error)}</li>`);
+    html+=`<div style="color:var(--red);margin-bottom:6px">✕ Ошибки (${err.length}):</div><ul style="margin:0;padding-left:16px">`;
+    err.forEach(r=>html+=`<li style="color:var(--text-dim);margin-bottom:2px"><code style="color:var(--accent)">${x(r.vendor_code)}</code>: ${x(r.error)}</li>`);
     html+='</ul>';
   }
-  document.getElementById('resultBody').innerHTML=html;
-  new bootstrap.Modal(document.getElementById('resultModal')).show();
+  document.getElementById('result-body').innerHTML=html;
+  document.getElementById('result-modal').style.display='flex';
 }
+function closeResultModal(){document.getElementById('result-modal').style.display='none';}
 
-document.getElementById('filterInput').oninput=function(){
-  const q=this.value.toLowerCase();
-  document.querySelectorAll('#syncBody tr').forEach(tr=>{
-    tr.style.display=tr.dataset.code.toLowerCase().includes(q)?'':'none';
+function filterRows(q){
+  q=q.toLowerCase();
+  document.querySelectorAll('#sync-body tr').forEach(tr=>{
+    const code=tr.dataset.code?.toLowerCase()||'';
+    const name=tr.querySelector('.td-name .val-oz')?.textContent?.toLowerCase()||'';
+    tr.style.display=(code.includes(q)||name.includes(q))?'':'none';
   });
-};
-document.querySelectorAll('.col-toggle').forEach(cb=>{
-  cb.onchange=function(){
-    document.querySelectorAll('.c-'+this.value).forEach(el=>el.style.display=this.checked?'':'none');
-  };
-});
-
-async function loadWbAccounts(){
-  const r=await fetch('/api/wb-accounts');
-  const accounts=await r.json();
-  const el=document.getElementById('wbAccList');
-  if(!accounts.length){el.innerHTML='<p class="text-muted small">Нет добавленных аккаунтов</p>';return;}
-  el.innerHTML=accounts.map(a=>`
-    <div class="d-flex align-items-center gap-2 mb-1">
-      <span class="badge ${a.is_active?'bg-success':'bg-secondary'}">${a.is_active?'Активен':'Неактивен'}</span>
-      <span>${x(a.name)}</span>
-      <code class="text-muted small">${x(a.api_key_hint)}</code>
-      ${!a.is_active?`<button class="btn btn-xs btn-outline-success" onclick="activateWb(${a.id})">Активировать</button>`:''}
-      <button class="btn btn-xs btn-outline-danger ms-auto" onclick="deleteWb(${a.id})">✕</button>
-    </div>`).join('');
 }
-document.getElementById('btnAddWbAcc').onclick=async()=>{
-  const name=document.getElementById('wbAccName').value.trim();
-  const key=document.getElementById('wbAccKey').value.trim();
-  if(!name||!key){alert('Заполните название и токен');return;}
-  await fetch('/api/wb-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,api_key:key})});
-  document.getElementById('wbAccName').value='';
-  document.getElementById('wbAccKey').value='';
-  loadWbAccounts();
-};
-async function activateWb(id){
-  await fetch(`/api/wb-accounts/${id}/activate`,{method:'POST'});
-  loadWbAccounts();
+function toggleCol(cb){
+  const col=cb.dataset.col;
+  document.querySelectorAll(`.td-${col},.th-${col}`).forEach(el=>el.style.display=cb.checked?'':'none');
 }
-async function deleteWb(id){
-  if(!confirm('Удалить аккаунт?'))return;
-  await fetch(`/api/wb-accounts/${id}`,{method:'DELETE'});
-  loadWbAccounts();
-}
-document.getElementById('wbAccBlock').addEventListener('show.bs.collapse',loadWbAccounts);
-
 function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function setLoader(on,text='Загружаем товары с обоих маркетплейсов…'){
-  document.getElementById('loader').classList.toggle('d-none',!on);
-  if(text)document.getElementById('loaderText').textContent=text;
+  document.getElementById('loader').style.display=on?'':'none';
+  document.getElementById('btn-load').disabled=on;
+  if(text)document.getElementById('loader-text').textContent=text;
 }
-function showStatus(type,msg){
-  const el=document.getElementById('statusBar');
-  el.className=`alert alert-${type}`;el.innerHTML=msg;el.classList.remove('d-none');
+function showStatus(msg,type){
+  const el=document.getElementById('status-bar');
+  el.style.display='';
+  el.style.borderColor=type==='error'?'var(--red)':'var(--green)';
+  el.style.color=type==='error'?'var(--red)':'var(--green)';
+  el.textContent=msg;
 }
-function hideStatus(){document.getElementById('statusBar').classList.add('d-none');}
+function hideStatus(){document.getElementById('status-bar').style.display='none';}
 </script>
 {% endblock %}

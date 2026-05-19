@@ -36,10 +36,13 @@
       <a href="/costs" class="{{ 'active' if active_tab == 'costs' }}">Себестоимость</a>
       {% endif %}
       {% if user.role == 'admin' or 'unit-economics' in perms %}
-        <a href="/unit-economics" class="{{ 'active' if active_tab == 'unit-economics' }}">Юнит-экономика</a>
-        {% endif %}
+      <a href="/unit-economics" class="{{ 'active' if active_tab == 'unit-economics' }}">Юнит-экономика</a>
+      {% endif %}
       {% if user.role == 'admin' or 'costs' in perms %}
       <a href="/stock-manage" class="nav-link {% if active_tab == 'stock-manage' %}active{% endif %}">Остатки</a>
+      {% endif %}
+      {% if user.role == 'admin' or 'content-sync' in perms %}
+      <a href="/content-sync" class="{{ 'active' if active_tab == 'content-sync' }}">Контент</a>
       {% endif %}
   </nav>
   <div class="header-right">
