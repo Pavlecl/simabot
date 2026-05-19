@@ -136,14 +136,13 @@
   /* ===== MAIN LAYOUT ===== */
   main {
     flex: 1;
-    overflow: hidden;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     padding: 24px;
     gap: 20px;
   }
-
-  .tab-panel { display: none; flex: 1; flex-direction: column; gap: 20px; overflow: hidden; }
+  .tab-panel { display: none; flex: 1; flex-direction: column; gap: 20px; overflow-y: auto; }
   .tab-panel.active { display: flex; }
 
   /* ===== STAT CARDS ===== */
