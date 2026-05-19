@@ -210,22 +210,17 @@ async def apply_wb_to_ozon(
     all_wb = await fetch_wb_products(wb_api_key)
     wb = {k: v for k, v in all_wb.items() if k in needed_codes}
 
-    # Получаем product_id из Ozon для нужных артикулов (быстро — только нужные)
+
+    # Берём product_id из локальной БД — быстро и надёжно
+    from database import Product as ProductModel
     ozon_ids: dict[str, int] = {}
-    async with aiohttp.ClientSession() as session:
-        for code in needed_codes:
-            try:
-                async with session.post(
-                    "https://api-seller.ozon.ru/v2/product/info",
-                    headers=ozon_headers,
-                    json={"offer_id": code},
-                ) as r:
-                    data = await r.json(content_type=None)
-                    pid = data.get("result", {}).get("id")
-                    if pid:
-                        ozon_ids[code] = pid
-            except Exception:
-                pass
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(ProductModel.offer_id, ProductModel.product_id).where(
+                ProductModel.offer_id.in_(list(needed_codes))
+            )
+        )
+        ozon_ids = {row.offer_id: row.product_id for row in r.fetchall() if row.product_id}
 
     results = []
     async with aiohttp.ClientSession() as session:
