@@ -153,8 +153,8 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
             for card in cards:
                 nm_id        = card.get("nmID")
                 vendor_code  = card.get("vendorCode") or str(nm_id)
-                photo_count  = len(card.get("photos", [])) or 10
-                images = [wb_photo_url(nm_id, idx) for idx in range(1, min(photo_count + 1, 11))]
+                photos = card.get("photos", [])
+                images = [p["big"] for p in photos if p.get("big")][:10]
                 attrs  = [
                     {
                         "name":  ch.get("name", ""),
