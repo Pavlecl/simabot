@@ -100,12 +100,12 @@ async def fetch_ozon_products(headers: dict) -> dict[str, ProductContent]:
         for i in range(0, len(product_ids), 100):
             batch = product_ids[i:i + 100]
             async with session.post(
-                "https://api-seller.ozon.ru/v2/product/info/list",
+                "https://api-seller.ozon.ru/v3/product/info/list",
                 headers=headers,
                 json={"product_id": batch},
             ) as resp:
-                info_data = await resp.json()
-            for p in info_data.get("result", {}).get("items", []):
+                info_data = await resp.json(content_type=None)
+            for p in info_data.get("items", []):
                 pid      = p["id"]
                 offer_id = offer_map.get(pid, str(pid))
                 attrs = [
