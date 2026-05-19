@@ -2941,6 +2941,28 @@ async def api_wb_accounts_delete(request: Request, account_id: int, db: AsyncSes
     await db.commit()
     return {"ok": True}
 
+@app.get("/api/img-proxy")
+async def image_proxy(url: str):
+    """Проксирует изображения WB для передачи на Ozon."""
+    from fastapi.responses import Response
+    # Разрешаем только WB CDN
+    if "wbbasket.ru" not in url and "wb.ru" not in url:
+        raise HTTPException(status_code=403, detail="Только WB CDN")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url.replace(".webp", ".jpg"),
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as r:
+                if r.status != 200:
+                    raise HTTPException(status_code=404)
+                content = await r.read()
+        return Response(content=content, media_type="image/jpeg")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()

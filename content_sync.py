@@ -246,8 +246,9 @@ async def apply_wb_to_ozon(
             # ── Фото ─────────────────────────────────────────────────────
             if "images" in fields and wp.images:
                 # Конвертируем .webp → .jpg (Ozon принимает только JPG/PNG)
+                PROXY_BASE = "https://simacontrol.ru/api/img-proxy?url="
                 images_to_send = [
-                    u.replace('.webp', '.jpg') for u in wp.images[:10] if u
+                    f"{PROXY_BASE}{u}" for u in wp.images[:10] if u
                 ]
                 print(f"[apply] photo pid={pid} count={len(images_to_send)} url[0]={images_to_send[0] if images_to_send else None}", flush=True)
                 try:
