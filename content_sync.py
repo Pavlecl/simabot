@@ -245,11 +245,14 @@ async def apply_wb_to_ozon(
 
             # ── Фото ─────────────────────────────────────────────────────
             if "images" in fields and wp.images:
-                images_to_send = [u for u in wp.images[:10] if u]
+                # Конвертируем .webp → .jpg (Ozon принимает только JPG/PNG)
+                images_to_send = [
+                    u.replace('.webp', '.jpg') for u in wp.images[:10] if u
+                ]
                 print(f"[apply] photo pid={pid} count={len(images_to_send)} url[0]={images_to_send[0] if images_to_send else None}", flush=True)
                 try:
                     async with session.post(
-                        "https://api-seller.ozon.ru/v1/product/import/pictures",
+                        "https://api-seller.ozon.ru/v1/product/pictures/import",
                         headers=ozon_headers,
                         json={"product_id": pid, "images": images_to_send},
                     ) as r:
