@@ -258,7 +258,15 @@ function collectTasks() {
   const map = {};
   document.querySelectorAll('.field-cb:checked').forEach(cb => {
     const c = cb.dataset.code;
-    if (!map[c]) map[c] = { vendor_code: c, fields: [] };
+    if (!map[c]) {
+      // Берём WB-данные из уже загруженного списка
+      const product = allProducts.find(p => p.vendor_code === c);
+      map[c] = {
+        vendor_code: c,
+        fields: [],
+        wb_data: product?.wb || null,
+      };
+    }
     map[c].fields.push(cb.dataset.field);
   });
   return Object.values(map);

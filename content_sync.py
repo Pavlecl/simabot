@@ -188,9 +188,19 @@ async def apply_wb_to_ozon(
 
     needed_codes = {t["vendor_code"] for t in tasks}
 
-    # 1. WB карточки для нужных артикулов
-    all_wb = await fetch_wb_products(wb_api_key)
-    wb = {k: v for k, v in all_wb.items() if k in needed_codes}
+    # 1. WB данные берём из запроса (уже показаны пользователю)
+    wb = {}
+    for task in tasks:
+        if task.get("wb_data"):
+            d = task["wb_data"]
+            wb[task["vendor_code"]] = ProductContent(
+                vendor_code=task["vendor_code"],
+                name=d.get("name", ""),
+                description=d.get("description", ""),
+                images=d.get("images", []),
+                attributes=d.get("attributes", []),
+                nm_id=d.get("nm_id"),
+            )
 
     # 2. product_id из локальной БД — быстро, без API
     from database import Product as ProductModel
