@@ -284,19 +284,8 @@ def _merge_attributes(ozon_raw: list[dict], wb_attrs: list[dict]) -> list[dict]:
 
 
 async def _validate_wb_images(urls: list[str]) -> list[str]:
-    """Убирает несуществующие URL (WB нумерует фото последовательно — первый 404 = конец)."""
-    valid = []
-    async with aiohttp.ClientSession() as session:
-        for url in urls:
-            try:
-                async with session.head(url) as r:
-                    if r.status == 200:
-                        valid.append(url)
-                    else:
-                        break
-            except Exception:
-                break
-    return valid
+    """WB CDN не поддерживает HEAD — просто возвращаем URL как есть."""
+    return [u for u in urls if u]
 
 
 # ─────────────────────────────────────────────────
