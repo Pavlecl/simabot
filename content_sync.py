@@ -158,7 +158,7 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
                 attrs  = [
                     {
                         "name":  ch.get("name", ""),
-                        "value": " / ".join(str(v) for v in ch.get("value", [])),
+                        "value": " / ".join(str(v) for v in (val if isinstance(val := ch.get("value", []), list) else [val])),
                     }
                     for ch in card.get("characteristics", []) if ch.get("name")
                 ]
