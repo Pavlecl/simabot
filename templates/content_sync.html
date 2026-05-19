@@ -9,7 +9,7 @@
     <span id="match-count" style="font-size:11px;color:var(--text-dim)"></span>
     <button class="btn" id="btn-load" onclick="loadProducts()">⟳ Загрузить товары</button>
     <button class="btn primary" id="btn-apply" disabled onclick="applyContent()">
-      ✓ Применить (<span id="sel-count">0</span>)
+      ↑ Перенести на Ozon (<span id="sel-count">0</span>)
     </button>
   </div>
 </div>
@@ -82,6 +82,7 @@
 </div>
 
 <style>
+thead tr th{position:sticky;top:0;z-index:10;background:var(--surface)}
 .cmp{display:grid;grid-template-columns:1fr 1fr 24px;gap:4px;align-items:start}
 .cmp-lbl{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
 .val-oz{background:rgba(59,130,246,.08);border-left:2px solid rgba(59,130,246,.3);padding:3px 5px;word-break:break-word}
