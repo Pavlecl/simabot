@@ -2827,7 +2827,7 @@ async def content_sync_page(request: Request, user: dict = Depends(require_any_r
 async def api_content_sync_products(request: Request):
     user = get_current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        return JSONResponse(status_code=200, content={"error": "unauthorized"})
     wb_key = await get_active_wb_key()
     if not wb_key:
         raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта. Добавьте токен WB в разделе Пользователи → Кабинеты WB.")
@@ -2853,7 +2853,7 @@ async def api_content_sync_products(request: Request):
 async def api_content_sync_apply(request: Request):
     user = get_current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        return JSONResponse(status_code=200, content={"error": "unauthorized"})
     body  = await request.json()
     tasks = body.get("tasks", [])
     if not tasks:
@@ -2870,7 +2870,7 @@ async def api_content_sync_apply(request: Request):
 async def api_wb_accounts_list(request: Request, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        return JSONResponse(status_code=200, content={"error": "unauthorized"})
     accounts = await get_all_wb_accounts_db()
     return [
         {
@@ -2886,7 +2886,7 @@ async def api_wb_accounts_list(request: Request, db: AsyncSession = Depends(get_
 async def api_wb_accounts_create(request: Request, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        return JSONResponse(status_code=200, content={"error": "unauthorized"})
     body = await request.json()
     acc  = WbAccount(name=body["name"], api_key=body["api_key"], is_active=False)
     db.add(acc)
@@ -2897,7 +2897,7 @@ async def api_wb_accounts_create(request: Request, db: AsyncSession = Depends(ge
 async def api_wb_accounts_activate(request: Request, account_id: int, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        return JSONResponse(status_code=200, content={"error": "unauthorized"})
     await db.execute(update(WbAccount).values(is_active=False))
     await db.execute(update(WbAccount).where(WbAccount.id == account_id).values(is_active=True))
     await db.commit()
@@ -2907,7 +2907,7 @@ async def api_wb_accounts_activate(request: Request, account_id: int, db: AsyncS
 async def api_wb_accounts_delete(request: Request, account_id: int, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Не авторизован")
+        return JSONResponse(status_code=200, content={"error": "unauthorized"})
     await db.execute(delete(WbAccount).where(WbAccount.id == account_id))
     await db.commit()
     return {"ok": True}

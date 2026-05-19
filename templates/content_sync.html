@@ -117,9 +117,10 @@ async function loadProducts(){
   document.getElementById('table-wrap').style.display='none';
   document.getElementById('match-count').textContent='';
   try{
-    const r=await fetch('/api/content-sync/products');
-    const data=await r.json();
-    if(!r.ok)throw new Error(data.detail||r.statusText);
+    const r    = await fetch('/api/content-sync/products');
+    const data = await r.json();
+    if (data.error === 'unauthorized') throw new Error('Сессия истекла — обновите страницу (F5)');
+    if (!r.ok) throw new Error(data.detail || r.statusText);
     allProducts=data;
     renderTable(data);
     document.getElementById('match-count').textContent=data.length+' товаров';
