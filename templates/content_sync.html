@@ -46,8 +46,12 @@
 <div id="status-bar" style="display:none;margin-bottom:12px;padding:10px 14px;font-size:12px;border-left:3px solid var(--accent)"></div>
 
 <div id="loader" style="display:none;text-align:center;padding:60px 0;color:var(--text-dim)">
-  <div style="font-size:24px;margin-bottom:8px">⏳</div>
-  <div id="loader-text" style="font-size:12px">Загружаем товары с обоих маркетплейсов…</div>
+  <div id="loader-steps" style="display:inline-flex;flex-direction:column;gap:10px;text-align:left">
+    <div id="step-ozon" style="font-size:12px;opacity:.4">○ Загружаем товары Ozon...</div>
+    <div id="step-wb"   style="font-size:12px;opacity:.4">○ Загружаем карточки WB...</div>
+    <div id="step-match" style="font-size:12px;opacity:.4">○ Сопоставляем по артикулу...</div>
+  </div>
+  <div id="loader-timer" style="font-size:11px;color:var(--text-dim);margin-top:16px">0 сек</div>
 </div>
 
 <div id="table-wrap" style="display:none">
@@ -276,10 +280,53 @@ function toggleCol(cb){
   document.querySelectorAll(`.td-${col},.th-${col}`).forEach(el=>el.style.display=cb.checked?'':'none');
 }
 function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function setLoader(on,text='Загружаем товары с обоих маркетплейсов…'){
-  document.getElementById('loader').style.display=on?'':'none';
-  document.getElementById('btn-load').disabled=on;
-  if(text)document.getElementById('loader-text').textContent=text;
+let _loaderTimer = null;
+let _loaderSec = 0;
+
+function setLoader(on) {
+  document.getElementById('loader').style.display = on ? '' : 'none';
+  document.getElementById('btn-load').disabled = on;
+
+  if (on) {
+    // Сбрасываем шаги
+    ['step-ozon','step-wb','step-match'].forEach(id => {
+      const el = document.getElementById(id);
+      el.style.opacity = '.4';
+      el.textContent = '○ ' + el.textContent.replace(/^[●○] /, '');
+    });
+    _loaderSec = 0;
+    document.getElementById('loader-timer').textContent = '0 сек';
+
+    // Анимируем шаги
+    setTimeout(() => activateStep('step-ozon',  'Загружаем товары Ozon...'), 100);
+    setTimeout(() => activateStep('step-wb',    'Загружаем карточки WB...'), 3000);
+    setTimeout(() => activateStep('step-match', 'Сопоставляем по артикулу...'), 6000);
+
+    // Таймер
+    _loaderTimer = setInterval(() => {
+      _loaderSec++;
+      const el = document.getElementById('loader-timer');
+      if (el) el.textContent = _loaderSec + ' сек' + (_loaderSec > 15 ? ' — большой каталог, ждите…' : '');
+    }, 1000);
+  } else {
+    clearInterval(_loaderTimer);
+  }
+}
+
+function activateStep(id, text) {
+  const el = document.getElementById(id);
+  if (!el || document.getElementById('loader').style.display === 'none') return;
+  // Предыдущий шаг отмечаем как выполненный
+  const steps = ['step-ozon','step-wb','step-match'];
+  const idx = steps.indexOf(id);
+  if (idx > 0) {
+    const prev = document.getElementById(steps[idx - 1]);
+    prev.style.opacity = '.5';
+    prev.textContent = '✓ ' + prev.textContent.replace(/^[●○✓] /, '');
+  }
+  el.style.opacity = '1';
+  el.style.color = 'var(--accent)';
+  el.textContent = '● ' + text;
 }
 function showStatus(msg,type){
   const el=document.getElementById('status-bar');
