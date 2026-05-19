@@ -129,15 +129,48 @@ async function loadProducts(){
   finally{setLoader(false);}
 }
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 20;
 let currentPage = 0;
+let filteredProducts = [];
 
 function renderTable(products){
-  const tbody=document.getElementById('sync-body');
-  tbody.innerHTML='';
+  filteredProducts = products;
   currentPage = 0;
-  renderPage(products);
+  document.getElementById('sync-body').innerHTML = '';
+  renderNextPage();
   updateBtn();
+}
+
+function renderNextPage(){
+  const tbody = document.getElementById('sync-body');
+  document.getElementById('load-more-row')?.remove();
+  const start = currentPage * PAGE_SIZE;
+  const chunk = filteredProducts.slice(start, start + PAGE_SIZE);
+  chunk.forEach(p => tbody.appendChild(makeRow(p)));
+  currentPage++;
+  const loaded = Math.min(currentPage * PAGE_SIZE, filteredProducts.length);
+  const remaining = filteredProducts.length - loaded;
+  if (remaining > 0) {
+    const tr = document.createElement('tr');
+    tr.id = 'load-more-row';
+    tr.innerHTML = `<td colspan="6" style="text-align:center;padding:14px;border-bottom:1px solid var(--border)">
+      <button class="btn" onclick="renderNextPage()" style="font-size:11px">
+        ↓ Показать ещё ${Math.min(PAGE_SIZE, remaining)} (загружено ${loaded} из ${filteredProducts.length})
+      </button>
+    </td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function filterRows(q){
+  q = q.toLowerCase();
+  filteredProducts = allProducts.filter(p => {
+    const name = (p.ozon?.name || '').toLowerCase();
+    return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
+  });
+  currentPage = 0;
+  document.getElementById('sync-body').innerHTML = '';
+  renderNextPage();
 }
 
 function renderPage(products){
@@ -300,14 +333,7 @@ function showResults(data){
 }
 function closeResultModal(){document.getElementById('result-modal').style.display='none';}
 
-function filterRows(q){
-  q=q.toLowerCase();
-  document.querySelectorAll('#sync-body tr').forEach(tr=>{
-    const code=tr.dataset.code?.toLowerCase()||'';
-    const name=tr.querySelector('.td-name .val-oz')?.textContent?.toLowerCase()||'';
-    tr.style.display=(code.includes(q)||name.includes(q))?'':'none';
-  });
-}
+
 function toggleCol(cb){
   const col=cb.dataset.col;
   document.querySelectorAll(`.td-${col},.th-${col}`).forEach(el=>el.style.display=cb.checked?'':'none');
