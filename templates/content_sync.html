@@ -129,10 +129,42 @@ async function loadProducts(){
   finally{setLoader(false);}
 }
 
+const PAGE_SIZE = 50;
+let currentPage = 0;
+
 function renderTable(products){
   const tbody=document.getElementById('sync-body');
   tbody.innerHTML='';
-  products.forEach(p=>tbody.appendChild(makeRow(p)));
+  currentPage = 0;
+  renderPage(products);
+  updateBtn();
+}
+
+function renderPage(products){
+  const tbody=document.getElementById('sync-body');
+  const start = currentPage * PAGE_SIZE;
+  const chunk = products.slice(start, start + PAGE_SIZE);
+  chunk.forEach(p=>tbody.appendChild(makeRow(p)));
+
+  // Убираем старую кнопку "Ещё"
+  document.getElementById('load-more-btn')?.remove();
+
+  if (start + PAGE_SIZE < products.length) {
+    const remaining = products.length - start - PAGE_SIZE;
+    const btn = document.createElement('tr');
+    btn.id = 'load-more-btn';
+    btn.innerHTML = `<td colspan="6" style="text-align:center;padding:16px">
+      <button class="btn" onclick="loadMore()" style="font-size:11px">
+        ↓ Загрузить ещё ${Math.min(PAGE_SIZE, remaining)} из ${remaining}
+      </button>
+    </td>`;
+    tbody.appendChild(btn);
+  }
+}
+
+function loadMore(){
+  currentPage++;
+  renderPage(allProducts);
   updateBtn();
 }
 
@@ -143,8 +175,8 @@ function makeRow(p){
   const imgsDiff=JSON.stringify(o.images)!==JSON.stringify(w.images);
   const nameDiff=(o.name||'')!==(w.name||'');
   const descDiff=(o.description||'')!==(w.description||'');
-  const ozImgs=(o.images||[]).slice(0,3).map(u=>`<img src="${u}" onerror="this.style.display='none'">`).join('');
-  const wbImgs=(w.images||[]).slice(0,3).map(u=>`<img src="${u}" onerror="this.style.display='none'">`).join('');
+  const ozImgs=(o.images||[]).slice(0,1).map(u=>`<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
+  const wbImgs=(w.images||[]).slice(0,1).map(u=>`<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
   const ozAttrs=(o.attributes||[]).map(a=>`<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
   const wbAttrs=(w.attributes||[]).map(a=>`<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
   tr.innerHTML=`
