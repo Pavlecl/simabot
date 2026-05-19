@@ -18,28 +18,25 @@
   <input type="text" id="filter-input" placeholder="🔍 Артикул или название…"
     oninput="filterRows(this.value)"
     style="padding:5px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:240px">
-
   <div style="display:flex;gap:12px;align-items:center">
     <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px">Поля:</span>
     <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
-      <input type="checkbox" class="col-toggle" data-col="images"      checked onchange="toggleCol(this)"> Фото
+      <input type="checkbox" class="col-toggle" data-col="images" checked onchange="toggleCol(this)"> Фото
     </label>
     <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
-      <input type="checkbox" class="col-toggle" data-col="name"        checked onchange="toggleCol(this)"> Название
+      <input type="checkbox" class="col-toggle" data-col="name" checked onchange="toggleCol(this)"> Название
     </label>
     <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
       <input type="checkbox" class="col-toggle" data-col="description" checked onchange="toggleCol(this)"> Описание
     </label>
     <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
-      <input type="checkbox" class="col-toggle" data-col="attributes"  checked onchange="toggleCol(this)"> Характеристики
+      <input type="checkbox" class="col-toggle" data-col="attributes" checked onchange="toggleCol(this)"> Характеристики
     </label>
   </div>
-
   <div style="margin-left:auto;display:flex;gap:6px">
     <button class="btn" style="font-size:11px;padding:3px 10px" onclick="selectAll()">Выбрать все</button>
     <button class="btn" style="font-size:11px;padding:3px 10px" onclick="deselectAll()">Снять все</button>
-    <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--accent);border-color:var(--accent)"
-            onclick="selectDiff()">⚡ Только отличия</button>
+    <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--accent);border-color:var(--accent)" onclick="selectDiff()">⚡ Только отличия</button>
   </div>
 </div>
 
@@ -47,8 +44,8 @@
 
 <div id="loader" style="display:none;text-align:center;padding:60px 0;color:var(--text-dim)">
   <div id="loader-steps" style="display:inline-flex;flex-direction:column;gap:10px;text-align:left">
-    <div id="step-ozon" style="font-size:12px;opacity:.4">○ Загружаем товары Ozon...</div>
-    <div id="step-wb"   style="font-size:12px;opacity:.4">○ Загружаем карточки WB...</div>
+    <div id="step-ozon"  style="font-size:12px;opacity:.4">○ Загружаем товары Ozon...</div>
+    <div id="step-wb"    style="font-size:12px;opacity:.4">○ Загружаем карточки WB...</div>
     <div id="step-match" style="font-size:12px;opacity:.4">○ Сопоставляем по артикулу...</div>
   </div>
   <div id="loader-timer" style="font-size:11px;color:var(--text-dim);margin-top:16px">0 сек</div>
@@ -56,25 +53,17 @@
 
 <div id="table-wrap" style="display:none">
   <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:12px" id="sync-table">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead>
         <tr style="border-bottom:1px solid var(--border)">
           <th style="width:32px;padding:6px 8px;text-align:center">
             <input type="checkbox" id="check-all" onchange="toggleAll(this.checked)">
           </th>
           <th style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px;width:110px">Артикул</th>
-          <th class="th-images" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
-            Фото <span style="color:var(--accent);font-size:9px">WB→OZ</span>
-          </th>
-          <th class="th-name" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
-            Название <span style="color:var(--accent);font-size:9px">WB→OZ</span>
-          </th>
-          <th class="th-description" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
-            Описание <span style="color:var(--accent);font-size:9px">WB→OZ</span>
-          </th>
-          <th class="th-attributes" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
-            Характеристики <span style="color:var(--accent);font-size:9px">WB→OZ</span>
-          </th>
+          <th class="th-images" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">Фото <span style="color:var(--accent);font-size:9px">WB→OZ</span></th>
+          <th class="th-name"   style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">Название <span style="color:var(--accent);font-size:9px">WB→OZ</span></th>
+          <th class="th-description" style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">Описание <span style="color:var(--accent);font-size:9px">WB→OZ</span></th>
+          <th class="th-attributes"  style="padding:6px 8px;text-align:left;color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px">Характеристики <span style="color:var(--accent);font-size:9px">WB→OZ</span></th>
         </tr>
       </thead>
       <tbody id="sync-body"></tbody>
@@ -99,9 +88,9 @@
 .val-wb{background:rgba(255,106,0,.06);border-left:2px solid rgba(255,106,0,.2);padding:3px 6px}
 td.diff .val-wb{background:rgba(255,193,7,.12);border-left:2px solid rgba(255,193,7,.6)}
 .thumbs{display:flex;gap:3px;flex-wrap:wrap}
-.thumbs img{width:48px;height:48px;object-fit:cover}
+.thumbs img{width:56px;height:56px;object-fit:cover}
 .txt3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.attr-scroll{max-height:100px;overflow-y:auto}
+.attr-scroll{max-height:110px;overflow-y:auto}
 .attr-scroll div{border-bottom:1px solid var(--border);padding:1px 0;color:var(--text-dim)}
 .attr-scroll div b{color:var(--text)}
 tr.sel-row{background:rgba(255,106,0,.04)}
@@ -110,30 +99,37 @@ td{padding:8px;vertical-align:top}
 </style>
 
 <script>
-let allProducts=[];
+let allProducts = [];
+let filteredProducts = [];
+let currentPage = 0;
+const PAGE_SIZE = 20;
+let _loaderTimer = null;
+let _loaderSec = 0;
 
-async function loadProducts(){
-  setLoader(true);hideStatus();
-  document.getElementById('table-wrap').style.display='none';
-  document.getElementById('match-count').textContent='';
-  try{
+// ── Загрузка ─────────────────────────────────────────────────────────────────
+async function loadProducts() {
+  setLoader(true);
+  hideStatus();
+  document.getElementById('table-wrap').style.display = 'none';
+  document.getElementById('match-count').textContent = '';
+  try {
     const r    = await fetch('/api/content-sync/products');
     const data = await r.json();
-    if (data.error === 'unauthorized') throw new Error('Сессия истекла — обновите страницу (F5)');
     if (!r.ok) throw new Error(data.detail || r.statusText);
-    allProducts=data;
+    allProducts = data;
+    filteredProducts = data;
     renderTable(data);
-    document.getElementById('match-count').textContent=data.length+' товаров';
-    document.getElementById('table-wrap').style.display='';
-  }catch(e){showStatus(e.message,'error');}
-  finally{setLoader(false);}
+    document.getElementById('match-count').textContent = data.length + ' товаров';
+    document.getElementById('table-wrap').style.display = '';
+  } catch(e) {
+    showStatus(e.message, 'error');
+  } finally {
+    setLoader(false);
+  }
 }
 
-const PAGE_SIZE = 20;
-let currentPage = 0;
-let filteredProducts = [];
-
-function renderTable(products){
+// ── Рендер с пагинацией ──────────────────────────────────────────────────────
+function renderTable(products) {
   filteredProducts = products;
   currentPage = 0;
   document.getElementById('sync-body').innerHTML = '';
@@ -141,19 +137,19 @@ function renderTable(products){
   updateBtn();
 }
 
-function renderNextPage(){
+function renderNextPage() {
   const tbody = document.getElementById('sync-body');
   document.getElementById('load-more-row')?.remove();
   const start = currentPage * PAGE_SIZE;
   const chunk = filteredProducts.slice(start, start + PAGE_SIZE);
   chunk.forEach(p => tbody.appendChild(makeRow(p)));
   currentPage++;
-  const loaded = Math.min(currentPage * PAGE_SIZE, filteredProducts.length);
+  const loaded    = Math.min(currentPage * PAGE_SIZE, filteredProducts.length);
   const remaining = filteredProducts.length - loaded;
   if (remaining > 0) {
     const tr = document.createElement('tr');
     tr.id = 'load-more-row';
-    tr.innerHTML = `<td colspan="6" style="text-align:center;padding:14px;border-bottom:1px solid var(--border)">
+    tr.innerHTML = `<td colspan="6" style="text-align:center;padding:14px">
       <button class="btn" onclick="renderNextPage()" style="font-size:11px">
         ↓ Показать ещё ${Math.min(PAGE_SIZE, remaining)} (загружено ${loaded} из ${filteredProducts.length})
       </button>
@@ -162,57 +158,18 @@ function renderNextPage(){
   }
 }
 
-function filterRows(q){
-  q = q.toLowerCase();
-  filteredProducts = allProducts.filter(p => {
-    const name = (p.ozon?.name || '').toLowerCase();
-    return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
-  });
-  currentPage = 0;
-  document.getElementById('sync-body').innerHTML = '';
-  renderNextPage();
-}
-
-function renderPage(products){
-  const tbody=document.getElementById('sync-body');
-  const start = currentPage * PAGE_SIZE;
-  const chunk = products.slice(start, start + PAGE_SIZE);
-  chunk.forEach(p=>tbody.appendChild(makeRow(p)));
-
-  // Убираем старую кнопку "Ещё"
-  document.getElementById('load-more-btn')?.remove();
-
-  if (start + PAGE_SIZE < products.length) {
-    const remaining = products.length - start - PAGE_SIZE;
-    const btn = document.createElement('tr');
-    btn.id = 'load-more-btn';
-    btn.innerHTML = `<td colspan="6" style="text-align:center;padding:16px">
-      <button class="btn" onclick="loadMore()" style="font-size:11px">
-        ↓ Загрузить ещё ${Math.min(PAGE_SIZE, remaining)} из ${remaining}
-      </button>
-    </td>`;
-    tbody.appendChild(btn);
-  }
-}
-
-function loadMore(){
-  currentPage++;
-  renderPage(allProducts);
-  updateBtn();
-}
-
-function makeRow(p){
-  const o=p.ozon||{},w=p.wb||{};
-  const tr=document.createElement('tr');
-  tr.dataset.code=p.vendor_code;
-  const imgsDiff=JSON.stringify(o.images)!==JSON.stringify(w.images);
-  const nameDiff=(o.name||'')!==(w.name||'');
-  const descDiff=(o.description||'')!==(w.description||'');
-  const ozImgs=(o.images||[]).slice(0,1).map(u=>`<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
-  const wbImgs=(w.images||[]).slice(0,1).map(u=>`<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
-  const ozAttrs=(o.attributes||[]).map(a=>`<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
-  const wbAttrs=(w.attributes||[]).map(a=>`<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
-  tr.innerHTML=`
+function makeRow(p) {
+  const o = p.ozon || {}, w = p.wb || {};
+  const tr = document.createElement('tr');
+  tr.dataset.code = p.vendor_code;
+  const imgsDiff = JSON.stringify(o.images) !== JSON.stringify(w.images);
+  const nameDiff = (o.name||'') !== (w.name||'');
+  const descDiff = (o.description||'') !== (w.description||'');
+  const ozImgs = (o.images||[]).slice(0,1).map(u => `<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
+  const wbImgs = (w.images||[]).slice(0,1).map(u => `<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
+  const ozAttrs = (o.attributes||[]).map(a => `<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
+  const wbAttrs = (w.attributes||[]).map(a => `<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
+  tr.innerHTML = `
     <td style="text-align:center;width:32px">
       <input type="checkbox" class="row-cb" data-code="${p.vendor_code}" onchange="syncRow(this)">
     </td>
@@ -248,152 +205,160 @@ function makeRow(p){
   return tr;
 }
 
-function syncRow(master){
-  const code=master.dataset.code;
-  document.querySelectorAll(`.field-cb[data-code="${code}"]`).forEach(cb=>cb.checked=master.checked);
-  master.closest('tr').classList.toggle('sel-row',master.checked);
+// ── Чекбоксы ─────────────────────────────────────────────────────────────────
+function syncRow(master) {
+  const code = master.dataset.code;
+  document.querySelectorAll(`.field-cb[data-code="${code}"]`).forEach(cb => cb.checked = master.checked);
+  master.closest('tr').classList.toggle('sel-row', master.checked);
   updateBtn();
 }
-function toggleAll(checked){
-  document.querySelectorAll('.row-cb').forEach(cb=>{cb.checked=checked;syncRow(cb);});
+function toggleAll(checked) {
+  document.querySelectorAll('.row-cb').forEach(cb => { cb.checked = checked; syncRow(cb); });
 }
-function selectAll(){
-  document.querySelectorAll('.field-cb').forEach(cb=>cb.checked=true);
-  document.querySelectorAll('.row-cb').forEach(cb=>{cb.checked=true;cb.closest('tr').classList.add('sel-row');});
+function selectAll() {
+  document.querySelectorAll('.field-cb').forEach(cb => cb.checked = true);
+  document.querySelectorAll('.row-cb').forEach(cb => { cb.checked = true; cb.closest('tr').classList.add('sel-row'); });
   updateBtn();
 }
-function deselectAll(){
-  document.querySelectorAll('.field-cb,.row-cb').forEach(cb=>cb.checked=false);
-  document.querySelectorAll('tr').forEach(tr=>tr.classList.remove('sel-row'));
+function deselectAll() {
+  document.querySelectorAll('.field-cb,.row-cb').forEach(cb => cb.checked = false);
+  document.querySelectorAll('tr').forEach(tr => tr.classList.remove('sel-row'));
   updateBtn();
 }
-function selectDiff(){
-  document.querySelectorAll('.field-cb').forEach(cb=>{
-    cb.checked=cb.closest('td')?.classList.contains('diff')||false;
+function selectDiff() {
+  document.querySelectorAll('.field-cb').forEach(cb => {
+    cb.checked = cb.closest('td')?.classList.contains('diff') || false;
   });
-  document.querySelectorAll('.row-cb').forEach(master=>{
-    const code=master.dataset.code;
-    const any=[...document.querySelectorAll(`.field-cb[data-code="${code}"]`)].some(c=>c.checked);
-    master.checked=any;
-    master.closest('tr').classList.toggle('sel-row',any);
+  document.querySelectorAll('.row-cb').forEach(master => {
+    const code = master.dataset.code;
+    const any  = [...document.querySelectorAll(`.field-cb[data-code="${code}"]`)].some(c => c.checked);
+    master.checked = any;
+    master.closest('tr').classList.toggle('sel-row', any);
   });
   updateBtn();
 }
-function collectTasks(){
-  const map={};
-  document.querySelectorAll('.field-cb:checked').forEach(cb=>{
-    const c=cb.dataset.code;
-    if(!map[c])map[c]={vendor_code:c,fields:[]};
+function collectTasks() {
+  const map = {};
+  document.querySelectorAll('.field-cb:checked').forEach(cb => {
+    const c = cb.dataset.code;
+    if (!map[c]) map[c] = { vendor_code: c, fields: [] };
     map[c].fields.push(cb.dataset.field);
   });
   return Object.values(map);
 }
-function updateBtn(){
-  const n=collectTasks().length;
-  document.getElementById('sel-count').textContent=n;
-  document.getElementById('btn-apply').disabled=n===0;
-  document.querySelectorAll('.row-cb').forEach(master=>{
-    const code=master.dataset.code;
-    const fields=[...document.querySelectorAll(`.field-cb[data-code="${code}"]`)];
-    const cnt=fields.filter(f=>f.checked).length;
-    master.checked=cnt===fields.length&&cnt>0;
-    master.indeterminate=cnt>0&&cnt<fields.length;
+function updateBtn() {
+  const n = collectTasks().length;
+  document.getElementById('sel-count').textContent = n;
+  document.getElementById('btn-apply').disabled = n === 0;
+  document.querySelectorAll('.row-cb').forEach(master => {
+    const code   = master.dataset.code;
+    const fields = [...document.querySelectorAll(`.field-cb[data-code="${code}"]`)];
+    const cnt    = fields.filter(f => f.checked).length;
+    master.checked       = cnt === fields.length && cnt > 0;
+    master.indeterminate = cnt > 0 && cnt < fields.length;
   });
 }
 
-async function applyContent(){
-  const tasks=collectTasks();
-  if(!tasks.length)return;
-  if(!confirm(`Применить WB-контент к ${tasks.length} товарам на Ozon?`))return;
-  document.getElementById('btn-apply').disabled=true;
-  setLoader(true,`Применяем контент для ${tasks.length} товаров…`);
+// ── Применение ───────────────────────────────────────────────────────────────
+async function applyContent() {
+  const tasks = collectTasks();
+  if (!tasks.length) return;
+  if (!confirm(`Применить WB-контент к ${tasks.length} товарам на Ozon?`)) return;
+  document.getElementById('btn-apply').disabled = true;
+  setLoader(true, `Применяем контент для ${tasks.length} товаров…`);
   hideStatus();
-  try{
-    const r=await fetch('/api/content-sync/apply',{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks})
+  try {
+    const r    = await fetch('/api/content-sync/apply', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ tasks }),
     });
-    const data=await r.json();
-    if(!r.ok)throw new Error(data.detail||r.statusText);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
     showResults(data);
-  }catch(e){showStatus(e.message,'error');}
-  finally{setLoader(false);updateBtn();}
-}
-
-function showResults(data){
-  const ok=data.results.filter(r=>r.status==='ok');
-  const err=data.results.filter(r=>r.status!=='ok');
-  let html=`<div style="color:var(--green);margin-bottom:10px">✓ Успешно: ${ok.length} из ${data.total}</div>`;
-  if(err.length){
-    html+=`<div style="color:var(--red);margin-bottom:6px">✕ Ошибки (${err.length}):</div><ul style="margin:0;padding-left:16px">`;
-    err.forEach(r=>html+=`<li style="color:var(--text-dim);margin-bottom:2px"><code style="color:var(--accent)">${x(r.vendor_code)}</code>: ${x(r.error)}</li>`);
-    html+='</ul>';
+  } catch(e) {
+    showStatus(e.message, 'error');
+  } finally {
+    setLoader(false);
+    updateBtn();
   }
-  document.getElementById('result-body').innerHTML=html;
-  document.getElementById('result-modal').style.display='flex';
 }
-function closeResultModal(){document.getElementById('result-modal').style.display='none';}
-
-
-function toggleCol(cb){
-  const col=cb.dataset.col;
-  document.querySelectorAll(`.td-${col},.th-${col}`).forEach(el=>el.style.display=cb.checked?'':'none');
+function showResults(data) {
+  const ok  = data.results.filter(r => r.status === 'ok');
+  const err = data.results.filter(r => r.status !== 'ok');
+  let html  = `<div style="color:var(--green);margin-bottom:10px">✓ Успешно: ${ok.length} из ${data.total}</div>`;
+  if (err.length) {
+    html += `<div style="color:var(--red);margin-bottom:6px">✕ Ошибки (${err.length}):</div><ul style="margin:0;padding-left:16px">`;
+    err.forEach(r => html += `<li style="color:var(--text-dim);margin-bottom:2px"><code style="color:var(--accent)">${x(r.vendor_code)}</code>: ${x(r.error)}</li>`);
+    html += '</ul>';
+  }
+  document.getElementById('result-body').innerHTML = html;
+  document.getElementById('result-modal').style.display = 'flex';
 }
-function x(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-let _loaderTimer = null;
-let _loaderSec = 0;
+function closeResultModal() { document.getElementById('result-modal').style.display = 'none'; }
 
-function setLoader(on) {
+// ── Фильтр ───────────────────────────────────────────────────────────────────
+function filterRows(q) {
+  q = q.toLowerCase();
+  filteredProducts = allProducts.filter(p => {
+    const name = (p.ozon?.name || '').toLowerCase();
+    return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
+  });
+  currentPage = 0;
+  document.getElementById('sync-body').innerHTML = '';
+  renderNextPage();
+}
+
+// ── Видимость столбцов ───────────────────────────────────────────────────────
+function toggleCol(cb) {
+  const col = cb.dataset.col;
+  document.querySelectorAll(`.td-${col},.th-${col}`).forEach(el => el.style.display = cb.checked ? '' : 'none');
+}
+
+// ── Лоадер с прогрессом ──────────────────────────────────────────────────────
+function setLoader(on, text) {
   document.getElementById('loader').style.display = on ? '' : 'none';
-  document.getElementById('btn-load').disabled = on;
-
-  if (on) {
-    // Сбрасываем шаги
+  document.getElementById('btn-load').disabled    = on;
+  if (on && !text) {
     ['step-ozon','step-wb','step-match'].forEach(id => {
       const el = document.getElementById(id);
-      el.style.opacity = '.4';
-      el.textContent = '○ ' + el.textContent.replace(/^[●○] /, '');
+      el.style.opacity = '.4'; el.style.color = '';
+      el.textContent = '○ ' + el.textContent.replace(/^[●○✓] /, '');
     });
     _loaderSec = 0;
     document.getElementById('loader-timer').textContent = '0 сек';
-
-    // Анимируем шаги
     setTimeout(() => activateStep('step-ozon',  'Загружаем товары Ozon...'), 100);
     setTimeout(() => activateStep('step-wb',    'Загружаем карточки WB...'), 3000);
-    setTimeout(() => activateStep('step-match', 'Сопоставляем по артикулу...'), 6000);
-
-    // Таймер
+    setTimeout(() => activateStep('step-match', 'Сопоставляем по артикулу...'), 8000);
     _loaderTimer = setInterval(() => {
       _loaderSec++;
       const el = document.getElementById('loader-timer');
-      if (el) el.textContent = _loaderSec + ' сек' + (_loaderSec > 15 ? ' — большой каталог, ждите…' : '');
+      if (el) el.textContent = _loaderSec + ' сек' + (_loaderSec > 20 ? ' — большой каталог, ждите…' : '');
     }, 1000);
   } else {
     clearInterval(_loaderTimer);
+    if (text) document.getElementById('loader-timer').textContent = text;
   }
 }
-
 function activateStep(id, text) {
-  const el = document.getElementById(id);
-  if (!el || document.getElementById('loader').style.display === 'none') return;
-  // Предыдущий шаг отмечаем как выполненный
+  if (document.getElementById('loader').style.display === 'none') return;
   const steps = ['step-ozon','step-wb','step-match'];
-  const idx = steps.indexOf(id);
+  const idx   = steps.indexOf(id);
   if (idx > 0) {
-    const prev = document.getElementById(steps[idx - 1]);
-    prev.style.opacity = '.5';
+    const prev = document.getElementById(steps[idx-1]);
+    prev.style.opacity = '.5'; prev.style.color = '';
     prev.textContent = '✓ ' + prev.textContent.replace(/^[●○✓] /, '');
   }
-  el.style.opacity = '1';
-  el.style.color = 'var(--accent)';
+  const el = document.getElementById(id);
+  el.style.opacity = '1'; el.style.color = 'var(--accent)';
   el.textContent = '● ' + text;
 }
-function showStatus(msg,type){
-  const el=document.getElementById('status-bar');
-  el.style.display='';
-  el.style.borderColor=type==='error'?'var(--red)':'var(--green)';
-  el.style.color=type==='error'?'var(--red)':'var(--green)';
-  el.textContent=msg;
+
+// ── Утилиты ──────────────────────────────────────────────────────────────────
+function x(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showStatus(msg, type) {
+  const el = document.getElementById('status-bar');
+  el.style.display = ''; el.style.borderColor = type==='error'?'var(--red)':'var(--green)';
+  el.style.color = type==='error'?'var(--red)':'var(--green)'; el.textContent = msg;
 }
-function hideStatus(){document.getElementById('status-bar').style.display='none';}
+function hideStatus() { document.getElementById('status-bar').style.display = 'none'; }
 </script>
 {% endblock %}
