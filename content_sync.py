@@ -199,36 +199,57 @@ async def get_matched_products(ozon_headers: dict, wb_api_key: str) -> list[Matc
 async def apply_wb_to_ozon(
     ozon_headers: dict,
     wb_api_key:   str,
-    tasks:        list[dict],   # [{vendor_code, fields: [name|description|images|attributes]}]
+    tasks:        list[dict],
 ) -> list[dict]:
+    """Применяет контент WB → Ozon только для товаров из tasks."""
 
-    ozon, wb = await asyncio.gather(
-        fetch_ozon_products(ozon_headers),
-        fetch_wb_products(wb_api_key),
-    )
+    # Получаем только нужные offer_id из задач
+    needed_codes = {t["vendor_code"] for t in tasks}
+
+    # Загружаем WB карточки только для нужных артикулов
+    all_wb = await fetch_wb_products(wb_api_key)
+    wb = {k: v for k, v in all_wb.items() if k in needed_codes}
+
+    # Получаем product_id из Ozon для нужных артикулов (быстро — только нужные)
+    ozon_ids: dict[str, int] = {}
+    async with aiohttp.ClientSession() as session:
+        for code in needed_codes:
+            try:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v2/product/info",
+                    headers=ozon_headers,
+                    json={"offer_id": code},
+                ) as r:
+                    data = await r.json(content_type=None)
+                    pid = data.get("result", {}).get("id")
+                    if pid:
+                        ozon_ids[code] = pid
+            except Exception:
+                pass
 
     results = []
     async with aiohttp.ClientSession() as session:
         for task in tasks:
             code   = task["vendor_code"]
             fields = set(task.get("fields", []))
-            op = ozon.get(code)
-            wp = wb.get(code)
+            wp     = wb.get(code)
+            pid    = ozon_ids.get(code)
 
-            if not op or not wp:
-                results.append({"vendor_code": code, "status": "error", "error": "Товар не найден"})
+            if not wp:
+                results.append({"vendor_code": code, "status": "error", "error": "Товар не найден на WB"})
+                continue
+            if not pid:
+                results.append({"vendor_code": code, "status": "error", "error": "Товар не найден на Ozon"})
                 continue
 
             errors = []
 
-            # ── Текст: name / description / attributes ────────────────────
+            # ── Текст ────────────────────────────────────────────────────
             text_fields = fields & {"name", "description", "attributes"}
             if text_fields:
                 payload: dict = {"offer_id": code}
                 if "name"        in text_fields: payload["name"]        = wp.name
                 if "description" in text_fields: payload["description"] = wp.description
-                if "attributes"  in text_fields:
-                    payload["attributes"] = _merge_attributes(op.ozon_attributes_raw, wp.attributes)
                 try:
                     async with session.post(
                         "https://api-seller.ozon.ru/v1/product/update",
@@ -241,21 +262,19 @@ async def apply_wb_to_ozon(
                 except Exception as e:
                     errors.append(f"Текст: {e}")
 
-            # ── Фото ──────────────────────────────────────────────────────
+            # ── Фото ─────────────────────────────────────────────────────
             if "images" in fields and wp.images:
-                valid = await _validate_wb_images(wp.images[:10])
-                if valid:
-                    try:
-                        async with session.post(
-                            "https://api-seller.ozon.ru/v1/product/import/pictures",
-                            headers=ozon_headers,
-                            json={"product_id": op.product_id, "images": valid},
-                        ) as r:
-                            if r.status != 200:
-                                txt = await r.text()
-                                errors.append(f"Фото {r.status}: {txt[:200]}")
-                    except Exception as e:
-                        errors.append(f"Фото: {e}")
+                try:
+                    async with session.post(
+                        "https://api-seller.ozon.ru/v1/product/import/pictures",
+                        headers=ozon_headers,
+                        json={"product_id": pid, "images": wp.images[:10]},
+                    ) as r:
+                        if r.status != 200:
+                            txt = await r.text()
+                            errors.append(f"Фото {r.status}: {txt[:200]}")
+                except Exception as e:
+                    errors.append(f"Фото: {e}")
 
             results.append({
                 "vendor_code": code,
