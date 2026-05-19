@@ -3,7 +3,6 @@ content_sync.py — ~/sima_bot/content_sync.py
 
 Сервис синхронизации контента Ozon ↔ Wildberries.
 Сопоставление по offer_id (Ozon) == vendorCode (WB).
-Использует aiohttp — как и весь остальной проект.
 """
 from __future__ import annotations
 
@@ -15,29 +14,6 @@ import aiohttp
 from sqlalchemy import select
 
 from database import AsyncSessionLocal, WbAccount
-
-
-# ─────────────────────────────────────────────────
-# WB CDN: вычисление номера basket-сервера по nmId
-# ─────────────────────────────────────────────────
-
-def _wb_basket(nm_id: int) -> str:
-    vol = nm_id // 100_000
-    for threshold, basket in [
-        (143,"01"),(287,"02"),(431,"03"),(719,"04"),(1007,"05"),(1061,"06"),
-        (1115,"07"),(1169,"08"),(1313,"09"),(1601,"10"),(1655,"11"),(1919,"12"),
-        (2045,"13"),(2189,"14"),(2405,"15"),(2621,"16"),(2837,"17"),
-    ]:
-        if vol <= threshold:
-            return basket
-    return "18"
-
-
-def wb_photo_url(nm_id: int, index: int = 1) -> str:
-    b    = _wb_basket(nm_id)
-    vol  = nm_id // 100_000
-    part = nm_id // 1_000
-    return f"https://basket-{b}.wbbasket.ru/vol{vol}/part{part}/{nm_id}/images/big/{index}.jpg"
 
 
 # ─────────────────────────────────────────────────
@@ -71,7 +47,6 @@ async def fetch_ozon_products(headers: dict) -> dict[str, ProductContent]:
     result: dict[str, ProductContent] = {}
 
     async with aiohttp.ClientSession() as session:
-        # 1. Собираем все product_id через /v3/product/list
         product_ids: list[int] = []
         offer_map:   dict[int, str] = {}
         last_id = ""
@@ -96,7 +71,6 @@ async def fetch_ozon_products(headers: dict) -> dict[str, ProductContent]:
         if not product_ids:
             return result
 
-        # 2. Детали (название, описание, фото, атрибуты) — батчами по 100
         for i in range(0, len(product_ids), 100):
             batch = product_ids[i:i + 100]
             async with session.post(
@@ -116,13 +90,13 @@ async def fetch_ozon_products(headers: dict) -> dict[str, ProductContent]:
                     for a in p.get("attributes", []) if a.get("name")
                 ]
                 result[offer_id] = ProductContent(
-                    vendor_code          = offer_id,
-                    product_id           = pid,
-                    name                 = p.get("name", ""),
-                    description          = p.get("description", ""),
-                    images               = p.get("images", []),
-                    attributes           = attrs,
-                    ozon_attributes_raw  = p.get("attributes", []),
+                    vendor_code         = offer_id,
+                    product_id          = pid,
+                    name                = p.get("name", ""),
+                    description         = p.get("description", ""),
+                    images              = p.get("images", []),
+                    attributes          = attrs,
+                    ozon_attributes_raw = p.get("attributes", []),
                 )
 
     return result
@@ -151,14 +125,23 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
                 break
 
             for card in cards:
-                nm_id        = card.get("nmID")
-                vendor_code  = card.get("vendorCode") or str(nm_id)
+                nm_id       = card.get("nmID")
+                vendor_code = card.get("vendorCode") or str(nm_id)
+
+                # Берём готовые URL из API — максимальное качество (big)
                 photos = card.get("photos", [])
                 images = [p["big"] for p in photos if p.get("big")][:10]
-                attrs  = [
+
+                attrs = [
                     {
                         "name":  ch.get("name", ""),
-                        "value": " / ".join(str(v) for v in (ch["value"] if isinstance(ch.get("value"), list) else [ch["value"]] if ch.get("value") is not None else [])),
+                        "value": " / ".join(
+                            str(v) for v in (
+                                ch["value"] if isinstance(ch.get("value"), list)
+                                else [ch["value"]] if ch.get("value") is not None
+                                else []
+                            )
+                        ),
                     }
                     for ch in card.get("characteristics", []) if ch.get("name")
                 ]
@@ -188,7 +171,7 @@ async def get_matched_products(ozon_headers: dict, wb_api_key: str) -> list[Matc
         fetch_ozon_products(ozon_headers),
         fetch_wb_products(wb_api_key),
     )
-    codes = sorted(set(ozon) & set(wb))   # только пары где товар есть на обоих МП
+    codes = sorted(set(ozon) & set(wb))
     return [MatchedProduct(vendor_code=c, ozon=ozon[c], wb=wb[c]) for c in codes]
 
 
@@ -203,15 +186,13 @@ async def apply_wb_to_ozon(
 ) -> list[dict]:
     """Применяет контент WB → Ozon только для товаров из tasks."""
 
-    # Получаем только нужные offer_id из задач
     needed_codes = {t["vendor_code"] for t in tasks}
 
-    # Загружаем WB карточки только для нужных артикулов
+    # 1. WB карточки для нужных артикулов
     all_wb = await fetch_wb_products(wb_api_key)
     wb = {k: v for k, v in all_wb.items() if k in needed_codes}
 
-
-    # Берём product_id из локальной БД — быстро и надёжно
+    # 2. product_id из локальной БД — быстро, без API
     from database import Product as ProductModel
     ozon_ids: dict[str, int] = {}
     async with AsyncSessionLocal() as db:
@@ -222,6 +203,8 @@ async def apply_wb_to_ozon(
         )
         ozon_ids = {row.offer_id: row.product_id for row in r.fetchall() if row.product_id}
 
+    print(f"[apply] tasks={len(tasks)} wb_found={len(wb)} ozon_ids_found={len(ozon_ids)}", flush=True)
+
     results = []
     async with aiohttp.ClientSession() as session:
         for task in tasks:
@@ -230,17 +213,19 @@ async def apply_wb_to_ozon(
             wp     = wb.get(code)
             pid    = ozon_ids.get(code)
 
+            print(f"[apply] code={code} pid={pid} fields={fields} images={wp.images[:1] if wp else []}", flush=True)
+
             if not wp:
                 results.append({"vendor_code": code, "status": "error", "error": "Товар не найден на WB"})
                 continue
             if not pid:
-                results.append({"vendor_code": code, "status": "error", "error": "Товар не найден на Ozon"})
+                results.append({"vendor_code": code, "status": "error", "error": "product_id не найден в БД"})
                 continue
 
             errors = []
 
             # ── Текст ────────────────────────────────────────────────────
-            text_fields = fields & {"name", "description", "attributes"}
+            text_fields = fields & {"name", "description"}
             if text_fields:
                 payload: dict = {"offer_id": code}
                 if "name"        in text_fields: payload["name"]        = wp.name
@@ -251,22 +236,26 @@ async def apply_wb_to_ozon(
                         headers=ozon_headers,
                         json={"items": [payload]},
                     ) as r:
+                        txt = await r.text()
+                        print(f"[apply] text status={r.status} resp={txt[:200]}", flush=True)
                         if r.status != 200:
-                            txt = await r.text()
                             errors.append(f"Текст {r.status}: {txt[:200]}")
                 except Exception as e:
                     errors.append(f"Текст: {e}")
 
             # ── Фото ─────────────────────────────────────────────────────
             if "images" in fields and wp.images:
+                images_to_send = [u for u in wp.images[:10] if u]
+                print(f"[apply] photo pid={pid} count={len(images_to_send)} url[0]={images_to_send[0] if images_to_send else None}", flush=True)
                 try:
                     async with session.post(
                         "https://api-seller.ozon.ru/v1/product/import/pictures",
                         headers=ozon_headers,
-                        json={"product_id": pid, "images": wp.images[:10]},
+                        json={"product_id": pid, "images": images_to_send},
                     ) as r:
+                        txt = await r.text()
+                        print(f"[apply] photo status={r.status} resp={txt[:300]}", flush=True)
                         if r.status != 200:
-                            txt = await r.text()
                             errors.append(f"Фото {r.status}: {txt[:200]}")
                 except Exception as e:
                     errors.append(f"Фото: {e}")
@@ -285,7 +274,6 @@ async def apply_wb_to_ozon(
 # ─────────────────────────────────────────────────
 
 def _merge_attributes(ozon_raw: list[dict], wb_attrs: list[dict]) -> list[dict]:
-    """Обновляет значения Ozon-атрибутов значениями WB по совпадению имени."""
     wb_map = {a["name"].lower(): a["value"] for a in wb_attrs if a.get("name")}
     merged = []
     for attr in ozon_raw:
@@ -298,7 +286,7 @@ def _merge_attributes(ozon_raw: list[dict], wb_attrs: list[dict]) -> list[dict]:
 
 
 async def _validate_wb_images(urls: list[str]) -> list[str]:
-    """WB CDN не поддерживает HEAD — просто возвращаем URL как есть."""
+    """Возвращаем URL как есть — Ozon сам проверит доступность."""
     return [u for u in urls if u]
 
 
