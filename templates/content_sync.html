@@ -89,22 +89,18 @@
 td.diff .val-wb{background:rgba(255,193,7,.12);border-left:2px solid rgba(255,193,7,.6)}
 .thumbs{display:flex;gap:3px;flex-wrap:wrap}
 .thumbs img{width:72px;height:72px;object-fit:contain;background:var(--surface2)}
-.txt3{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;cursor:default;font-size:11px}
+/* Текст с прокруткой — как характеристики */
+.txt3{max-height:110px;overflow-y:auto;cursor:default;font-size:11px}
 .td-images{width:190px;min-width:190px}
+.td-name{width:200px;min-width:200px}
+.td-description{width:300px;min-width:300px}
+.td-attributes{width:260px;min-width:260px}
 .attr-scroll{max-height:110px;overflow-y:auto}
 .attr-scroll div{border-bottom:1px solid var(--border);padding:1px 0;color:var(--text-dim);font-size:11px}
 .attr-scroll div b{color:var(--text)}
 tr.sel-row{background:rgba(255,106,0,.04)}
 tr{border-bottom:1px solid var(--border)}
 td{padding:6px;vertical-align:top}
-/* Ширины колонок таблицы */
-.td-name{width:220px;min-width:220px}
-.td-description{width:320px;min-width:320px}
-.td-attributes{width:280px;min-width:280px}
-
-.td-images .cmp{grid-template-columns:auto auto 24px}
-.td-images{width:auto;min-width:auto}
-.txt3{overflow:hidden;cursor:default;font-size:11px;display:block;max-height:none}
 </style>
 
 <script>
