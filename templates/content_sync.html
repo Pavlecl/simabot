@@ -82,14 +82,15 @@
 </div>
 
 <style>
-.cmp{display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;align-items:start}
+.cmp{display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;align-items:start;min-width:0}
+.cmp>div{min-width:0;overflow:hidden}
 .cmp-lbl{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px}
 .val-oz{background:rgba(59,130,246,.08);border-left:2px solid rgba(59,130,246,.3);padding:3px 6px}
 .val-wb{background:rgba(255,106,0,.06);border-left:2px solid rgba(255,106,0,.2);padding:3px 6px}
 td.diff .val-wb{background:rgba(255,193,7,.12);border-left:2px solid rgba(255,193,7,.6)}
 .thumbs{display:flex;gap:3px;flex-wrap:wrap}
 .thumbs img{width:80px;height:80px;object-fit:contain;background:var(--surface2)}
-.txt3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.txt3{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:default}
 .attr-scroll{max-height:110px;overflow-y:auto}
 .attr-scroll div{border-bottom:1px solid var(--border);padding:1px 0;color:var(--text-dim)}
 .attr-scroll div b{color:var(--text)}
@@ -183,15 +184,15 @@ function makeRow(p) {
     </td>
     <td class="td-name${nameDiff?' diff':''}">
       <div class="cmp">
-        <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3">${x(o.name)}</div></div>
-        <div><div class="cmp-lbl">WB</div><div class="val-wb txt3">${x(w.name)}</div></div>
+        <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3" title="${x(o.name)}">${x(o.name)}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb txt3" title="${x(w.name)}">${x(w.name)}</div></div>
         <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="name" onchange="updateBtn()"></div>
       </div>
     </td>
     <td class="td-description${descDiff?' diff':''}">
       <div class="cmp">
-        <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3">${x(o.description)}</div></div>
-        <div><div class="cmp-lbl">WB</div><div class="val-wb txt3">${x(w.description)}</div></div>
+        <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3" title="${x(o.description)}">${x(o.description)}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb txt3" title="${x(w.description)}">${x(w.description)}</div></div>
         <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="description" onchange="updateBtn()"></div>
       </div>
     </td>
