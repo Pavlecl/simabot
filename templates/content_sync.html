@@ -52,8 +52,7 @@
 </div>
 
 <div id="table-wrap" style="display:none">
-  <div style="overflow-x:auto;overflow-y:visible">
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead>
         <tr style="border-bottom:1px solid var(--border)">
           <th style="width:32px;padding:6px 8px;text-align:center">
@@ -67,8 +66,8 @@
         </tr>
       </thead>
       <tbody id="sync-body"></tbody>
-    </table>
-  </div>
+  </table>
+
 </div>
 
 <div id="result-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center">
@@ -112,6 +111,8 @@ td{padding:6px;vertical-align:top}
 .attr-scroll::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 2px; opacity: .6; }
 .txt3::-webkit-scrollbar-thumb:hover,
 .attr-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent); opacity: 1; }
+#table-wrap{height:calc(100vh - 180px);overflow:auto}
+#table-wrap table{min-width:1200px}
 </style>
 
 <script>
