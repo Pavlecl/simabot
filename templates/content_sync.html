@@ -82,21 +82,25 @@
 </div>
 
 <style>
-.cmp{display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;align-items:start;min-width:0}
-.cmp>div{min-width:0;overflow:hidden}
-.cmp-lbl{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px}
-.val-oz{background:rgba(59,130,246,.08);border-left:2px solid rgba(59,130,246,.3);padding:3px 6px}
-.val-wb{background:rgba(255,106,0,.06);border-left:2px solid rgba(255,106,0,.2);padding:3px 6px}
+.cmp{display:grid;grid-template-columns:1fr 1fr 24px;gap:4px;align-items:start}
+.cmp-lbl{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
+.val-oz{background:rgba(59,130,246,.08);border-left:2px solid rgba(59,130,246,.3);padding:3px 5px;word-break:break-word}
+.val-wb{background:rgba(255,106,0,.06);border-left:2px solid rgba(255,106,0,.2);padding:3px 5px;word-break:break-word}
 td.diff .val-wb{background:rgba(255,193,7,.12);border-left:2px solid rgba(255,193,7,.6)}
 .thumbs{display:flex;gap:3px;flex-wrap:wrap}
 .thumbs img{width:80px;height:80px;object-fit:contain;background:var(--surface2)}
-.txt3{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:default}
+.txt3{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:default;font-size:11px}
 .attr-scroll{max-height:110px;overflow-y:auto}
-.attr-scroll div{border-bottom:1px solid var(--border);padding:1px 0;color:var(--text-dim)}
+.attr-scroll div{border-bottom:1px solid var(--border);padding:1px 0;color:var(--text-dim);font-size:11px}
 .attr-scroll div b{color:var(--text)}
 tr.sel-row{background:rgba(255,106,0,.04)}
 tr{border-bottom:1px solid var(--border)}
-td{padding:8px;vertical-align:top}
+td{padding:6px;vertical-align:top}
+/* Ширины колонок таблицы */
+.td-images{width:220px;min-width:220px}
+.td-name{width:220px;min-width:220px}
+.td-description{width:320px;min-width:320px}
+.td-attributes{width:280px;min-width:280px}
 </style>
 
 <script>
