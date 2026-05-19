@@ -224,22 +224,49 @@ async def apply_wb_to_ozon(
 
             errors = []
 
-            # ── Текст ────────────────────────────────────────────────────
+            # ── Текст ────────────────────────────────────────────────────────────
             text_fields = fields & {"name", "description"}
             if text_fields:
-                payload: dict = {"offer_id": code}
-                if "name"        in text_fields: payload["name"]        = wp.name
-                if "description" in text_fields: payload["description"] = wp.description
+                # 1. Получаем полные текущие данные товара с Ozon
                 try:
                     async with session.post(
-                        "https://api-seller.ozon.ru/v1/product/update",
-                        headers=ozon_headers,
-                        json={"items": [payload]},
+                            "https://api-seller.ozon.ru/v3/product/info/list",
+                            headers=ozon_headers,
+                            json={"offer_id": [code]},
+                    ) as r:
+                        info = await r.json(content_type=None)
+                    current = info.get("items", [{}])[0]
+                    if not current:
+                        errors.append("Не удалось получить данные товара с Ozon")
+                        raise StopIteration
+
+                    # 2. Формируем payload — берём все текущие поля и меняем только нужные
+                    update_item = {
+                        "offer_id": code,
+                        "name": wp.name if "name" in text_fields else current.get("name", ""),
+                        "description": wp.description if "description" in text_fields else current.get("description",
+                                                                                                       ""),
+                        "description_category_id": current.get("description_category_id"),
+                        "type_id": current.get("type_id"),
+                        "price": current.get("price", "0"),
+                        "vat": current.get("vat", "0"),
+                        "attributes": current.get("attributes", []),
+                        "images": current.get("images", []),
+                    }
+                    print(f"[apply] text import payload keys={list(update_item.keys())}", flush=True)
+
+                    # 3. Обновляем
+                    async with session.post(
+                            "https://api-seller.ozon.ru/v3/product/import",
+                            headers=ozon_headers,
+                            json={"items": [update_item]},
                     ) as r:
                         txt = await r.text()
-                        print(f"[apply] text status={r.status} resp={txt[:200]}", flush=True)
+                        print(f"[apply] text status={r.status} resp={txt[:300]}", flush=True)
                         if r.status != 200:
                             errors.append(f"Текст {r.status}: {txt[:200]}")
+                except StopIteration:
+                    pass
                 except Exception as e:
                     errors.append(f"Текст: {e}")
 
