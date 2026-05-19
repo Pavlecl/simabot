@@ -2824,15 +2824,14 @@ async def content_sync_page(request: Request, user: dict = Depends(require_any_r
 
 
 @app.get("/api/content-sync/products")
-async def api_content_sync_products(
-    user: dict = Depends(require_any_role),
-):
+async def api_content_sync_products(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
     wb_key = await get_active_wb_key()
     if not wb_key:
-        raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта. Добавьте токен WB ниже на странице.")
-
+        raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта. Добавьте токен WB в разделе Пользователи → Кабинеты WB.")
     matched = await get_matched_products(get_active_headers(), wb_key)
-
     def serialize(p):
         if p is None:
             return None
@@ -2845,36 +2844,33 @@ async def api_content_sync_products(
             "images":      p.images[:5],
             "attributes":  p.attributes[:20],
         }
-
     return [
         {"vendor_code": m.vendor_code, "ozon": serialize(m.ozon), "wb": serialize(m.wb)}
         for m in matched
     ]
 
-
 @app.post("/api/content-sync/apply")
-async def api_content_sync_apply(
-    request: Request,
-    user: dict = Depends(require_admin),
-):
+async def api_content_sync_apply(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
     body  = await request.json()
     tasks = body.get("tasks", [])
     if not tasks:
         raise HTTPException(status_code=400, detail="Нет задач")
-
     wb_key = await get_active_wb_key()
     if not wb_key:
         raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта")
-
     results  = await apply_wb_to_ozon(get_active_headers(), wb_key, tasks)
     ok_count = sum(1 for r in results if r["status"] == "ok")
     return {"results": results, "ok": ok_count, "total": len(results)}
 
-
 # ── WB-аккаунты ──────────────────────────────────────────────────────
-
 @app.get("/api/wb-accounts")
-async def api_wb_accounts_list(user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def api_wb_accounts_list(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
     accounts = await get_all_wb_accounts_db()
     return [
         {
@@ -2886,26 +2882,32 @@ async def api_wb_accounts_list(user: dict = Depends(require_admin), db: AsyncSes
         for a in accounts
     ]
 
-
 @app.post("/api/wb-accounts")
-async def api_wb_accounts_create(request: Request, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def api_wb_accounts_create(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
     body = await request.json()
     acc  = WbAccount(name=body["name"], api_key=body["api_key"], is_active=False)
     db.add(acc)
     await db.commit()
     return {"ok": True, "id": acc.id, "name": acc.name}
 
-
 @app.post("/api/wb-accounts/{account_id}/activate")
-async def api_wb_accounts_activate(account_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def api_wb_accounts_activate(request: Request, account_id: int, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
     await db.execute(update(WbAccount).values(is_active=False))
     await db.execute(update(WbAccount).where(WbAccount.id == account_id).values(is_active=True))
     await db.commit()
     return {"ok": True, "active_id": account_id}
 
-
 @app.delete("/api/wb-accounts/{account_id}")
-async def api_wb_accounts_delete(account_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def api_wb_accounts_delete(request: Request, account_id: int, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
     await db.execute(delete(WbAccount).where(WbAccount.id == account_id))
     await db.commit()
     return {"ok": True}
