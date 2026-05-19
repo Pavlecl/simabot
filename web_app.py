@@ -2942,23 +2942,38 @@ async def api_wb_accounts_delete(request: Request, account_id: int, db: AsyncSes
     return {"ok": True}
 
 @app.get("/api/img-proxy")
-async def image_proxy(url: str):
-    """Проксирует изображения WB для передачи на Ozon."""
+async def image_proxy(request: Request, url: str):
+    """Скачивает фото с WB CDN и отдаёт как JPEG для Ozon."""
     from fastapi.responses import Response
-    # Разрешаем только WB CDN
+    import io
+    from PIL import Image
+
     if "wbbasket.ru" not in url and "wb.ru" not in url:
         raise HTTPException(status_code=403, detail="Только WB CDN")
+
+    # HEAD-запрос — просто подтверждаем что URL валиден
+    if request.method == "HEAD":
+        return Response(content=b"", media_type="image/jpeg")
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                url.replace(".webp", ".jpg"),
+                url,
                 headers={"User-Agent": "Mozilla/5.0"},
-                timeout=aiohttp.ClientTimeout(total=15)
+                timeout=aiohttp.ClientTimeout(total=15),
             ) as r:
                 if r.status != 200:
-                    raise HTTPException(status_code=404)
-                content = await r.read()
-        return Response(content=content, media_type="image/jpeg")
+                    raise HTTPException(status_code=404, detail=f"WB вернул {r.status}")
+                raw = await r.read()
+
+        # Конвертируем в JPEG (Ozon принимает только JPG/PNG)
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95)
+        return Response(content=buf.getvalue(), media_type="image/jpeg")
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
