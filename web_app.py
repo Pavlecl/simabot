@@ -2827,23 +2827,52 @@ async def content_sync_page(request: Request, user: dict = Depends(require_any_r
 async def api_content_sync_products(request: Request):
     user = get_current_user(request)
     if not user:
-        return JSONResponse(status_code=200, content={"error": "unauthorized"})
+        raise HTTPException(status_code=401, detail="Не авторизован")
     wb_key = await get_active_wb_key()
     if not wb_key:
-        raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта. Добавьте токен WB в разделе Пользователи → Кабинеты WB.")
-    matched = await get_matched_products(get_active_headers(), wb_key)
-    def serialize(p):
-        if p is None:
-            return None
+        raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта.")
+
+    # Берём Ozon-данные из локальной БД (быстро) вместо API (медленно)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(Product).where(
+                Product.offer_id != None,
+                Product.name != None
+            )
+        )
+        products_db = r.scalars().all()
+
+    from content_sync import fetch_wb_products, MatchedProduct, ProductContent
+    wb = await fetch_wb_products(wb_key)
+
+    matched = []
+    for p in products_db:
+        if p.offer_id in wb:
+            matched.append(MatchedProduct(
+                vendor_code=p.offer_id,
+                ozon=ProductContent(
+                    vendor_code=p.offer_id,
+                    product_id=p.product_id,
+                    name=p.name or "",
+                    description="",
+                    images=[p.image_url] if p.image_url else [],
+                    attributes=[],
+                ),
+                wb=wb[p.offer_id],
+            ))
+
+    def serialize(pc):
+        if pc is None: return None
         return {
-            "vendor_code": p.vendor_code,
-            "product_id":  p.product_id,
-            "nm_id":       p.nm_id,
-            "name":        p.name,
-            "description": p.description,
-            "images":      p.images[:5],
-            "attributes":  p.attributes[:20],
+            "vendor_code": pc.vendor_code,
+            "product_id":  pc.product_id,
+            "nm_id":       pc.nm_id,
+            "name":        pc.name,
+            "description": pc.description,
+            "images":      pc.images[:5],
+            "attributes":  pc.attributes[:20],
         }
+
     return [
         {"vendor_code": m.vendor_code, "ozon": serialize(m.ozon), "wb": serialize(m.wb)}
         for m in matched
