@@ -155,7 +155,7 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
                 )
 
             cur = data.get("cursor", {})
-            if not cur.get("updatedAt") or not cur.get("nmID"):
+            if cur.get("total", 0) < 100:  # правильное условие из документации WB
                 break
             cursor = {"updatedAt": cur["updatedAt"], "nmID": cur["nmID"]}
 

@@ -3061,7 +3061,7 @@ async def wb_cache_refresh(request: Request):
                         await db.commit()
                     _wb_refresh["fetched"] += len(batch)
                     cur = data.get("cursor", {})
-                    if not cur.get("updatedAt") or not cur.get("nmID"):
+                    if cur.get("total", 0) < 100:
                         break
                     cursor = {"updatedAt": cur["updatedAt"], "nmID": cur["nmID"]}
 
