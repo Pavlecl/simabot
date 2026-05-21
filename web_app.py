@@ -2995,51 +2995,64 @@ async def sync_ozon_descriptions(request: Request):
         global _ozon_desc_sync
         _ozon_desc_sync = {"running": True, "fetched": 0, "error": None, "finished_at": None}
         try:
-            headers = get_active_headers()
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Product.product_id, Product.offer_id).where(Product.product_id != None)
-                )
-                rows = result.fetchall()
-
-            product_ids = [r.product_id for r in rows]
-            id_to_offer = {r.product_id: r.offer_id for r in rows}
-            print(f"[ozon-desc] Начинаем: {len(product_ids)} товаров", flush=True)
-
             import aiohttp
-            async with aiohttp.ClientSession() as session:
-                for i in range(0, len(product_ids), 100):
-                    batch = product_ids[i:i+100]
+            headers = get_active_headers()
+
+            # Берём только matched товары (есть и в Ozon и в WB)
+            async with AsyncSessionLocal() as db:
+                r = await db.execute(
+                    select(Product.product_id, Product.offer_id)
+                    .join(WbProductCache, Product.offer_id == WbProductCache.vendor_code)
+                    .where(Product.product_id != None)
+                )
+                rows = r.fetchall()
+
+            print(f"[ozon-desc] Загружаем описания для {len(rows)} сопоставленных товаров", flush=True)
+            semaphore = asyncio.Semaphore(10)  # 10 одновременных запросов
+
+            async def fetch_one(session, pid, oid):
+                async with semaphore:
                     for attempt in range(3):
-                        async with session.post(
-                            "https://api-seller.ozon.ru/v3/product/info/list",
-                            headers=headers,
-                            json={"product_id": batch},
-                        ) as resp:
-                            data = await resp.json(content_type=None)
-                        if resp.status == 200:
-                            break
-                        await asyncio.sleep(10)
+                        try:
+                            async with session.post(
+                                "https://api-seller.ozon.ru/v1/product/info/description",
+                                headers=headers,
+                                json={"product_id": pid},
+                                timeout=aiohttp.ClientTimeout(total=10),
+                            ) as resp:
+                                if resp.status == 429:  # rate limit
+                                    await asyncio.sleep(30)
+                                    continue
+                                data = await resp.json(content_type=None)
+                                return pid, data.get("result", {}).get("description", "")
+                        except Exception:
+                            await asyncio.sleep(2)
+                return pid, ""
 
-                    items = data.get("items", [])
+            async with aiohttp.ClientSession() as session:
+                tasks = [fetch_one(session, row.product_id, row.offer_id) for row in rows]
+                results = []
+                # Обрабатываем батчами по 200 чтобы не перегружать память
+                for i in range(0, len(tasks), 200):
+                    batch_results = await asyncio.gather(*tasks[i:i+200])
+                    results.extend(batch_results)
+                    # Сохраняем в БД
                     async with AsyncSessionLocal() as db:
-                        for item in items:
-                            pid  = item.get("id")
-                            desc = item.get("description", "")
-                            name = item.get("name", "")
-                            await db.execute(
-                                update(Product)
-                                .where(Product.product_id == pid)
-                                .values(description=desc, name=name)
-                            )
+                        for pid, desc in batch_results:
+                            if desc:
+                                await db.execute(
+                                    update(Product)
+                                    .where(Product.product_id == pid)
+                                    .values(description=desc)
+                                )
                         await db.commit()
-
-                    _ozon_desc_sync["fetched"] += len(items)
-                    print(f"[ozon-desc] Обновлено: {_ozon_desc_sync['fetched']}", flush=True)
+                    _ozon_desc_sync["fetched"] += len(batch_results)
+                    print(f"[ozon-desc] {_ozon_desc_sync['fetched']}/{len(rows)}", flush=True)
 
             _ozon_desc_sync["running"]     = False
             _ozon_desc_sync["finished_at"] = datetime.now().isoformat()
             print(f"[ozon-desc] ✅ Готово: {_ozon_desc_sync['fetched']}", flush=True)
+
         except Exception as e:
             import traceback
             _ozon_desc_sync["running"] = False
