@@ -2819,6 +2819,9 @@ async def api_get_warehouses(request: Request, user: dict = Depends(require_admi
     except Exception as e:
         return {"ok": False, "error": str(e), "warehouses": []}
 
+# Глобальный стейт обновления кеша WB
+_wb_refresh = {"running": False, "fetched": 0, "error": None, "finished_at": None}
+
 @app.get("/content-sync", response_class=HTMLResponse)
 async def content_sync_page(request: Request, user: dict = Depends(require_any_role)):
     return templates.TemplateResponse("content_sync.html", {
@@ -3009,32 +3012,74 @@ async def wb_cache_refresh(request: Request):
         raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта")
 
     async def _do_refresh():
-        from content_sync import fetch_wb_products
+        global _wb_refresh
+        _wb_refresh = {"running": True, "fetched": 0, "error": None, "finished_at": None}
+        from content_sync import fetch_wb_products_with_progress
         try:
-            wb = await fetch_wb_products(wb_key)
             async with AsyncSessionLocal() as db:
-                # Удаляем старый кеш и вставляем новый батчами
                 await db.execute(delete(WbProductCache))
-                for i, (vc, p) in enumerate(wb.items()):
-                    db.add(WbProductCache(
-                        vendor_code     = vc,
-                        nm_id           = p.nm_id,
-                        name            = p.name,
-                        description     = p.description,
-                        images_json     = _json.dumps(p.images,     ensure_ascii=False),
-                        attributes_json = _json.dumps(p.attributes, ensure_ascii=False),
-                        updated_at      = datetime.now(),
-                    ))
-                    if i % 500 == 0:
-                        await db.flush()
                 await db.commit()
-            print(f"[wb-cache] Обновлено {len(wb)} карточек", flush=True)
+
+            wb = {}
+            wb_key_local = wb_key
+            headers = {"Authorization": wb_key_local, "Content-Type": "application/json"}
+            cursor: dict = {}
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                while True:
+                    async with session.post(
+                            "https://content-api.wildberries.ru/content/v2/get/cards/list",
+                            headers=headers,
+                            json={"settings": {"cursor": {**cursor, "limit": 100}, "filter": {"withPhoto": -1}}},
+                    ) as resp:
+                        data = await resp.json()
+                    cards = data.get("cards", [])
+                    if not cards:
+                        break
+                    batch = []
+                    for card in cards:
+                        vc = card.get("vendorCode") or str(card.get("nmID"))
+                        photos = card.get("photos", [])
+                        images = [p["big"] for p in photos if p.get("big")][:10]
+                        attrs = [
+                            {"name": ch.get("name", ""), "value": " / ".join(
+                                str(v) for v in (ch["value"] if isinstance(ch.get("value"), list)
+                                                 else [ch["value"]] if ch.get("value") is not None else [])
+                            )}
+                            for ch in card.get("characteristics", []) if ch.get("name")
+                        ]
+                        batch.append(WbProductCache(
+                            vendor_code=vc, nm_id=card.get("nmID"),
+                            name=card.get("title", ""), description=card.get("description", ""),
+                            images_json=_json.dumps(images, ensure_ascii=False),
+                            attributes_json=_json.dumps(attrs, ensure_ascii=False),
+                            updated_at=datetime.now(),
+                        ))
+                    async with AsyncSessionLocal() as db:
+                        for item in batch:
+                            await db.merge(item)
+                        await db.commit()
+                    _wb_refresh["fetched"] += len(batch)
+                    cur = data.get("cursor", {})
+                    if not cur.get("updatedAt") or not cur.get("nmID"):
+                        break
+                    cursor = {"updatedAt": cur["updatedAt"], "nmID": cur["nmID"]}
+
+            _wb_refresh["running"] = False
+            _wb_refresh["finished_at"] = datetime.now().isoformat()
+            print(f"[wb-cache] Готово: {_wb_refresh['fetched']} карточек", flush=True)
         except Exception as e:
+            _wb_refresh["running"] = False
+            _wb_refresh["error"] = str(e)
             print(f"[wb-cache] Ошибка: {e}", flush=True)
 
-    _asyncio.create_task(_do_refresh())
-    return {"status": "started", "message": "Обновление запущено в фоне"}
 
+@app.get("/api/content-sync/wb-cache/progress")
+async def wb_cache_progress(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+    return _wb_refresh
 
 @app.get("/api/content-sync/products")
 async def api_content_sync_products(request: Request):

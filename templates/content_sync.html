@@ -409,24 +409,47 @@ async function loadWbCacheStatus() {
 async function refreshWbCache() {
   const btn = document.getElementById('btn-wb-refresh');
   btn.disabled = true;
-  btn.textContent = '⏳ Обновляется...';
   try {
     const r = await fetch('/api/content-sync/wb-cache/refresh', { method: 'POST' });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail);
-    showStatus('Обновление кеша WB запущено в фоне. Подождите 5-10 минут и обновите кеш снова для проверки.', 'ok');
-    // Проверяем статус каждые 30 сек
-    const timer = setInterval(async () => {
-      await loadWbCacheStatus();
-      const el = document.getElementById('wb-cache-status');
-      if (el.textContent.includes('карточек')) clearInterval(timer);
-    }, 30000);
+    pollWbProgress();
   } catch(e) {
     showStatus('Ошибка: ' + e.message, 'error');
-  } finally {
     btn.disabled = false;
-    btn.textContent = '↻ Обновить кеш WB';
   }
+}
+
+function pollWbProgress() {
+  const btn = document.getElementById('btn-wb-refresh');
+  const statusEl = document.getElementById('wb-cache-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Обновляется...';
+
+  const timer = setInterval(async () => {
+    try {
+      const r  = await fetch('/api/content-sync/wb-cache/progress');
+      const d  = await r.json();
+      statusEl.style.color = 'var(--accent)';
+      statusEl.textContent = `⏳ Загружено карточек WB: ${d.fetched.toLocaleString('ru')}...`;
+
+      if (!d.running) {
+        clearInterval(timer);
+        btn.disabled = false;
+        btn.textContent = '↻ Обновить кеш WB';
+        if (d.error) {
+          showStatus('Ошибка обновления: ' + d.error, 'error');
+        } else {
+          await loadWbCacheStatus();
+          showStatus(`✓ Кеш WB обновлён: ${d.fetched.toLocaleString('ru')} карточек`, 'ok');
+        }
+      }
+    } catch(e) {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = '↻ Обновить кеш WB';
+    }
+  }, 2000);
 }
 
 // Загружаем статус при открытии страницы
