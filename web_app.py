@@ -3071,6 +3071,8 @@ async def wb_cache_refresh(request: Request):
             _wb_refresh["running"] = False
             _wb_refresh["error"] = str(e)
             print(f"[wb-cache] Ошибка: {e}", flush=True)
+    asyncio.create_task(_do_refresh())
+    return {"status": "started", "message": "Обновление запущено в фоне"}
 
 
 @app.get("/api/content-sync/wb-cache/progress")
