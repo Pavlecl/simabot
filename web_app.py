@@ -2983,6 +2983,80 @@ async def image_proxy(request: Request, url: str):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+_ozon_desc_sync = {"running": False, "fetched": 0, "error": None, "finished_at": None}
+
+@app.post("/api/content-sync/sync-ozon-descriptions")
+async def sync_ozon_descriptions(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+
+    async def _do_sync():
+        global _ozon_desc_sync
+        _ozon_desc_sync = {"running": True, "fetched": 0, "error": None, "finished_at": None}
+        try:
+            headers = get_active_headers()
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Product.product_id, Product.offer_id).where(Product.product_id != None)
+                )
+                rows = result.fetchall()
+
+            product_ids = [r.product_id for r in rows]
+            id_to_offer = {r.product_id: r.offer_id for r in rows}
+            print(f"[ozon-desc] Начинаем: {len(product_ids)} товаров", flush=True)
+
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                for i in range(0, len(product_ids), 100):
+                    batch = product_ids[i:i+100]
+                    for attempt in range(3):
+                        async with session.post(
+                            "https://api-seller.ozon.ru/v3/product/info/list",
+                            headers=headers,
+                            json={"product_id": batch},
+                        ) as resp:
+                            data = await resp.json(content_type=None)
+                        if resp.status == 200:
+                            break
+                        await asyncio.sleep(10)
+
+                    items = data.get("items", [])
+                    async with AsyncSessionLocal() as db:
+                        for item in items:
+                            pid  = item.get("id")
+                            desc = item.get("description", "")
+                            name = item.get("name", "")
+                            await db.execute(
+                                update(Product)
+                                .where(Product.product_id == pid)
+                                .values(description=desc, name=name)
+                            )
+                        await db.commit()
+
+                    _ozon_desc_sync["fetched"] += len(items)
+                    print(f"[ozon-desc] Обновлено: {_ozon_desc_sync['fetched']}", flush=True)
+
+            _ozon_desc_sync["running"]     = False
+            _ozon_desc_sync["finished_at"] = datetime.now().isoformat()
+            print(f"[ozon-desc] ✅ Готово: {_ozon_desc_sync['fetched']}", flush=True)
+        except Exception as e:
+            import traceback
+            _ozon_desc_sync["running"] = False
+            _ozon_desc_sync["error"]   = str(e)
+            print(f"[ozon-desc] ❌ Ошибка: {e}\n{traceback.format_exc()}", flush=True)
+
+    asyncio.create_task(_do_sync())
+    return {"status": "started"}
+
+
+@app.get("/api/content-sync/sync-ozon-descriptions/progress")
+async def sync_ozon_descriptions_progress(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+    return _ozon_desc_sync
+
 # ── Кеш WB ───────────────────────────────────────────────────────────
 
 @app.get("/api/content-sync/wb-cache/status")

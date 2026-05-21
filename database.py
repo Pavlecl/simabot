@@ -76,6 +76,7 @@ class Product(Base):
     offer_id = Column(String, primary_key=True)   # Артикул продавца
     product_id = Column(BigInteger, nullable=True)   # ID на Ozon (может быть > int32)
     name = Column(String, nullable=True)           # Название
+    description = Column(Text, nullable=True)
     image_url = Column(String, nullable=True)      # Фото
 
     # Текущие цены (кэш с Ozon, обновляется при синхронизации)
