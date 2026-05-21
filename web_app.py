@@ -2860,7 +2860,7 @@ async def api_content_sync_products(request: Request):
                     vendor_code=p.offer_id,
                     product_id=p.product_id,
                     name=p.name or "",
-                    description="",
+                    description=p.description or "",
                     images=[p.image_url] if p.image_url else [],
                     attributes=[],
                 ),
