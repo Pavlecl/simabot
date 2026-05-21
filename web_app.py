@@ -3014,7 +3014,6 @@ async def wb_cache_refresh(request: Request):
     async def _do_refresh():
         global _wb_refresh
         _wb_refresh = {"running": True, "fetched": 0, "error": None, "finished_at": None}
-        from content_sync import fetch_wb_products_with_progress
         try:
             async with AsyncSessionLocal() as db:
                 await db.execute(delete(WbProductCache))
