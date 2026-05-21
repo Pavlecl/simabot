@@ -7,6 +7,10 @@
   </div>
   <div style="display:flex;gap:8px;align-items:center">
     <span id="match-count" style="font-size:11px;color:var(--text-dim)"></span>
+    <button class="btn" id="btn-wb-refresh" onclick="refreshWbCache()" title="Обновить кеш WB карточек">
+      ↻ Обновить кеш WB
+    </button>
+    <span id="wb-cache-status" style="font-size:11px;color:var(--text-dim)"></span>
     <button class="btn" id="btn-load" onclick="loadProducts()">⟳ Загрузить товары</button>
     <button class="btn primary" id="btn-apply" disabled onclick="applyContent()">
       ↑ Перенести на Ozon (<span id="sel-count">0</span>)
@@ -385,5 +389,47 @@ function showStatus(msg, type) {
   el.style.color = type==='error'?'var(--red)':'var(--green)'; el.textContent = msg;
 }
 function hideStatus() { document.getElementById('status-bar').style.display = 'none'; }
+
+// ── Кеш WB ───────────────────────────────────────────────────────────
+async function loadWbCacheStatus() {
+  try {
+    const r = await fetch('/api/content-sync/wb-cache/status');
+    const d = await r.json();
+    const el = document.getElementById('wb-cache-status');
+    if (d.count > 0) {
+      const dt = d.updated_at ? new Date(d.updated_at).toLocaleString('ru') : '—';
+      el.textContent = `Кеш WB: ${d.count} карточек, обновлён ${dt}`;
+    } else {
+      el.textContent = 'Кеш WB пуст — нажмите ↻';
+      el.style.color = 'var(--red)';
+    }
+  } catch(e) {}
+}
+
+async function refreshWbCache() {
+  const btn = document.getElementById('btn-wb-refresh');
+  btn.disabled = true;
+  btn.textContent = '⏳ Обновляется...';
+  try {
+    const r = await fetch('/api/content-sync/wb-cache/refresh', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+    showStatus('Обновление кеша WB запущено в фоне. Подождите 5-10 минут и обновите кеш снова для проверки.', 'ok');
+    // Проверяем статус каждые 30 сек
+    const timer = setInterval(async () => {
+      await loadWbCacheStatus();
+      const el = document.getElementById('wb-cache-status');
+      if (el.textContent.includes('карточек')) clearInterval(timer);
+    }, 30000);
+  } catch(e) {
+    showStatus('Ошибка: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↻ Обновить кеш WB';
+  }
+}
+
+// Загружаем статус при открытии страницы
+loadWbCacheStatus();
 </script>
 {% endblock %}

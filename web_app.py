@@ -20,6 +20,9 @@ import asyncio
 from datetime import datetime, timedelta, date, timezone
 from typing import Optional
 
+import json as _json
+import asyncio as _asyncio
+
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -32,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
-                      FboWatchlist, StockItem, OzonAccount, WbAccount, init_db)
+                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, init_db)
 
 from content_sync import get_matched_products, apply_wb_to_ozon, get_active_wb_key, get_all_wb_accounts_db
 
@@ -2977,6 +2980,125 @@ async def image_proxy(request: Request, url: str):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+# ── Кеш WB ───────────────────────────────────────────────────────────
+
+@app.get("/api/content-sync/wb-cache/status")
+async def wb_cache_status(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+    async with AsyncSessionLocal() as db:
+        count = (await db.execute(select(func.count(WbProductCache.vendor_code)))).scalar()
+        last  = (await db.execute(
+            select(WbProductCache.updated_at).order_by(WbProductCache.updated_at.desc()).limit(1)
+        )).scalar()
+    return {
+        "count":      count or 0,
+        "updated_at": last.isoformat() if last else None,
+    }
+
+
+@app.post("/api/content-sync/wb-cache/refresh")
+async def wb_cache_refresh(request: Request):
+    """Запускает фоновое обновление кеша WB."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+    wb_key = await get_active_wb_key()
+    if not wb_key:
+        raise HTTPException(status_code=400, detail="Нет активного WB-аккаунта")
+
+    async def _do_refresh():
+        from content_sync import fetch_wb_products
+        try:
+            wb = await fetch_wb_products(wb_key)
+            async with AsyncSessionLocal() as db:
+                # Удаляем старый кеш и вставляем новый батчами
+                await db.execute(delete(WbProductCache))
+                for i, (vc, p) in enumerate(wb.items()):
+                    db.add(WbProductCache(
+                        vendor_code     = vc,
+                        nm_id           = p.nm_id,
+                        name            = p.name,
+                        description     = p.description,
+                        images_json     = _json.dumps(p.images,     ensure_ascii=False),
+                        attributes_json = _json.dumps(p.attributes, ensure_ascii=False),
+                        updated_at      = datetime.now(),
+                    ))
+                    if i % 500 == 0:
+                        await db.flush()
+                await db.commit()
+            print(f"[wb-cache] Обновлено {len(wb)} карточек", flush=True)
+        except Exception as e:
+            print(f"[wb-cache] Ошибка: {e}", flush=True)
+
+    _asyncio.create_task(_do_refresh())
+    return {"status": "started", "message": "Обновление запущено в фоне"}
+
+
+@app.get("/api/content-sync/products")
+async def api_content_sync_products(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+
+    # Ozon из локальной БД
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(Product).where(Product.offer_id != None, Product.name != None)
+        )
+        products_db = r.scalars().all()
+
+    # WB из кеша
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(WbProductCache))
+        wb_cache = {row.vendor_code: row for row in r.scalars().all()}
+
+    if not wb_cache:
+        raise HTTPException(status_code=400, detail="Кеш WB пуст. Нажмите 'Обновить кеш WB'.")
+
+    from content_sync import MatchedProduct, ProductContent
+    matched = []
+    for p in products_db:
+        wc = wb_cache.get(p.offer_id)
+        if not wc:
+            continue
+        matched.append(MatchedProduct(
+            vendor_code = p.offer_id,
+            ozon = ProductContent(
+                vendor_code = p.offer_id,
+                product_id  = p.product_id,
+                name        = p.name or "",
+                description = "",
+                images      = [p.image_url] if getattr(p, 'image_url', None) else [],
+                attributes  = [],
+            ),
+            wb = ProductContent(
+                vendor_code = wc.vendor_code,
+                nm_id       = wc.nm_id,
+                name        = wc.name or "",
+                description = wc.description or "",
+                images      = _json.loads(wc.images_json     or "[]"),
+                attributes  = _json.loads(wc.attributes_json or "[]"),
+            ),
+        ))
+
+    def serialize(pc):
+        if pc is None: return None
+        return {
+            "vendor_code": pc.vendor_code,
+            "product_id":  pc.product_id,
+            "nm_id":       pc.nm_id,
+            "name":        pc.name,
+            "description": pc.description,
+            "images":      pc.images[:5],
+            "attributes":  pc.attributes[:20],
+        }
+
+    return [
+        {"vendor_code": m.vendor_code, "ozon": serialize(m.ozon), "wb": serialize(m.wb)}
+        for m in matched
+    ]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

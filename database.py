@@ -371,3 +371,15 @@ class WbAccount(Base):
     api_key = Column(String, nullable=False)  # токен WB (Content API)
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
+
+class WbProductCache(Base):
+    """Кеш карточек WB для быстрого сопоставления контента."""
+    __tablename__ = "wb_product_cache"
+
+    vendor_code     = Column(String,   primary_key=True)
+    nm_id           = Column(BigInteger, nullable=True)
+    name            = Column(String,   nullable=True)
+    description     = Column(Text,     nullable=True)
+    images_json     = Column(Text,     nullable=True)   # JSON список URL
+    attributes_json = Column(Text,     nullable=True)   # JSON список атрибутов
+    updated_at      = Column(DateTime, default=datetime.now, onupdate=datetime.now)
