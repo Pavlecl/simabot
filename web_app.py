@@ -3029,21 +3029,36 @@ async def wb_cache_refresh(request: Request):
 
             async with aiohttp.ClientSession() as session:
                 while True:
-                    async with session.post(
-                        "https://content-api.wildberries.ru/content/v2/get/cards/list",
-                        headers=headers,
-                        json={"settings": {
-                            "sort":   {"ascending": False},
-                            "cursor": {**cursor, "limit": 100},
-                            "filter": {"withPhoto": -1},
-                        }},
-                    ) as resp:
-                        data = await resp.json(content_type=None)
+                    # Retry при временных ошибках WB (500/502/503/504)
+                    data = None
+                    for attempt in range(5):
+                        async with session.post(
+                            "https://content-api.wildberries.ru/content/v2/get/cards/list",
+                            headers=headers,
+                            json={"settings": {
+                                "sort":   {"ascending": False},
+                                "cursor": {**cursor, "limit": 100},
+                                "filter": {"withPhoto": -1},
+                            }},
+                        ) as resp:
+                            status = resp.status
+                            if status in (500, 502, 503, 504):
+                                wait = (attempt + 1) * 15
+                                print(f"[wb-cache] WB вернул {status}, попытка {attempt+1}/5, ждём {wait} сек...", flush=True)
+                                await asyncio.sleep(wait)
+                                continue
+                            data = await resp.json(content_type=None)
+                            print(f"[wb-cache] HTTP {status} | cards={len(data.get('cards',[]))} | cursor_total={data.get('cursor',{}).get('total')}", flush=True)
+                            break
 
-                    print(f"[wb-cache] HTTP {resp.status} | cards={len(data.get('cards',[]))} | cursor={data.get('cursor',{})} | keys={list(data.keys())}", flush=True)
+                    if data is None:
+                        raise Exception("WB API недоступен после 5 попыток")
 
                     cards = data.get("cards", [])
                     if not cards:
+                        err = data.get("errorText") or data.get("error")
+                        if err:
+                            print(f"[wb-cache] Ошибка API: {err} | {data.get('additionalErrors')}", flush=True)
                         print("[wb-cache] Пустой ответ — завершаем", flush=True)
                         break
 
