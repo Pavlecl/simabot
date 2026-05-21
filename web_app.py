@@ -3015,62 +3015,90 @@ async def wb_cache_refresh(request: Request):
         global _wb_refresh
         _wb_refresh = {"running": True, "fetched": 0, "error": None, "finished_at": None}
         try:
+            import aiohttp, json as _json
+            from database import WbProductCache
+
+            # Очищаем старый кеш
             async with AsyncSessionLocal() as db:
                 await db.execute(delete(WbProductCache))
                 await db.commit()
+            print("[wb-cache] Старый кеш удалён, начинаем загрузку...", flush=True)
 
-            wb = {}
-            wb_key_local = wb_key
-            headers = {"Authorization": wb_key_local, "Content-Type": "application/json"}
+            headers = {"Authorization": wb_key, "Content-Type": "application/json"}
             cursor: dict = {}
-            import aiohttp
+
             async with aiohttp.ClientSession() as session:
                 while True:
                     async with session.post(
-                            "https://content-api.wildberries.ru/content/v2/get/cards/list",
-                            headers=headers,
-                            json={"settings": {"cursor": {**cursor, "limit": 100}, "filter": {"withPhoto": -1}}},
+                        "https://content-api.wildberries.ru/content/v2/get/cards/list",
+                        headers=headers,
+                        json={"settings": {
+                            "sort":   {"ascending": False},
+                            "cursor": {**cursor, "limit": 100},
+                            "filter": {"withPhoto": -1},
+                        }},
                     ) as resp:
-                        data = await resp.json()
+                        data = await resp.json(content_type=None)
+
+                    print(f"[wb-cache] HTTP {resp.status} | cards={len(data.get('cards',[]))} | cursor={data.get('cursor',{})} | keys={list(data.keys())}", flush=True)
+
                     cards = data.get("cards", [])
                     if not cards:
+                        print("[wb-cache] Пустой ответ — завершаем", flush=True)
                         break
+
                     batch = []
                     for card in cards:
-                        vc = card.get("vendorCode") or str(card.get("nmID"))
+                        vc     = card.get("vendorCode") or str(card.get("nmID"))
                         photos = card.get("photos", [])
                         images = [p["big"] for p in photos if p.get("big")][:10]
-                        attrs = [
-                            {"name": ch.get("name", ""), "value": " / ".join(
-                                str(v) for v in (ch["value"] if isinstance(ch.get("value"), list)
-                                                 else [ch["value"]] if ch.get("value") is not None else [])
-                            )}
+                        attrs  = [
+                            {
+                                "name":  ch.get("name", ""),
+                                "value": " / ".join(
+                                    str(v) for v in (
+                                        ch["value"] if isinstance(ch.get("value"), list)
+                                        else [ch["value"]] if ch.get("value") is not None
+                                        else []
+                                    )
+                                ),
+                            }
                             for ch in card.get("characteristics", []) if ch.get("name")
                         ]
                         batch.append(WbProductCache(
-                            vendor_code=vc, nm_id=card.get("nmID"),
-                            name=card.get("title", ""), description=card.get("description", ""),
-                            images_json=_json.dumps(images, ensure_ascii=False),
-                            attributes_json=_json.dumps(attrs, ensure_ascii=False),
-                            updated_at=datetime.now(),
+                            vendor_code     = vc,
+                            nm_id           = card.get("nmID"),
+                            name            = card.get("title", ""),
+                            description     = card.get("description", ""),
+                            images_json     = _json.dumps(images, ensure_ascii=False),
+                            attributes_json = _json.dumps(attrs,   ensure_ascii=False),
+                            updated_at      = datetime.now(),
                         ))
+
                     async with AsyncSessionLocal() as db:
                         for item in batch:
                             await db.merge(item)
                         await db.commit()
+
                     _wb_refresh["fetched"] += len(batch)
+                    print(f"[wb-cache] Загружено: {_wb_refresh['fetched']}", flush=True)
+
                     cur = data.get("cursor", {})
                     if cur.get("total", 0) < 100:
+                        print(f"[wb-cache] Последняя страница (total={cur.get('total')})", flush=True)
                         break
                     cursor = {"updatedAt": cur["updatedAt"], "nmID": cur["nmID"]}
 
-            _wb_refresh["running"] = False
+            _wb_refresh["running"]     = False
             _wb_refresh["finished_at"] = datetime.now().isoformat()
-            print(f"[wb-cache] Готово: {_wb_refresh['fetched']} карточек", flush=True)
+            print(f"[wb-cache] ✅ Готово: {_wb_refresh['fetched']} карточек", flush=True)
+
         except Exception as e:
+            import traceback
             _wb_refresh["running"] = False
-            _wb_refresh["error"] = str(e)
-            print(f"[wb-cache] Ошибка: {e}", flush=True)
+            _wb_refresh["error"]   = str(e)
+            print(f"[wb-cache] ❌ Ошибка: {e}\n{traceback.format_exc()}", flush=True)
+
     asyncio.create_task(_do_refresh())
     return {"status": "started", "message": "Обновление запущено в фоне"}
 
