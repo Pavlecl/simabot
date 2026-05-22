@@ -74,31 +74,45 @@ async def fetch_ozon_products(headers: dict) -> dict[str, ProductContent]:
 
         for i in range(0, len(product_ids), 100):
             batch = product_ids[i:i + 100]
+            # v4 — полные данные включая размеры и атрибуты
             async with session.post(
-                "https://api-seller.ozon.ru/v3/product/info/list",
-                headers=headers,
-                json={"product_id": batch},
-            ) as resp:
-                info_data = await resp.json(content_type=None)
-            for p in info_data.get("items", []):
-                pid      = p["id"]
-                offer_id = offer_map.get(pid, str(pid))
-                attrs = [
-                    {
-                        "name":  a.get("name", ""),
-                        "value": " / ".join(v.get("value", "") for v in a.get("values", [])),
-                    }
-                    for a in p.get("attributes", []) if a.get("name")
-                ]
-                result[offer_id] = ProductContent(
-                    vendor_code         = offer_id,
-                    product_id          = pid,
-                    name                = p.get("name", ""),
-                    description         = p.get("description", ""),
-                    images              = p.get("images", []),
-                    attributes          = attrs,
-                    ozon_attributes_raw = p.get("attributes", []),
-                )
+                    "https://api-seller.ozon.ru/v4/product/info/attributes",
+                    headers=ozon_headers,
+                    json={"filter": {"offer_id": [code]}, "limit": 1, "sort_dir": "ASC"},
+            ) as r:
+                info4 = await r.json(content_type=None)
+            current4 = info4.get("result", [{}])[0]
+
+            # v3 — только цена и ставка НДС
+            async with session.post(
+                    "https://api-seller.ozon.ru/v3/product/info/list",
+                    headers=ozon_headers,
+                    json={"offer_id": [code]},
+            ) as r:
+                info3 = await r.json(content_type=None)
+            current3 = info3.get("items", [{}])[0]
+
+            if not current4 or not current3:
+                errors.append("Не удалось получить данные товара с Ozon")
+                raise StopIteration
+
+            update_item = {
+                "offer_id": code,
+                "name": wp.name if "name" in text_fields else current4.get("name", ""),
+                "description": wp.description if "description" in text_fields else "",
+                "description_category_id": current4.get("description_category_id"),
+                "type_id": current4.get("type_id"),
+                "price": current3.get("price", "0"),
+                "vat": current3.get("vat", "0"),
+                "attributes": current4.get("attributes", []),
+                "images": current4.get("images", []),
+                "depth": current4.get("depth", 0),
+                "width": current4.get("width", 0),
+                "height": current4.get("height", 0),
+                "dimension_unit": current4.get("dimension_unit", "mm"),
+                "weight": current4.get("weight", 0),
+                "weight_unit": current4.get("weight_unit", "g"),
+            }
 
     return result
 
