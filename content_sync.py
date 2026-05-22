@@ -278,7 +278,6 @@ async def apply_wb_to_ozon(
                             errors.append(f"Текст {r.status}: {txt[:200]}")
                         else:
                             # Обновляем локальную БД чтобы таблица показывала актуальные данные
-                            from database import AsyncSessionLocal, Product as ProductModel
                             async with AsyncSessionLocal() as db:
                                 update_vals = {}
                                 if "name" in text_fields: update_vals["name"] = wp.name
