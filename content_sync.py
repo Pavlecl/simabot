@@ -16,7 +16,6 @@ from sqlalchemy import select, update
 from database import AsyncSessionLocal, WbAccount
 
 
-
 # ─────────────────────────────────────────────────
 # Структуры данных
 # ─────────────────────────────────────────────────
@@ -74,45 +73,31 @@ async def fetch_ozon_products(headers: dict) -> dict[str, ProductContent]:
 
         for i in range(0, len(product_ids), 100):
             batch = product_ids[i:i + 100]
-            # v4 — полные данные включая размеры и атрибуты
             async with session.post(
-                    "https://api-seller.ozon.ru/v4/product/info/attributes",
-                    headers=ozon_headers,
-                    json={"filter": {"offer_id": [code]}, "limit": 1, "sort_dir": "ASC"},
-            ) as r:
-                info4 = await r.json(content_type=None)
-            current4 = info4.get("result", [{}])[0]
-
-            # v3 — только цена и ставка НДС
-            async with session.post(
-                    "https://api-seller.ozon.ru/v3/product/info/list",
-                    headers=ozon_headers,
-                    json={"offer_id": [code]},
-            ) as r:
-                info3 = await r.json(content_type=None)
-            current3 = info3.get("items", [{}])[0]
-
-            if not current4 or not current3:
-                errors.append("Не удалось получить данные товара с Ozon")
-                raise StopIteration
-
-            update_item = {
-                "offer_id": code,
-                "name": wp.name if "name" in text_fields else current4.get("name", ""),
-                "description": wp.description if "description" in text_fields else "",
-                "description_category_id": current4.get("description_category_id"),
-                "type_id": current4.get("type_id"),
-                "price": current3.get("price", "0"),
-                "vat": current3.get("vat", "0"),
-                "attributes": current4.get("attributes", []),
-                "images": current4.get("images", []),
-                "depth": current4.get("depth", 0),
-                "width": current4.get("width", 0),
-                "height": current4.get("height", 0),
-                "dimension_unit": current4.get("dimension_unit", "mm"),
-                "weight": current4.get("weight", 0),
-                "weight_unit": current4.get("weight_unit", "g"),
-            }
+                "https://api-seller.ozon.ru/v3/product/info/list",
+                headers=headers,
+                json={"product_id": batch},
+            ) as resp:
+                info_data = await resp.json(content_type=None)
+            for p in info_data.get("items", []):
+                pid      = p["id"]
+                offer_id = offer_map.get(pid, str(pid))
+                attrs = [
+                    {
+                        "name":  a.get("name", ""),
+                        "value": " / ".join(v.get("value", "") for v in a.get("values", [])),
+                    }
+                    for a in p.get("attributes", []) if a.get("name")
+                ]
+                result[offer_id] = ProductContent(
+                    vendor_code         = offer_id,
+                    product_id          = pid,
+                    name                = p.get("name", ""),
+                    description         = p.get("description", ""),
+                    images              = p.get("images", []),
+                    attributes          = attrs,
+                    ozon_attributes_raw = p.get("attributes", []),
+                )
 
     return result
 
@@ -125,15 +110,20 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
     headers = {"Authorization": wb_api_key, "Content-Type": "application/json"}
     result: dict[str, ProductContent] = {}
     cursor: dict = {}
+    LIMIT = 100
 
     async with aiohttp.ClientSession() as session:
         while True:
             async with session.post(
                 "https://content-api.wildberries.ru/content/v2/get/cards/list",
                 headers=headers,
-                json={"settings": {"cursor": {**cursor, "limit": 100}, "filter": {"withPhoto": -1}}},
+                json={"settings": {
+                    "sort":   {"ascending": False},
+                    "cursor": {**cursor, "limit": LIMIT},
+                    "filter": {"withPhoto": -1},
+                }},
             ) as resp:
-                data = await resp.json()
+                data = await resp.json(content_type=None)
 
             cards = data.get("cards", [])
             if not cards:
@@ -143,7 +133,6 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
                 nm_id       = card.get("nmID")
                 vendor_code = card.get("vendorCode") or str(nm_id)
 
-                # Берём готовые URL из API — максимальное качество (big)
                 photos = card.get("photos", [])
                 images = [p["big"] for p in photos if p.get("big")][:10]
 
@@ -169,8 +158,9 @@ async def fetch_wb_products(wb_api_key: str) -> dict[str, ProductContent]:
                     attributes  = attrs,
                 )
 
+            # Правильное условие из документации WB: total < limit = последняя страница
             cur = data.get("cursor", {})
-            if cur.get("total", 0) < 100:  # правильное условие из документации WB
+            if cur.get("total", 0) < LIMIT:
                 break
             cursor = {"updatedAt": cur["updatedAt"], "nmID": cur["nmID"]}
 
@@ -203,22 +193,22 @@ async def apply_wb_to_ozon(
 
     needed_codes = {t["vendor_code"] for t in tasks}
 
-    # 1. WB данные берём из запроса (уже показаны пользователю)
-    wb = {}
+    # 1. WB данные берём из запроса (уже показаны пользователю — стабильно)
+    from database import Product as ProductModel
+    wb: dict[str, ProductContent] = {}
     for task in tasks:
         if task.get("wb_data"):
             d = task["wb_data"]
             wb[task["vendor_code"]] = ProductContent(
-                vendor_code=task["vendor_code"],
-                name=d.get("name", ""),
-                description=d.get("description", ""),
-                images=d.get("images", []),
-                attributes=d.get("attributes", []),
-                nm_id=d.get("nm_id"),
+                vendor_code = task["vendor_code"],
+                name        = d.get("name", ""),
+                description = d.get("description", ""),
+                images      = d.get("images", []),
+                attributes  = d.get("attributes", []),
+                nm_id       = d.get("nm_id"),
             )
 
-    # 2. product_id из локальной БД — быстро, без API
-    from database import Product as ProductModel
+    # 2. product_id из локальной БД
     ozon_ids: dict[str, int] = {}
     async with AsyncSessionLocal() as db:
         r = await db.execute(
@@ -238,10 +228,10 @@ async def apply_wb_to_ozon(
             wp     = wb.get(code)
             pid    = ozon_ids.get(code)
 
-            print(f"[apply] code={code} pid={pid} fields={fields} images={wp.images[:1] if wp else []}", flush=True)
+            print(f"[apply] code={code} pid={pid} fields={fields}", flush=True)
 
             if not wp:
-                results.append({"vendor_code": code, "status": "error", "error": "Товар не найден на WB"})
+                results.append({"vendor_code": code, "status": "error", "error": "Нет WB-данных в запросе"})
                 continue
             if not pid:
                 results.append({"vendor_code": code, "status": "error", "error": "product_id не найден в БД"})
@@ -249,60 +239,74 @@ async def apply_wb_to_ozon(
 
             errors = []
 
-            # ── Текст ────────────────────────────────────────────────────────────
+            # ── Текст (name / description) ────────────────────────────────
             text_fields = fields & {"name", "description"}
             if text_fields:
-                # 1. Получаем полные текущие данные товара с Ozon
                 try:
+                    # Получаем полные данные товара из Ozon (v4 — включая размеры)
                     async with session.post(
-                            "https://api-seller.ozon.ru/v3/product/info/list",
-                            headers=ozon_headers,
-                            json={"offer_id": [code]},
+                        "https://api-seller.ozon.ru/v4/product/info/attributes",
+                        headers=ozon_headers,
+                        json={"filter": {"offer_id": [code]}, "limit": 1, "sort_dir": "ASC"},
                     ) as r:
-                        info = await r.json(content_type=None)
-                    current = info.get("items", [{}])[0]
-                    if not current:
+                        info4 = await r.json(content_type=None)
+                    current4 = info4.get("result", [{}])[0]
+
+                    # v3 — только цена и ставка НДС
+                    async with session.post(
+                        "https://api-seller.ozon.ru/v3/product/info/list",
+                        headers=ozon_headers,
+                        json={"offer_id": [code]},
+                    ) as r:
+                        info3 = await r.json(content_type=None)
+                    current3 = info3.get("items", [{}])[0]
+
+                    if not current4:
                         errors.append("Не удалось получить данные товара с Ozon")
                         raise StopIteration
 
-                    # 2. Формируем payload — берём все текущие поля и меняем только нужные
                     update_item = {
-                        "offer_id": code,
-                        "name": wp.name if "name" in text_fields else current.get("name", ""),
-                        "description": wp.description if "description" in text_fields else current.get("description",
-                                                                                                       ""),
-                        "description_category_id": current.get("description_category_id"),
-                        "type_id": current.get("type_id"),
-                        "price": current.get("price", "0"),
-                        "vat": current.get("vat", "0"),
-                        "attributes": current.get("attributes", []),
-                        "images": current.get("images", []),
+                        "offer_id":                code,
+                        "name":                    wp.name if "name" in text_fields else current4.get("name", ""),
+                        "description":             wp.description if "description" in text_fields else "",
+                        "description_category_id": current4.get("description_category_id"),
+                        "type_id":                 current4.get("type_id"),
+                        "price":                   current3.get("price", "0"),
+                        "vat":                     current3.get("vat", "0"),
+                        "attributes":              current4.get("attributes", []),
+                        "images":                  current4.get("images", []),
+                        "depth":                   current4.get("depth", 0),
+                        "width":                   current4.get("width", 0),
+                        "height":                  current4.get("height", 0),
+                        "dimension_unit":          current4.get("dimension_unit", "mm"),
+                        "weight":                  current4.get("weight", 0),
+                        "weight_unit":             current4.get("weight_unit", "g"),
                     }
-                    print(f"[apply] text import payload keys={list(update_item.keys())}", flush=True)
 
-                    # 3. Обновляем
+                    print(f"[apply] text import offer_id={code}", flush=True)
                     async with session.post(
-                            "https://api-seller.ozon.ru/v3/product/import",
-                            headers=ozon_headers,
-                            json={"items": [update_item]},
+                        "https://api-seller.ozon.ru/v3/product/import",
+                        headers=ozon_headers,
+                        json={"items": [update_item]},
                     ) as r:
                         txt = await r.text()
                         print(f"[apply] text status={r.status} resp={txt[:200]}", flush=True)
                         if r.status != 200:
                             errors.append(f"Текст {r.status}: {txt[:200]}")
                         else:
-                            # Обновляем локальную БД чтобы таблица показывала актуальные данные
-                            async with AsyncSessionLocal() as db:
-                                update_vals = {}
-                                if "name" in text_fields: update_vals["name"] = wp.name
-                                if "description" in text_fields: update_vals["description"] = wp.description
-                                if update_vals:
+                            # Обновляем локальную БД
+                            db_vals: dict = {}
+                            if "name"        in text_fields: db_vals["name"]        = wp.name
+                            if "description" in text_fields: db_vals["description"] = wp.description
+                            if db_vals:
+                                async with AsyncSessionLocal() as db:
                                     await db.execute(
                                         update(ProductModel)
                                         .where(ProductModel.offer_id == code)
-                                        .values(**update_vals)
+                                        .values(**db_vals)
                                     )
                                     await db.commit()
+
                 except StopIteration:
                     pass
                 except Exception as e:
@@ -310,12 +314,9 @@ async def apply_wb_to_ozon(
 
             # ── Фото ─────────────────────────────────────────────────────
             if "images" in fields and wp.images:
-                # Конвертируем .webp → .jpg (Ozon принимает только JPG/PNG)
                 PROXY_BASE = "https://simacontrol.ru/api/img-proxy?url="
-                images_to_send = [
-                    f"{PROXY_BASE}{u}" for u in wp.images[:10] if u
-                ]
-                print(f"[apply] photo pid={pid} count={len(images_to_send)} url[0]={images_to_send[0] if images_to_send else None}", flush=True)
+                images_to_send = [f"{PROXY_BASE}{u}" for u in wp.images[:10] if u]
+                print(f"[apply] photo pid={pid} count={len(images_to_send)}", flush=True)
                 try:
                     async with session.post(
                         "https://api-seller.ozon.ru/v1/product/pictures/import",
@@ -326,6 +327,16 @@ async def apply_wb_to_ozon(
                         print(f"[apply] photo status={r.status} resp={txt[:300]}", flush=True)
                         if r.status != 200:
                             errors.append(f"Фото {r.status}: {txt[:200]}")
+                        else:
+                            # Обновляем главное фото в локальной БД
+                            if wp.images:
+                                async with AsyncSessionLocal() as db:
+                                    await db.execute(
+                                        update(ProductModel)
+                                        .where(ProductModel.offer_id == code)
+                                        .values(image_url=wp.images[0])
+                                    )
+                                    await db.commit()
                 except Exception as e:
                     errors.append(f"Фото: {e}")
 
