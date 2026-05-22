@@ -2848,24 +2848,37 @@ async def api_content_sync_products(request: Request):
         )
         products_db = r.scalars().all()
 
-    from content_sync import fetch_wb_products, MatchedProduct, ProductContent
-    wb = await fetch_wb_products(wb_key)
+    from content_sync import MatchedProduct, ProductContent
+    # Читаем WB из кеша в БД — быстро и стабильно
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(WbProductCache))
+        wb_cache = {row.vendor_code: row for row in r.scalars().all()}
 
+    import json as _json
     matched = []
     for p in products_db:
-        if p.offer_id in wb:
-            matched.append(MatchedProduct(
+        wc = wb_cache.get(p.offer_id)
+        if not wc:
+            continue
+        matched.append(MatchedProduct(
+            vendor_code=p.offer_id,
+            ozon=ProductContent(
                 vendor_code=p.offer_id,
-                ozon=ProductContent(
-                    vendor_code=p.offer_id,
-                    product_id=p.product_id,
-                    name=p.name or "",
-                    description=p.description or "",
-                    images=[p.image_url] if p.image_url else [],
-                    attributes=[],
-                ),
-                wb=wb[p.offer_id],
-            ))
+                product_id=p.product_id,
+                name=p.name or "",
+                description=p.description or "",
+                images=[p.image_url] if p.image_url else [],
+                attributes=[],
+            ),
+            wb=ProductContent(
+                vendor_code=wc.vendor_code,
+                nm_id=wc.nm_id,
+                name=wc.name or "",
+                description=wc.description or "",
+                images=_json.loads(wc.images_json or "[]"),
+                attributes=_json.loads(wc.attributes_json or "[]"),
+            ),
+        ))
 
     def serialize(pc):
         if pc is None: return None
