@@ -3121,12 +3121,6 @@ async def wb_cache_refresh(request: Request):
             import aiohttp, json as _json
             from database import WbProductCache
 
-            # Очищаем старый кеш
-            async with AsyncSessionLocal() as db:
-                await db.execute(delete(WbProductCache))
-                await db.commit()
-            print("[wb-cache] Старый кеш удалён, начинаем загрузку...", flush=True)
-
             headers = {"Authorization": wb_key, "Content-Type": "application/json"}
             cursor: dict = {}
 
