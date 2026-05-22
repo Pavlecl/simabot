@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import aiohttp
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from database import AsyncSessionLocal, WbAccount
+
 
 
 # ─────────────────────────────────────────────────
@@ -272,9 +273,23 @@ async def apply_wb_to_ozon(
                             json={"items": [update_item]},
                     ) as r:
                         txt = await r.text()
-                        print(f"[apply] text status={r.status} resp={txt[:300]}", flush=True)
+                        print(f"[apply] text status={r.status} resp={txt[:200]}", flush=True)
                         if r.status != 200:
                             errors.append(f"Текст {r.status}: {txt[:200]}")
+                        else:
+                            # Обновляем локальную БД чтобы таблица показывала актуальные данные
+                            from database import AsyncSessionLocal, Product as ProductModel
+                            async with AsyncSessionLocal() as db:
+                                update_vals = {}
+                                if "name" in text_fields: update_vals["name"] = wp.name
+                                if "description" in text_fields: update_vals["description"] = wp.description
+                                if update_vals:
+                                    await db.execute(
+                                        update(ProductModel)
+                                        .where(ProductModel.offer_id == code)
+                                        .values(**update_vals)
+                                    )
+                                    await db.commit()
                 except StopIteration:
                     pass
                 except Exception as e:
