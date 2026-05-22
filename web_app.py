@@ -2998,65 +2998,81 @@ async def sync_ozon_descriptions(request: Request):
             import aiohttp
             headers = get_active_headers()
 
-            # Берём только matched товары (есть и в Ozon и в WB)
+            # Только matched товары
             async with AsyncSessionLocal() as db:
                 r = await db.execute(
-                    select(Product.product_id, Product.offer_id)
-                    .join(WbProductCache, Product.offer_id == WbProductCache.vendor_code)
-                    .where(Product.product_id != None)
+                    select(Product.offer_id).join(
+                        WbProductCache, Product.offer_id == WbProductCache.vendor_code
+                    ).where(
+                        Product.offer_id != None,
+                        (Product.description == None) | (Product.description == '')
+                    )
                 )
-                rows = r.fetchall()
+                offer_ids = [row[0] for row in r.fetchall()]
 
-            print(f"[ozon-desc] Загружаем описания для {len(rows)} сопоставленных товаров", flush=True)
-            semaphore = asyncio.Semaphore(10)  # 10 одновременных запросов
+            print(f"[ozon-desc] Загружаем описания для {len(offer_ids)} товаров", flush=True)
 
-            async def fetch_one(session, pid, oid):
-                async with semaphore:
-                    for attempt in range(3):
-                        try:
-                            async with session.post(
-                                "https://api-seller.ozon.ru/v1/product/info/description",
-                                headers=headers,
-                                json={"product_id": pid},
-                                timeout=aiohttp.ClientTimeout(total=10),
-                            ) as resp:
-                                if resp.status == 429:  # rate limit
-                                    await asyncio.sleep(30)
-                                    continue
-                                data = await resp.json(content_type=None)
-                                return pid, data.get("result", {}).get("description", "")
-                        except Exception:
-                            await asyncio.sleep(2)
-                return pid, ""
+            DESCRIPTION_ATTR_ID = 4191
+            BATCH = 1000
 
             async with aiohttp.ClientSession() as session:
-                tasks = [fetch_one(session, row.product_id, row.offer_id) for row in rows]
-                results = []
-                # Обрабатываем батчами по 200 чтобы не перегружать память
-                for i in range(0, len(tasks), 200):
-                    batch_results = await asyncio.gather(*tasks[i:i+200])
-                    results.extend(batch_results)
-                    # Сохраняем в БД
-                    async with AsyncSessionLocal() as db:
-                        for pid, desc in batch_results:
-                            if desc:
-                                await db.execute(
-                                    update(Product)
-                                    .where(Product.product_id == pid)
-                                    .values(description=desc)
-                                )
-                        await db.commit()
-                    _ozon_desc_sync["fetched"] += len(batch_results)
-                    print(f"[ozon-desc] {_ozon_desc_sync['fetched']}/{len(rows)}", flush=True)
+                for i in range(0, len(offer_ids), BATCH):
+                    batch = offer_ids[i:i + BATCH]
+                    last_id = ""
+                    while True:
+                        body = {
+                            "filter": {"offer_id": batch},
+                            "limit": BATCH,
+                            "sort_dir": "ASC",
+                        }
+                        if last_id:
+                            body["last_id"] = last_id
 
-            _ozon_desc_sync["running"]     = False
+                        async with session.post(
+                                "https://api-seller.ozon.ru/v4/product/info/attributes",
+                                headers=headers,
+                                json=body,
+                        ) as resp:
+                            data = await resp.json(content_type=None)
+
+                        items = data.get("result", [])
+                        if not items:
+                            break
+
+                        # Сохраняем описания в БД
+                        async with AsyncSessionLocal() as db:
+                            for item in items:
+                                oid = item.get("offer_id", "")
+                                desc = next(
+                                    (a["values"][0]["value"]
+                                     for a in item.get("attributes", [])
+                                     if a.get("id") == DESCRIPTION_ATTR_ID
+                                     and a.get("values")),
+                                    ""
+                                )
+                                if desc:
+                                    await db.execute(
+                                        update(Product)
+                                        .where(Product.offer_id == oid)
+                                        .values(description=desc)
+                                    )
+                            await db.commit()
+
+                        _ozon_desc_sync["fetched"] += len(items)
+                        print(f"[ozon-desc] {_ozon_desc_sync['fetched']}/{len(offer_ids)}", flush=True)
+
+                        last_id = data.get("last_id", "")
+                        if not last_id or len(items) < BATCH:
+                            break
+
+            _ozon_desc_sync["running"] = False
             _ozon_desc_sync["finished_at"] = datetime.now().isoformat()
             print(f"[ozon-desc] ✅ Готово: {_ozon_desc_sync['fetched']}", flush=True)
 
         except Exception as e:
             import traceback
             _ozon_desc_sync["running"] = False
-            _ozon_desc_sync["error"]   = str(e)
+            _ozon_desc_sync["error"] = str(e)
             print(f"[ozon-desc] ❌ Ошибка: {e}\n{traceback.format_exc()}", flush=True)
 
     asyncio.create_task(_do_sync())
