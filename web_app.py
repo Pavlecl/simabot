@@ -3063,11 +3063,17 @@ async def sync_ozon_descriptions(request: Request):
                                      and a.get("values")),
                                     ""
                                 )
+                                primary_image = item.get("primary_image", "") or (item.get("images") or [""])[0]
+                                update_vals = {}
                                 if desc:
+                                    update_vals["description"] = desc
+                                if primary_image:
+                                    update_vals["image_url"] = primary_image
+                                if update_vals:
                                     await db.execute(
                                         update(Product)
                                         .where(Product.offer_id == oid)
-                                        .values(description=desc)
+                                        .values(**update_vals)
                                     )
                             await db.commit()
 
