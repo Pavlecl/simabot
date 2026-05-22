@@ -3016,10 +3016,7 @@ async def sync_ozon_descriptions(request: Request):
                 r = await db.execute(
                     select(Product.offer_id).join(
                         WbProductCache, Product.offer_id == WbProductCache.vendor_code
-                    ).where(
-                        Product.offer_id != None,
-                        (Product.description == None) | (Product.description == '')
-                    )
+                    ).where(Product.offer_id != None)
                 )
                 offer_ids = [row[0] for row in r.fetchall()]
 
