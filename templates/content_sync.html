@@ -158,6 +158,7 @@ currentPage = 0;
 let PAGE_SIZE = 100;
 let _loaderTimer = null;
 let _loaderSec = 0;
+const selectedFields = {}; // {vendor_code: Set<field>}
 
 // ── Загрузка ─────────────────────────────────────────────────────────────────
 async function loadProducts() {
@@ -203,28 +204,28 @@ function makeRow(p) {
       <div class="cmp">
         <div><div class="cmp-lbl">Ozon</div><div class="val-oz thumbs">${ozImgs||'<span style="color:var(--text-dim)">нет</span>'}</div></div>
         <div><div class="cmp-lbl">WB</div><div class="val-wb thumbs">${wbImgs||'<span style="color:var(--text-dim)">нет</span>'}</div></div>
-        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="images" onchange="updateBtn()"></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="images" onchange="onFieldCb(this)"></div>
       </div>
     </td>
     <td class="td-name${nameDiff?' diff':''}">
       <div class="cmp">
         <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3" title="${x(o.name)}">${x(o.name)}</div></div>
         <div><div class="cmp-lbl">WB</div><div class="val-wb txt3" title="${x(w.name)}">${x(w.name)}</div></div>
-        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="name" onchange="updateBtn()"></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="name" onchange="onFieldCb(this)"></div>
       </div>
     </td>
     <td class="td-description${descDiff?' diff':''}">
       <div class="cmp">
         <div><div class="cmp-lbl">Ozon</div><div class="val-oz txt3" title="${x(o.description)}">${x(o.description)}</div></div>
         <div><div class="cmp-lbl">WB</div><div class="val-wb txt3" title="${x(w.description)}">${x(w.description)}</div></div>
-        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="description" onchange="updateBtn()"></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="description" onchange="onFieldCb(this)"></div>
       </div>
     </td>
     <td class="td-attributes">
       <div class="cmp">
         <div><div class="cmp-lbl">Ozon</div><div class="val-oz attr-scroll">${ozAttrs||'—'}</div></div>
         <div><div class="cmp-lbl">WB</div><div class="val-wb attr-scroll">${wbAttrs||'—'}</div></div>
-        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="attributes" onchange="updateBtn()"></div>
+        <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="attributes" onchange="onFieldCb(this)"></div>
       </div>
     </td>`;
   return tr;
@@ -233,63 +234,88 @@ function makeRow(p) {
 // ── Чекбоксы ─────────────────────────────────────────────────────────────────
 function syncRow(master) {
   const code = master.dataset.code;
-  document.querySelectorAll(`.field-cb[data-code="${code}"]`).forEach(cb => cb.checked = master.checked);
-  master.closest('tr').classList.toggle('sel-row', master.checked);
+  if (master.checked) {
+    if (!selectedFields[code]) selectedFields[code] = new Set();
+    document.querySelectorAll(`.field-cb[data-code="${code}"]`).forEach(cb => {
+      cb.checked = true;
+      selectedFields[code].add(cb.dataset.field);
+    });
+    master.closest('tr').classList.add('sel-row');
+  } else {
+    delete selectedFields[code];
+    document.querySelectorAll(`.field-cb[data-code="${code}"]`).forEach(cb => cb.checked = false);
+    master.closest('tr').classList.remove('sel-row');
+  }
   updateBtn();
 }
+
+function onFieldCb(cb) {
+  const code  = cb.dataset.code;
+  const field = cb.dataset.field;
+  if (cb.checked) {
+    if (!selectedFields[code]) selectedFields[code] = new Set();
+    selectedFields[code].add(field);
+  } else {
+    selectedFields[code]?.delete(field);
+    if (!selectedFields[code]?.size) delete selectedFields[code];
+  }
+  updateBtn();
+}
+
 function toggleAll(checked) {
   document.querySelectorAll('.row-cb').forEach(cb => { cb.checked = checked; syncRow(cb); });
 }
 function selectAll() {
-  document.querySelectorAll('.field-cb').forEach(cb => cb.checked = true);
-  document.querySelectorAll('.row-cb').forEach(cb => { cb.checked = true; cb.closest('tr').classList.add('sel-row'); });
-  updateBtn();
+  allProducts.forEach(p => {
+    selectedFields[p.vendor_code] = new Set(['images','name','description','attributes']);
+  });
+  refreshCheckboxes(); updateBtn();
 }
 function deselectAll() {
-  document.querySelectorAll('.field-cb,.row-cb').forEach(cb => cb.checked = false);
-  document.querySelectorAll('tr').forEach(tr => tr.classList.remove('sel-row'));
-  updateBtn();
+  Object.keys(selectedFields).forEach(k => delete selectedFields[k]);
+  refreshCheckboxes(); updateBtn();
 }
 function selectDiff() {
+  allProducts.forEach(p => {
+    const o = p.ozon || {}, w = p.wb || {};
+    const fields = new Set();
+    if (JSON.stringify(o.images) !== JSON.stringify(w.images)) fields.add('images');
+    if ((o.name||'') !== (w.name||''))                         fields.add('name');
+    if ((o.description||'') !== (w.description||''))           fields.add('description');
+    if (fields.size) selectedFields[p.vendor_code] = fields;
+    else delete selectedFields[p.vendor_code];
+  });
+  refreshCheckboxes(); updateBtn();
+}
+
+function refreshCheckboxes() {
   document.querySelectorAll('.field-cb').forEach(cb => {
-    cb.checked = cb.closest('td')?.classList.contains('diff') || false;
+    const sel = selectedFields[cb.dataset.code];
+    cb.checked = sel ? sel.has(cb.dataset.field) : false;
   });
   document.querySelectorAll('.row-cb').forEach(master => {
     const code = master.dataset.code;
-    const any  = [...document.querySelectorAll(`.field-cb[data-code="${code}"]`)].some(c => c.checked);
-    master.checked = any;
-    master.closest('tr').classList.toggle('sel-row', any);
+    const sel  = selectedFields[code];
+    const all4 = sel?.size === 4;
+    master.checked       = sel?.size > 0 && all4;
+    master.indeterminate = sel?.size > 0 && !all4;
+    master.closest('tr').classList.toggle('sel-row', sel?.size > 0);
   });
-  updateBtn();
 }
+
 function collectTasks() {
-  const map = {};
-  document.querySelectorAll('.field-cb:checked').forEach(cb => {
-    const c = cb.dataset.code;
-    if (!map[c]) {
-      // Берём WB-данные из уже загруженного списка
-      const product = allProducts.find(p => p.vendor_code === c);
-      map[c] = {
-        vendor_code: c,
-        fields: [],
-        wb_data: product?.wb || null,
-      };
-    }
-    map[c].fields.push(cb.dataset.field);
-  });
-  return Object.values(map);
+  return Object.entries(selectedFields)
+    .filter(([,fields]) => fields.size > 0)
+    .map(([code, fields]) => {
+      const product = allProducts.find(p => p.vendor_code === code);
+      return { vendor_code: code, fields: [...fields], wb_data: product?.wb || null };
+    });
 }
 function updateBtn() {
-  const n = collectTasks().length;
+  const n = Object.values(selectedFields).filter(f => f.size > 0).length;
   document.getElementById('sel-count').textContent = n;
   document.getElementById('btn-apply').disabled = n === 0;
-  document.querySelectorAll('.row-cb').forEach(master => {
-    const code   = master.dataset.code;
-    const fields = [...document.querySelectorAll(`.field-cb[data-code="${code}"]`)];
-    const cnt    = fields.filter(f => f.checked).length;
-    master.checked       = cnt === fields.length && cnt > 0;
-    master.indeterminate = cnt > 0 && cnt < fields.length;
-  });
+  refreshCheckboxes();
 }
 
 // ── Применение ───────────────────────────────────────────────────────────────
@@ -533,8 +559,8 @@ function renderPage(page) {
   const start = page * PAGE_SIZE;
   const chunk = filteredProducts.slice(start, start + PAGE_SIZE);
   chunk.forEach(p => tbody.appendChild(makeRow(p)));
+  refreshCheckboxes(); // ← добавить
   renderPagination();
-  // Скролл наверх таблицы
   document.getElementById('table-wrap').scrollTop = 0;
 }
 
