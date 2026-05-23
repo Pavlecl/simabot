@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SIMA.CTRL</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23111'/><text x='50%25' y='72%25' text-anchor='middle' font-family='monospace' font-weight='bold' font-size='20' fill='%23ff6a00'>S</text></svg>">
-<link rel="stylesheet" href="/static/css/app.css?v=1772736529">
+<link rel="stylesheet" href="/static/css/app.css?v=1772736530">
 </head>
 <body>
 
@@ -141,5 +141,16 @@
   </div>
 </div>
 <div id="toast" class="toast"></div>
+
+<script>
+// Загружаем активный аккаунт в бейдж
+fetch('/api/active-accounts')
+  .then(r => r.json())
+  .then(d => {
+    const badge = document.getElementById('active-account-badge');
+    if (badge && d.ozon) badge.textContent = '⚙ ' + d.ozon;
+  })
+  .catch(() => {});
+</script>
 </body>
 </html>
