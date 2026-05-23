@@ -13,38 +13,67 @@
   <div class="logo">SIMA<span>.</span>CTRL</div>
   <nav>
       {% set perms = user.permissions if user.permissions is defined else [] %}
+
       {% if user.role == 'admin' or 'dashboard' in perms %}
       <a href="/" class="{{ 'active' if active_tab == 'dashboard' }}">Дашборд</a>
       {% endif %}
+
       {% if user.role == 'admin' or 'orders' in perms %}
       <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
       {% endif %}
-      {% if user.role == 'admin' or 'stock' in perms %}
-      <a href="/stock" class="{{ 'active' if active_tab == 'stock' }}">Остатки FBO</a>
+
+      <a href="/sima-orders" class="{{ 'active' if active_tab == 'sima-orders' }}">Сима</a>
+
+      {% if user.role == 'admin' or 'stock' in perms or 'costs' in perms %}
+      <div class="nav-dropdown">
+        <span class="nav-drop-btn {{ 'active' if active_tab in ['stock','queue','stock-manage'] }}">Склад ▾</span>
+        <div class="nav-drop-menu">
+          {% if user.role == 'admin' or 'stock' in perms %}
+          <a href="/stock">Остатки FBO</a>
+          {% endif %}
+          <a href="/queue">Очередь сборки</a>
+          {% if user.role == 'admin' or 'costs' in perms %}
+          <a href="/stock-manage">Остатки</a>
+          {% endif %}
+        </div>
+      </div>
       {% endif %}
-      {% if user.role == 'admin' or 'analytics' in perms %}
-      <a href="/analytics" class="{{ 'active' if active_tab == 'analytics' }}">Аналитика</a>
+
+      {% if user.role == 'admin' or 'analytics' in perms or 'costs' in perms or 'unit-economics' in perms %}
+      <div class="nav-dropdown">
+        <span class="nav-drop-btn {{ 'active' if active_tab in ['analytics','costs','unit-economics'] }}">Аналитика ▾</span>
+        <div class="nav-drop-menu">
+          {% if user.role == 'admin' or 'analytics' in perms %}
+          <a href="/analytics">Аналитика</a>
+          {% endif %}
+          {% if user.role == 'admin' or 'costs' in perms %}
+          <a href="/costs">Себестоимость</a>
+          {% endif %}
+          {% if user.role == 'admin' or 'unit-economics' in perms %}
+          <a href="/unit-economics">Юнит-экономика</a>
+          {% endif %}
+        </div>
+      </div>
       {% endif %}
-      <a href="/queue" class="{{ 'active' if active_tab == 'queue' }}">Очередь сборки</a>
+
+      {% if user.role == 'admin' or 'repricer' in perms or 'content-sync' in perms %}
+      <div class="nav-dropdown">
+        <span class="nav-drop-btn {{ 'active' if active_tab in ['repricer','content-sync'] }}">Инструменты ▾</span>
+        <div class="nav-drop-menu">
+          {% if user.role == 'admin' or 'repricer' in perms %}
+          <a href="/repricer">Репрайсер</a>
+          {% endif %}
+          {% if user.role == 'admin' or 'content-sync' in perms %}
+          <a href="/content-sync">Контент</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
       {% if user.role == 'admin' or 'users' in perms %}
       <a href="/users" class="{{ 'active' if active_tab == 'users' }}">Пользователи</a>
       {% endif %}
-      {% if user.role == 'admin' or 'repricer' in perms %}
-      <a href="/repricer" class="{{ 'active' if active_tab == 'repricer' }}">Репрайсер</a>
-      {% endif %}
-      {% if user.role == 'admin' or 'costs' in perms %}
-      <a href="/costs" class="{{ 'active' if active_tab == 'costs' }}">Себестоимость</a>
-      {% endif %}
-      {% if user.role == 'admin' or 'unit-economics' in perms %}
-      <a href="/unit-economics" class="{{ 'active' if active_tab == 'unit-economics' }}">Юнит-экономика</a>
-      {% endif %}
-      {% if user.role == 'admin' or 'costs' in perms %}
-      <a href="/stock-manage" class="nav-link {% if active_tab == 'stock-manage' %}active{% endif %}">Остатки</a>
-      {% endif %}
-      {% if user.role == 'admin' or 'content-sync' in perms %}
-      <a href="/content-sync" class="{{ 'active' if active_tab == 'content-sync' }}">Контент</a>
-      {% endif %}
-  </nav>
+    </nav>
   <div class="header-right">
     <button class="theme-toggle" onclick="toggleTheme()" title="Переключить тему" id="theme-btn">☀️</button>
     {% if user.role == 'admin' %}

@@ -23,10 +23,9 @@ from typing import Optional
 import json as _json
 import asyncio as _asyncio
 
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, BackgroundTasks, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -3301,6 +3300,172 @@ async def api_content_sync_products(request: Request):
         {"vendor_code": m.vendor_code, "ozon": serialize(m.ozon), "wb": serialize(m.wb)}
         for m in matched
     ]
+
+# ── Заказы Сима ──────────────────────────────────────────────────────────────
+
+@app.get("/sima-orders")
+async def sima_orders_page(request: Request, user: dict = Depends(require_any_role)):
+    return templates.TemplateResponse("sima_orders.html", {
+        "request": request, "user": user, "active_tab": "sima-orders"
+    })
+
+
+@app.post("/api/sima/orders")
+async def api_sima_get_orders(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    from ozon_api import get_new_orders
+    import pandas as pd, io, base64
+    orders = await get_new_orders()
+    if not orders:
+        return {"orders": [], "articles": "", "excel_b64": None}
+
+    all_articles = []
+    for o in orders:
+        for p in o["products"]:
+            qty = int(p.get("quantity", 1))
+            art = str(p.get("offer_id") or p.get("sku"))
+            for _ in range(qty):
+                all_articles.append(art)
+
+    data_for_excel = []
+    for order in orders:
+        for product in order["products"]:
+            data_for_excel.append({
+                "Номер заказа": order["number"],
+                "Дата отгрузки": order["ship_date"],
+                "Название":      product["name"],
+                "Артикул":       product.get("offer_id"),
+                "Количество":    product["quantity"],
+                "Цена":          product["price"],
+            })
+    df = pd.DataFrame(data_for_excel)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, index=False)
+    buf.seek(0)
+    excel_b64 = base64.b64encode(buf.read()).decode()
+
+    return {
+        "orders":    orders,
+        "articles":  " ".join(all_articles),
+        "count":     len(orders),
+        "excel_b64": excel_b64,
+        "filename":  f"Zakaz_Sima_{datetime.now().strftime('%d_%m')}.xlsx",
+    }
+
+
+@app.post("/api/sima/check-cart")
+async def api_sima_check_cart(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    import pandas as pd, io
+    from ozon_api import get_total_ozon_demand
+    from database import CostHistory
+
+    content = await file.read()
+    try:
+        df_raw = pd.read_excel(io.BytesIO(content), header=None)
+    except Exception:
+        df_raw = pd.read_csv(io.BytesIO(content), header=None, sep=None, engine="python")
+
+    header_row_index = -1
+    for i, row in df_raw.iterrows():
+        row_content = " ".join([str(v).lower() for v in row if pd.notna(v)])
+        if "артикул" in row_content and ("количество" in row_content or "кол-во" in row_content):
+            header_row_index = i
+            break
+
+    if header_row_index == -1:
+        raise HTTPException(status_code=400, detail="Не найдены колонки Артикул и Количество")
+
+    headers = [str(h).strip().lower() for h in df_raw.iloc[header_row_index]]
+    df = df_raw.iloc[header_row_index + 1:].copy()
+    df.columns = headers
+
+    col_art   = next((c for c in df.columns if "артикул" in c or "код" in c), None)
+    col_qty   = next((c for c in df.columns if "количество" in c or "кол-во" in c or "кол." in c), None)
+    col_price = next((c for c in df.columns if "цена, ₽" in c or ("цена" in c and "₽" in c)), None)
+    if col_price is None:
+        col_price = next((c for c in df.columns if "цена" in c and "опт" not in c), None)
+
+    file_items: dict[str, int] = {}
+    for _, row in df.iterrows():
+        try:
+            art = str(row[col_art]).strip()
+            if not art or art == "nan" or "итого" in art.lower():
+                continue
+            qty = int(float(row[col_qty]))
+            file_items[art] = file_items.get(art, 0) + qty
+        except Exception:
+            continue
+
+    ozon_demand = await get_total_ozon_demand()
+
+    diffs = []
+    all_arts = set(list(file_items.keys()) + list(ozon_demand.keys()))
+    for art in sorted(all_arts):
+        in_file = file_items.get(art, 0)
+        needed  = ozon_demand.get(art, 0)
+        if in_file > needed:
+            diffs.append({"art": art, "in_file": in_file, "needed": needed, "type": "excess",  "delta": in_file - needed})
+        elif in_file < needed:
+            diffs.append({"art": art, "in_file": in_file, "needed": needed, "type": "missing", "delta": needed - in_file})
+
+    # Обновляем себестоимость
+    cost_changes = []
+    if col_price and col_art:
+        file_prices: dict[str, int] = {}
+        for _, row in df.iterrows():
+            try:
+                art = str(row[col_art]).strip()
+                if not art or art == "nan" or "итого" in art.lower():
+                    continue
+                price_val = float(str(row[col_price]).replace(",", ".").replace(" ", ""))
+                if price_val > 0:
+                    file_prices[art] = round(price_val)
+            except Exception:
+                continue
+
+        if file_prices:
+            async with AsyncSessionLocal() as db:
+                for offer_id, new_price in file_prices.items():
+                    result = await db.execute(select(Product).where(Product.offer_id == offer_id))
+                    product = result.scalars().first()
+                    if product:
+                        old_price = product.cost_price or 0
+                        if old_price != new_price:
+                            cost_changes.append({"offer_id": offer_id, "old": old_price, "new": new_price})
+                            product.cost_price = new_price
+                            product.updated_at = datetime.now()
+                            db.add(CostHistory(
+                                offer_id=offer_id,
+                                old_cost=old_price if old_price else None,
+                                new_cost=new_price,
+                                source="sima_order",
+                                changed_at=datetime.now(),
+                            ))
+                await db.commit()
+
+    return {"diffs": diffs, "cost_changes": cost_changes, "ok": len(diffs) == 0}
+
+
+@app.post("/api/sima/assemble")
+async def api_sima_assemble(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    sima_num   = body.get("sima_num", "").strip()
+    supply_date = body.get("supply_date", "").strip()
+    if not sima_num or not supply_date:
+        raise HTTPException(status_code=400, detail="Укажите номер заказа и дату поставки")
+    from ozon_api import assemble_orders
+    result = await assemble_orders(sima_order_num=sima_num, supply_date=supply_date)
+    return {"message": result}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

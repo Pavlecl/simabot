@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.step-card{background:var(--surface);border:1px solid var(--border);padding:20px;margin-bottom:16px}
+.step-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.step-num{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#000;font-size:12px;font-weight:bold;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-title{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--text)}
+.articles-box{background:var(--surface2);border:1px solid var(--border);padding:12px;font-family:monospace;font-size:12px;line-height:1.6;word-break:break-all;max-height:180px;overflow-y:auto;position:relative;cursor:pointer;transition:border-color .2s}
+.articles-box:hover{border-color:var(--accent)}
+.articles-box.copied{border-color:#22c55e}
+.copy-hint{position:absolute;top:8px;right:8px;font-size:10px;color:var(--text-dim);background:var(--surface2);padding:2px 6px;border:1px solid var(--border)}
+.orders-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-top:12px}
+.order-card{background:var(--surface2);border:1px solid var(--border);padding:10px;font-size:11px}
+.order-card .num{color:var(--accent);font-weight:bold;margin-bottom:4px}
+.order-card .product{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border);color:var(--text-dim)}
+.order-card .product:last-child{border:none}
+.order-card .product .art{color:var(--text)}
+.diff-row{display:flex;align-items:center;gap:12px;padding:8px;border-bottom:1px solid var(--border);font-size:12px}
+.diff-row.excess{border-left:3px solid #f59e0b}
+.diff-row.missing{border-left:3px solid var(--red)}
+.diff-art{font-family:monospace;color:var(--accent);min-width:100px}
+.badge{font-size:10px;padding:2px 6px;border-radius:2px}
+.badge.excess{background:rgba(245,158,11,.15);color:#f59e0b}
+.badge.missing{background:rgba(239,68,68,.15);color:var(--red)}
+.cost-row{display:flex;justify-content:space-between;padding:4px 8px;font-size:11px;border-bottom:1px solid var(--border)}
+.drop-zone{border:2px dashed var(--border);padding:30px;text-align:center;cursor:pointer;transition:all .2s;color:var(--text-dim)}
+.drop-zone:hover,.drop-zone.drag{border-color:var(--accent);color:var(--accent);background:rgba(255,106,0,.04)}
+.stat-row{display:flex;gap:20px;font-size:12px;margin-bottom:12px}
+.stat-item{color:var(--text-dim)}
+.stat-item span{color:var(--text);font-weight:bold}
+</style>
+
+<div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:20px">
+  Заказы <span style="color:var(--accent)">Сима-Ленд</span>
+</div>
+
+<!-- ШАГ 1: Получить заказы -->
+<div class="step-card">
+  <div class="step-header">
+    <div class="step-num">1</div>
+    <div class="step-title">Получить новые заказы Ozon</div>
+    <button class="btn primary" id="btn-get" onclick="getOrders()" style="margin-left:auto">
+      ↻ Получить заказы Сима
+    </button>
+  </div>
+
+  <div id="orders-loader" style="display:none;color:var(--text-dim);font-size:12px">⏳ Запрашиваю данные у Ozon...</div>
+  <div id="orders-result" style="display:none">
+    <div class="stat-row">
+      <div class="stat-item">Новых заказов: <span id="orders-count">0</span></div>
+      <div class="stat-item">Артикулов: <span id="art-count">0</span></div>
+    </div>
+
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">
+      Нажмите на блок чтобы скопировать артикулы для вставки в Сима-Ленд:
+    </div>
+    <div class="articles-box" id="articles-box" onclick="copyArticles()">
+      <span class="copy-hint" id="copy-hint">📋 Скопировать</span>
+      <span id="articles-text"></span>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" id="btn-excel" onclick="downloadExcel()" style="font-size:11px">
+        ⬇ Скачать Excel для Ozon
+      </button>
+    </div>
+
+    <div style="margin-top:16px">
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Состав заказов:</div>
+      <div class="orders-grid" id="orders-grid"></div>
+    </div>
+  </div>
+  <div id="orders-empty" style="display:none;color:var(--text-dim);font-size:12px">✅ Новых заказов нет.</div>
+</div>
+
+<!-- ШАГ 2: Проверить корзину -->
+<div class="step-card">
+  <div class="step-header">
+    <div class="step-num">2</div>
+    <div class="step-title">Проверить корзину Сима-Ленд</div>
+  </div>
+
+  <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+    Скачайте состав корзины из Сима-Ленд и загрузите файл для проверки соответствия заказам Ozon:
+  </div>
+
+  <div class="drop-zone" id="drop-zone" onclick="document.getElementById('cart-file').click()"
+    ondragover="event.preventDefault();this.classList.add('drag')"
+    ondragleave="this.classList.remove('drag')"
+    ondrop="handleDrop(event)">
+    <div style="font-size:24px;margin-bottom:8px">📂</div>
+    <div style="font-size:12px">Перетащите Excel-файл корзины или нажмите для выбора</div>
+    <div style="font-size:10px;margin-top:4px;color:var(--text-dim)">.xlsx, .csv</div>
+  </div>
+  <input type="file" id="cart-file" accept=".xlsx,.csv" style="display:none" onchange="checkCart(this.files[0])">
+
+  <div id="check-loader" style="display:none;color:var(--text-dim);font-size:12px;margin-top:12px">⏳ Сверяю корзину с заказами Ozon...</div>
+
+  <div id="check-result" style="display:none;margin-top:16px">
+    <div id="check-ok" style="display:none;color:#22c55e;font-size:13px;padding:10px;border-left:3px solid #22c55e">
+      ✅ Состав корзины идеально совпадает с заказами Ozon!
+    </div>
+    <div id="check-diffs" style="display:none">
+      <div style="font-size:12px;font-weight:bold;margin-bottom:8px">📊 Расхождения:</div>
+      <div id="diffs-list"></div>
+    </div>
+    <div id="cost-result" style="display:none;margin-top:16px">
+      <div style="font-size:12px;font-weight:bold;margin-bottom:8px">💰 Обновлена себестоимость:</div>
+      <div id="cost-list"></div>
+    </div>
+    <div id="cost-ok" style="display:none;color:var(--text-dim);font-size:11px;margin-top:8px">
+      ✅ Себестоимость актуальна
+    </div>
+  </div>
+</div>
+
+<!-- ШАГ 3: Собрать поставку -->
+<div class="step-card">
+  <div class="step-header">
+    <div class="step-num">3</div>
+    <div class="step-title">Собрать поставку</div>
+  </div>
+
+  <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px">
+    После оформления заказа в Сима-Ленд введите номер заказа и дату поставки:
+  </div>
+
+  <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+    <div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Номер заказа Сима-Ленд</div>
+      <input type="text" id="sima-num" placeholder="Например: 123456789"
+        style="padding:6px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:200px">
+    </div>
+    <div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Дата поставки</div>
+      <input type="text" id="supply-date" placeholder="Например: 25.05"
+        style="padding:6px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:120px">
+    </div>
+    <button class="btn primary" id="btn-assemble" onclick="assembleOrders()">
+      📦 Собрать поставку
+    </button>
+  </div>
+
+  <div id="assemble-loader" style="display:none;color:var(--text-dim);font-size:12px;margin-top:12px">⏳ Собираю заказы...</div>
+  <div id="assemble-result" style="display:none;margin-top:12px;font-size:12px;padding:10px;border-left:3px solid var(--accent)"></div>
+</div>
+
+<script>
+let _excelB64 = null;
+let _excelFilename = null;
+
+// ── Шаг 1: Получить заказы ───────────────────────────────────────────────────
+async function getOrders() {
+  const btn = document.getElementById('btn-get');
+  btn.disabled = true;
+  btn.textContent = '⏳ Загружаю...';
+  document.getElementById('orders-loader').style.display = '';
+  document.getElementById('orders-result').style.display = 'none';
+  document.getElementById('orders-empty').style.display = 'none';
+
+  try {
+    const r = await fetch('/api/sima/orders', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+
+    if (!d.count) {
+      document.getElementById('orders-empty').style.display = '';
+    } else {
+      document.getElementById('orders-count').textContent = d.count;
+      document.getElementById('art-count').textContent = d.articles.split(' ').length;
+      document.getElementById('articles-text').textContent = d.articles;
+      _excelB64 = d.excel_b64;
+      _excelFilename = d.filename;
+      renderOrdersGrid(d.orders);
+      document.getElementById('orders-result').style.display = '';
+    }
+  } catch(e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    document.getElementById('orders-loader').style.display = 'none';
+    btn.disabled = false;
+    btn.textContent = '↻ Получить заказы Сима';
+  }
+}
+
+function renderOrdersGrid(orders) {
+  const grid = document.getElementById('orders-grid');
+  grid.innerHTML = orders.map(o => `
+    <div class="order-card">
+      <div class="num">${x(o.number)}</div>
+      <div style="color:var(--text-dim);font-size:10px;margin-bottom:6px">📅 ${x(o.ship_date||'')}</div>
+      ${(o.products||[]).map(p => `
+        <div class="product">
+          <span class="art">${x(p.offer_id||p.sku||'')}</span>
+          <span>${x(p.name||'').substring(0,30)}${(p.name||'').length>30?'…':''}</span>
+          <span style="color:var(--accent)">×${p.quantity}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+function copyArticles() {
+  const text = document.getElementById('articles-text').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const box  = document.getElementById('articles-box');
+    const hint = document.getElementById('copy-hint');
+    box.classList.add('copied');
+    hint.textContent = '✅ Скопировано!';
+    setTimeout(() => {
+      box.classList.remove('copied');
+      hint.textContent = '📋 Скопировать';
+    }, 2000);
+  });
+}
+
+function downloadExcel() {
+  if (!_excelB64) return;
+  const a = document.createElement('a');
+  a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + _excelB64;
+  a.download = _excelFilename;
+  a.click();
+}
+
+// ── Шаг 2: Проверить корзину ─────────────────────────────────────────────────
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) checkCart(file);
+}
+
+async function checkCart(file) {
+  if (!file) return;
+  document.getElementById('drop-zone').textContent = '📂 ' + file.name;
+  document.getElementById('check-loader').style.display = '';
+  document.getElementById('check-result').style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  try {
+    const r = await fetch('/api/sima/check-cart', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+
+    // Расхождения
+    if (d.ok) {
+      document.getElementById('check-ok').style.display = '';
+      document.getElementById('check-diffs').style.display = 'none';
+    } else {
+      document.getElementById('check-ok').style.display = 'none';
+      document.getElementById('check-diffs').style.display = '';
+      document.getElementById('diffs-list').innerHTML = d.diffs.map(diff => `
+        <div class="diff-row ${diff.type}">
+          <span class="diff-art">${x(diff.art)}</span>
+          <span class="badge ${diff.type}">${diff.type==='excess'?'Лишних':'Не хватает'}: ${diff.delta}</span>
+          <span style="color:var(--text-dim);font-size:11px">В файле: ${diff.in_file} шт. | Нужно: ${diff.needed} шт.</span>
+        </div>
+      `).join('');
+    }
+
+    // Себестоимость
+    if (d.cost_changes && d.cost_changes.length > 0) {
+      document.getElementById('cost-result').style.display = '';
+      document.getElementById('cost-ok').style.display = 'none';
+      document.getElementById('cost-list').innerHTML = d.cost_changes.map(c => `
+        <div class="cost-row">
+          <span style="font-family:monospace;color:var(--accent)">${x(c.offer_id)}</span>
+          <span style="color:var(--text-dim)">${c.old} ₽ → <b style="color:var(--text)">${c.new} ₽</b></span>
+        </div>
+      `).join('');
+    } else {
+      document.getElementById('cost-result').style.display = 'none';
+      document.getElementById('cost-ok').style.display = '';
+    }
+
+    document.getElementById('check-result').style.display = '';
+  } catch(e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    document.getElementById('check-loader').style.display = 'none';
+  }
+}
+
+// ── Шаг 3: Собрать поставку ──────────────────────────────────────────────────
+async function assembleOrders() {
+  const simaNum   = document.getElementById('sima-num').value.trim();
+  const supplyDate = document.getElementById('supply-date').value.trim();
+  if (!simaNum || !supplyDate) {
+    alert('Укажите номер заказа и дату поставки');
+    return;
+  }
+  const btn = document.getElementById('btn-assemble');
+  btn.disabled = true;
+  document.getElementById('assemble-loader').style.display = '';
+  document.getElementById('assemble-result').style.display = 'none';
+
+  try {
+    const r = await fetch('/api/sima/assemble', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sima_num: simaNum, supply_date: supplyDate }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+    const el = document.getElementById('assemble-result');
+    el.innerHTML = d.message.replace(/\n/g, '<br>');
+    el.style.display = '';
+  } catch(e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    document.getElementById('assemble-loader').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+function x(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}
