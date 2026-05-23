@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-  <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">
-    Обмен контентом <span style="color:var(--accent)">Ozon ↔ WB</span>
-  </div>
+<div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">
+  Обмен контентом <span style="color:var(--accent)">Ozon ↔ WB</span>
+  <span id="active-accounts" style="font-size:10px;color:var(--text-dim);margin-left:12px;text-transform:none;letter-spacing:0"></span>
+</div>
   <div style="display:flex;gap:8px;align-items:center">
     <span id="match-count" style="font-size:11px;color:var(--text-dim)"></span>
     <button class="btn" id="btn-wb-refresh" onclick="refreshWbCache()" title="Обновить кеш WB карточек">
@@ -530,6 +530,18 @@ function changePageSize(val) {
   document.getElementById('sync-body').innerHTML = '';
   renderNextPage();
 }
+
+async function loadActiveAccounts() {
+  try {
+    const r = await fetch('/api/active-accounts');
+    const d = await r.json();
+    const parts = [];
+    if (d.ozon) parts.push(`Ozon: <span style="color:var(--accent)">${d.ozon}</span>`);
+    if (d.wb)   parts.push(`WB: <span style="color:#f97316">${d.wb}</span>`);
+    document.getElementById('active-accounts').innerHTML = parts.join(' &nbsp;|&nbsp; ');
+  } catch(e) {}
+}
+loadActiveAccounts();
 
 // Загружаем статус при открытии страницы
 loadWbCacheStatus();

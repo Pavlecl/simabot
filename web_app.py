@@ -3575,6 +3575,21 @@ async def _ue_sync_task():
         _ue_sync_status = {"running": False, "progress": "", "synced": 0, "error": str(e)}
         print(f"UE SYNC ERROR: {traceback.format_exc()}", flush=True)
 
+@app.get("/api/active-accounts")
+async def api_active_accounts(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    ozon_name = None
+    wb_name   = None
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(OzonAccount).where(OzonAccount.is_active == True))
+        ozon = r.scalar_one_or_none()
+        if ozon: ozon_name = ozon.name
+        r = await db.execute(select(WbAccount).where(WbAccount.is_active == True))
+        wb = r.scalar_one_or_none()
+        if wb: wb_name = wb.name
+    return {"ozon": ozon_name, "wb": wb_name}
 
 if __name__ == "__main__":
     import uvicorn
