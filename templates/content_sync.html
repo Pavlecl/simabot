@@ -26,6 +26,14 @@
   <input type="text" id="filter-input" placeholder="🔍 Артикул или название…"
     oninput="filterRows(this.value)"
     style="padding:5px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:240px">
+  <select id="page-size-select" onchange="changePageSize(this.value)"
+  style="padding:5px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
+  <option value="50">50</option>
+  <option value="100" selected>100</option>
+  <option value="200">200</option>
+  <option value="500">500</option>
+  <option value="999999">Все</option>
+</select>
   <div style="display:flex;gap:12px;align-items:center">
     <span style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px">Поля:</span>
     <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center">
@@ -141,7 +149,7 @@ td{padding:6px;vertical-align:top}
 let allProducts = [];
 let filteredProducts = [];
 currentPage = 0;
-const PAGE_SIZE = 20;
+let PAGE_SIZE = 100;
 let _loaderTimer = null;
 let _loaderSec = 0;
 
@@ -514,6 +522,13 @@ function showConfirm(text) {
     document.getElementById('confirm-ok').onclick     = () => close(true);
     document.getElementById('confirm-cancel').onclick = () => close(false);
   });
+}
+
+function changePageSize(val) {
+  PAGE_SIZE = parseInt(val);
+  currentPage = 0;
+  document.getElementById('sync-body').innerHTML = '';
+  renderNextPage();
 }
 
 // Загружаем статус при открытии страницы
