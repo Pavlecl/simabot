@@ -334,6 +334,11 @@ async function applyContent() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || r.statusText);
     showResults(data);
+    // Снимаем чекбоксы у успешно перенесённых товаров
+    const okCodes = new Set((data.results || []).filter(r => r.status === 'ok').map(r => r.vendor_code));
+    okCodes.forEach(code => delete selectedFields[code]);
+    refreshCheckboxes();
+    updateBtn();
   } catch(e) {
     showStatus(e.message, 'error');
   } finally {
