@@ -83,7 +83,7 @@
       </thead>
       <tbody id="sync-body"></tbody>
   </table>
-
+<div id="pagination" class="pagination"></div>
 </div>
 
 <div id="result-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center">
@@ -143,6 +143,12 @@ td{padding:6px;vertical-align:top}
 .attr-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent); opacity: 1; }
 #table-wrap{height:calc(100vh - 180px);overflow:auto}
 #table-wrap table{min-width:1200px}
+
+.pagination{display:flex;gap:4px;align-items:center;justify-content:center;padding:12px 0;flex-wrap:wrap}
+.pagination button{min-width:32px;height:28px;padding:0 8px;font-size:11px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);cursor:pointer}
+.pagination button.active{background:var(--accent);border-color:var(--accent);color:#000;font-weight:bold}
+.pagination button:hover:not(.active):not(:disabled){border-color:var(--accent);color:var(--text)}
+.pagination button:disabled{opacity:.3;cursor:default}
 </style>
 
 <script>
@@ -175,35 +181,7 @@ async function loadProducts() {
   }
 }
 
-// ── Рендер с пагинацией ──────────────────────────────────────────────────────
-function renderTable(products) {
-  filteredProducts = products;
-  currentPage = 0;
-  document.getElementById('sync-body').innerHTML = '';
-  renderNextPage();
-  updateBtn();
-}
 
-function renderNextPage() {
-  const tbody = document.getElementById('sync-body');
-  document.getElementById('load-more-row')?.remove();
-  const start = currentPage * PAGE_SIZE;
-  const chunk = filteredProducts.slice(start, start + PAGE_SIZE);
-  chunk.forEach(p => tbody.appendChild(makeRow(p)));
-  currentPage++;
-  const loaded    = Math.min(currentPage * PAGE_SIZE, filteredProducts.length);
-  const remaining = filteredProducts.length - loaded;
-  if (remaining > 0) {
-    const tr = document.createElement('tr');
-    tr.id = 'load-more-row';
-    tr.innerHTML = `<td colspan="6" style="text-align:center;padding:14px">
-      <button class="btn" onclick="renderNextPage()" style="font-size:11px">
-        ↓ Показать ещё ${Math.min(PAGE_SIZE, remaining)} (загружено ${loaded} из ${filteredProducts.length})
-      </button>
-    </td>`;
-    tbody.appendChild(tr);
-  }
-}
 
 function makeRow(p) {
   const o = p.ozon || {}, w = p.wb || {};
@@ -358,9 +336,7 @@ function filterRows(q) {
     const name = (p.ozon?.name || '').toLowerCase();
     return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
   });
-  currentPage = 0;
-  document.getElementById('sync-body').innerHTML = '';
-  renderNextPage();
+  renderPage(0);
 }
 
 // ── Видимость столбцов ───────────────────────────────────────────────────────
@@ -528,7 +504,7 @@ function changePageSize(val) {
   PAGE_SIZE = parseInt(val);
   currentPage = 0;
   document.getElementById('sync-body').innerHTML = '';
-  renderNextPage();
+  renderPage(0);
 }
 
 async function loadActiveAccounts() {
@@ -541,6 +517,66 @@ async function loadActiveAccounts() {
     document.getElementById('active-accounts').innerHTML = parts.join(' &nbsp;|&nbsp; ');
   } catch(e) {}
 }
+
+function renderTable(products) {
+  filteredProducts = products;
+  currentPage = 0;
+  document.getElementById('sync-body').innerHTML = '';
+  renderPage(0);
+  updateBtn();
+}
+
+function renderPage(page) {
+  currentPage = page;
+  const tbody = document.getElementById('sync-body');
+  tbody.innerHTML = '';
+  const start = page * PAGE_SIZE;
+  const chunk = filteredProducts.slice(start, start + PAGE_SIZE);
+  chunk.forEach(p => tbody.appendChild(makeRow(p)));
+  renderPagination();
+  // Скролл наверх таблицы
+  document.getElementById('table-wrap').scrollTop = 0;
+}
+
+function renderPagination() {
+  const total = filteredProducts.length;
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const el    = document.getElementById('pagination');
+  if (pages <= 1) { el.innerHTML = ''; return; }
+
+  let html = '';
+  html += `<button onclick="renderPage(${currentPage-1})" ${currentPage===0?'disabled':''}>‹</button>`;
+
+  // Показываем не все страницы если их много
+  let start = Math.max(0, currentPage - 3);
+  let end   = Math.min(pages - 1, currentPage + 3);
+  if (start > 0) html += `<button onclick="renderPage(0)">1</button>${start>1?'<span style="color:var(--text-dim);padding:0 4px">…</span>':''}`;
+  for (let i = start; i <= end; i++) {
+    html += `<button onclick="renderPage(${i})" class="${i===currentPage?'active':''}">${i+1}</button>`;
+  }
+  if (end < pages - 1) html += `${end<pages-2?'<span style="color:var(--text-dim);padding:0 4px">…</span>':''}<button onclick="renderPage(${pages-1})">${pages}</button>`;
+
+  html += `<button onclick="renderPage(${currentPage+1})" ${currentPage===pages-1?'disabled':''}>›</button>`;
+  html += `<span style="font-size:11px;color:var(--text-dim);margin-left:8px">${currentPage*PAGE_SIZE+1}–${Math.min((currentPage+1)*PAGE_SIZE, total)} из ${total}</span>`;
+
+  el.innerHTML = html;
+}
+
+function changePageSize(val) {
+  PAGE_SIZE = parseInt(val);
+  renderPage(0);
+}
+
+function filterRows(q) {
+  q = q.toLowerCase();
+  filteredProducts = allProducts.filter(p => {
+    const name = (p.ozon?.name || '').toLowerCase();
+    return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
+  });
+  renderPage(0);
+}
+
+
 loadActiveAccounts();
 
 // Загружаем статус при открытии страницы
