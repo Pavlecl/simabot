@@ -26,10 +26,13 @@
 
       {% if user.role == 'admin' or 'stock' in perms or 'costs' in perms %}
       <div class="nav-dropdown">
-        <span class="nav-drop-btn {{ 'active' if active_tab in ['stock','queue','stock-manage'] }}">Склад ▾</span>
+        <span class="nav-drop-btn {{ 'active' if active_tab in ['stock','queue','stock-manage','fbo-storage'] }}">Склад ▾</span>
         <div class="nav-drop-menu">
           {% if user.role == 'admin' or 'stock' in perms %}
           <a href="/stock">Остатки FBO</a>
+          {% endif %}
+          {% if user.role == 'admin' or 'stock' in perms %}
+          <a href="/fbo-storage" class="{{ 'active' if active_tab == 'fbo-storage' }}">Платное хранение</a>
           {% endif %}
           <a href="/queue">Очередь сборки</a>
           {% if user.role == 'admin' or 'costs' in perms %}

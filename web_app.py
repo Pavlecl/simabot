@@ -2405,6 +2405,216 @@ async def api_stock_fbo_sync(user: dict = Depends(require_any_role)):
     _asyncio.create_task(sync_stock_cache())
     return {"ok": True}
 
+# =====================================================================
+# FBO — ПЛАТНОЕ ХРАНЕНИЕ
+# =====================================================================
+
+@app.get("/fbo-storage", response_class=HTMLResponse)
+async def fbo_storage_page(request: Request, user: dict = Depends(require_any_role)):
+    if "stock" not in user.get("permissions", []) and user["role"] != "admin":
+        return RedirectResponse("/queue", status_code=302)
+    return templates.TemplateResponse("fbo_storage.html", {
+        "request": request, "user": user, "active_tab": "fbo-storage"
+    })
+
+
+@app.get("/api/fbo-storage/items")
+async def api_fbo_storage_items(user: dict = Depends(require_any_role)):
+    """
+    Возвращает FBO остатки вместе с данными о платном хранении.
+    Использует кэш остатков + запрашивает storage_costs у Ozon.
+    """
+    # Берём остатки из кэша (sync_stock_cache уже всё загрузил)
+    import asyncio as _asyncio
+    if not _stock_cache["items"] and not _stock_cache["loading"]:
+        _asyncio.create_task(sync_stock_cache())
+        return {"items": [], "loading": True}
+
+    if _stock_cache["loading"]:
+        return {"items": [], "loading": True}
+
+    stock_items = [i for i in _stock_cache["items"] if i["total_free"] > 0]
+    if not stock_items:
+        return {"items": [], "loading": False}
+
+    # Запрашиваем стоимость хранения у Ozon
+    offer_ids = [i["item_code"] for i in stock_items]
+    storage_map = {}  # offer_id -> {free_storage_date, daily_rate}
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Ozon принимает максимум 1000 артикулов за раз
+            for batch_start in range(0, len(offer_ids), 500):
+                batch = offer_ids[batch_start:batch_start + 500]
+                async with session.post(
+                    "https://api-seller.ozon.ru/v1/analytics/storage_costs",
+                    json={"offer_ids": batch},
+                    headers=get_active_headers()
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for row in data.get("items", []):
+                            oid = row.get("offer_id", "")
+                            storage_map[oid] = {
+                                "free_storage_date": row.get("free_storage_date"),  # "2025-03-15T00:00:00Z"
+                                "daily_rate": row.get("daily_cost", 0),             # руб/день за единицу
+                            }
+                    else:
+                        text = await resp.text()
+                        print(f"FBO STORAGE COSTS error {resp.status}: {text}", flush=True)
+    except Exception as e:
+        print(f"FBO STORAGE COSTS exception: {e}", flush=True)
+
+    # Собираем итоговый список
+    today = datetime.now(timezone.utc).date()
+    result = []
+    for item in stock_items:
+        oid = item["item_code"]
+        storage = storage_map.get(oid, {})
+        free_until = None
+        days_left = None
+        daily_rate = storage.get("daily_rate", 0)
+
+        raw_date = storage.get("free_storage_date")
+        if raw_date:
+            try:
+                free_until = datetime.fromisoformat(raw_date.replace("Z", "+00:00")).date()
+                days_left = (free_until - today).days
+            except Exception:
+                pass
+
+        result.append({
+            "offer_id": oid,
+            "name": item["item_name"],
+            "brand": item.get("brand", ""),
+            "fbo": item["total_free"],
+            "fbo_reserved": item.get("total_reserved", 0),
+            "free_until": free_until.isoformat() if free_until else None,
+            "days_left": days_left,
+            "daily_rate": daily_rate,
+            "total_daily_cost": round(daily_rate * item["total_free"], 2) if daily_rate else 0,
+            "warehouses": item.get("warehouses", {}),
+        })
+
+    # Сортируем: сначала те у кого меньше дней осталось (или уже платное)
+    result.sort(key=lambda x: (x["days_left"] is None, x["days_left"] if x["days_left"] is not None else 9999))
+
+    return {"items": result, "loading": False, "updated_at": _stock_cache.get("updated_at")}
+
+
+@app.get("/api/fbo-storage/actions")
+async def api_fbo_storage_actions(user: dict = Depends(require_any_role)):
+    """Список доступных акций Ozon в которые можно добавить товары."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                "https://api-seller.ozon.ru/v1/actions",
+                headers=get_active_headers()
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise HTTPException(status_code=502, detail=f"Ozon API error: {text}")
+                data = await resp.json()
+                actions = data.get("result", [])
+                # Отдаём только активные/предстоящие
+                filtered = [
+                    {
+                        "id": a.get("id"),
+                        "title": a.get("title"),
+                        "action_type": a.get("action_type"),
+                        "date_start": a.get("date_start"),
+                        "date_end": a.get("date_end"),
+                        "freeze_date": a.get("freeze_date"),
+                        "potential_products_count": a.get("potential_products_count", 0),
+                        "participating_products_count": a.get("participating_products_count", 0),
+                    }
+                    for a in actions
+                    if a.get("action_type") in ("DISCOUNT", "PERCENT_DISCOUNT", "FREE_DELIVERY", "REGULAR_SALE")
+                       or True  # показываем все типы, фильтр на фронте
+                ]
+                return {"actions": filtered}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/fbo-storage/action-products/{action_id}")
+async def api_fbo_storage_action_products(action_id: int, user: dict = Depends(require_any_role)):
+    """Список товаров которые можно добавить в конкретную акцию."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            all_products = []
+            offset = 0
+            while True:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v1/actions/candidates",
+                    json={"action_id": action_id, "limit": 100, "offset": offset},
+                    headers=get_active_headers()
+                ) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                    products = data.get("result", {}).get("products", [])
+                    all_products.extend(products)
+                    if len(products) < 100:
+                        break
+                    offset += 100
+            return {"products": all_products, "action_id": action_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fbo-storage/actions/add")
+async def api_fbo_storage_actions_add(request: Request, user: dict = Depends(require_any_role)):
+    """
+    Добавляет выбранные товары в акцию.
+    Body: { "action_id": 123, "products": [{"product_id": 456, "action_price": 99.0}, ...] }
+    """
+    body = await request.json()
+    action_id = body.get("action_id")
+    products = body.get("products", [])  # [{product_id, action_price}]
+
+    if not action_id:
+        raise HTTPException(status_code=400, detail="action_id обязателен")
+    if not products:
+        raise HTTPException(status_code=400, detail="products пустой")
+
+    results = {"added": [], "rejected": [], "errors": []}
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Ozon принимает по 25 товаров за раз
+            for i in range(0, len(products), 25):
+                batch = products[i:i + 25]
+                async with session.post(
+                    "https://api-seller.ozon.ru/v1/actions/products/activate",
+                    json={"action_id": action_id, "products": batch},
+                    headers=get_active_headers()
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        results["errors"].append(f"batch {i}: {text}")
+                        continue
+                    data = await resp.json()
+                    results["added"].extend(data.get("result", {}).get("product_ids", []))
+                    results["rejected"].extend(data.get("result", {}).get("rejected", []))
+
+        return {
+            "ok": True,
+            "added_count": len(results["added"]),
+            "rejected_count": len(results["rejected"]),
+            "rejected": results["rejected"],
+            "errors": results["errors"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/stock/fbs/zero")
 async def api_fbs_zero(request: Request, user: dict = Depends(require_admin)):
     """Обнуляет FBS остаток для переданных offer_id через Ozon API"""
