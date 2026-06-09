@@ -2420,11 +2420,6 @@ async def fbo_storage_page(request: Request, user: dict = Depends(require_any_ro
 
 @app.get("/api/fbo-storage/items")
 async def api_fbo_storage_items(user: dict = Depends(require_any_role)):
-    """
-    Возвращает FBO остатки вместе с данными о платном хранении.
-    Использует кэш остатков + запрашивает storage_costs у Ozon.
-    """
-    # Берём остатки из кэша (sync_stock_cache уже всё загрузил)
     import asyncio as _asyncio
     if not _stock_cache["items"] and not _stock_cache["loading"]:
         _asyncio.create_task(sync_stock_cache())
@@ -2437,52 +2432,49 @@ async def api_fbo_storage_items(user: dict = Depends(require_any_role)):
     if not stock_items:
         return {"items": [], "loading": False}
 
-    # Запрашиваем стоимость хранения у Ozon
-    offer_ids = [i["item_code"] for i in stock_items]
-    storage_map = {}  # offer_id -> {free_storage_date, daily_rate}
-
+    # Загружаем оборачиваемость — там есть turnover (дней на складе)
+    turnover_map = {}  # offer_id -> turnover (дней)
     try:
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # Ozon принимает максимум 1000 артикулов за раз
-            for batch_start in range(0, len(offer_ids), 500):
-                batch = offer_ids[batch_start:batch_start + 500]
+            offset = 0
+            while True:
+                await _asyncio.sleep(1.1)  # rate limit: не более 1 req/sec
                 async with session.post(
-                    "https://api-seller.ozon.ru/v1/analytics/storage_costs",
-                    json={"offer_ids": batch},
+                    "https://api-seller.ozon.ru/v1/analytics/turnover/stocks",
+                    json={"limit": 1000, "offset": offset},
                     headers=get_active_headers()
                 ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        for row in data.get("items", []):
-                            oid = row.get("offer_id", "")
-                            storage_map[oid] = {
-                                "free_storage_date": row.get("free_storage_date"),  # "2025-03-15T00:00:00Z"
-                                "daily_rate": row.get("daily_cost", 0),             # руб/день за единицу
-                            }
-                    else:
+                    if resp.status != 200:
                         text = await resp.text()
-                        print(f"FBO STORAGE COSTS error {resp.status}: {text}", flush=True)
+                        print(f"FBO TURNOVER error {resp.status}: {text}", flush=True)
+                        break
+                    data = await resp.json()
+                    items = data.get("items", [])
+                    if not items:
+                        break
+                    for row in items:
+                        oid = row.get("offer_id", "")
+                        if oid:
+                            turnover_map[oid] = row.get("turnover")  # может быть None
+                    if len(items) < 1000:
+                        break
+                    offset += 1000
     except Exception as e:
-        print(f"FBO STORAGE COSTS exception: {e}", flush=True)
+        print(f"FBO TURNOVER exception: {e}", flush=True)
 
-    # Собираем итоговый список
+    # Стандартный срок бесплатного хранения 120 дней
+    FREE_DAYS = 120
     today = datetime.now(timezone.utc).date()
     result = []
+
     for item in stock_items:
         oid = item["item_code"]
-        storage = storage_map.get(oid, {})
-        free_until = None
-        days_left = None
-        daily_rate = storage.get("daily_rate", 0)
+        turnover = turnover_map.get(oid)  # дней на складе, может быть None
 
-        raw_date = storage.get("free_storage_date")
-        if raw_date:
-            try:
-                free_until = datetime.fromisoformat(raw_date.replace("Z", "+00:00")).date()
-                days_left = (free_until - today).days
-            except Exception:
-                pass
+        days_left = None
+        if turnover is not None:
+            days_left = int(FREE_DAYS - turnover)
 
         result.append({
             "offer_id": oid,
@@ -2490,15 +2482,16 @@ async def api_fbo_storage_items(user: dict = Depends(require_any_role)):
             "brand": item.get("brand", ""),
             "fbo": item["total_free"],
             "fbo_reserved": item.get("total_reserved", 0),
-            "free_until": free_until.isoformat() if free_until else None,
             "days_left": days_left,
-            "daily_rate": daily_rate,
-            "total_daily_cost": round(daily_rate * item["total_free"], 2) if daily_rate else 0,
+            "days_on_warehouse": int(turnover) if turnover is not None else None,
+            "free_days_total": FREE_DAYS,
             "warehouses": item.get("warehouses", {}),
         })
 
-    # Сортируем: сначала те у кого меньше дней осталось (или уже платное)
-    result.sort(key=lambda x: (x["days_left"] is None, x["days_left"] if x["days_left"] is not None else 9999))
+    result.sort(key=lambda x: (
+        x["days_left"] is None,
+        x["days_left"] if x["days_left"] is not None else 9999
+    ))
 
     return {"items": result, "loading": False, "updated_at": _stock_cache.get("updated_at")}
 
