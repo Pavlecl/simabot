@@ -9,15 +9,34 @@
   </div>
   <div class="page-header-right" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
     <span id="summary-badge"></span>
-    <div id="report-status-block" style="display:flex;align-items:center;gap:8px;">
-      <span id="report-status-text" class="small text-muted"></span>
-      <button class="btn btn-sm btn-outline-primary" onclick="triggerReport()" id="btn-report">
-        📊 Обновить данные хранения
-      </button>
-    </div>
     <button class="btn btn-sm btn-outline-secondary" onclick="syncStock()" id="sync-btn">
       🔄 Обновить остатки
     </button>
+  </div>
+</div>
+
+<!-- ЗАГРУЗКА ФАЙЛА -->
+<div class="card mb-3" id="upload-card">
+  <div class="card-body py-3" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+    <div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:2px;">📊 Данные хранения</div>
+      <div id="report-info" class="text-muted small">Файл не загружен</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+      <a href="https://seller.ozon.ru/app/analytics/fbo" target="_blank"
+         class="btn btn-sm btn-outline-secondary">
+        Скачать в Ozon →
+      </a>
+      <label class="btn btn-sm btn-primary mb-0" style="cursor:pointer;">
+        📂 Загрузить отчёт
+        <input type="file" accept=".xlsx,.xls" style="display:none;" onchange="uploadFile(this)">
+      </label>
+    </div>
+  </div>
+  <div id="upload-progress" style="display:none;padding:0 16px 12px;">
+    <div class="progress" style="height:4px;">
+      <div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div>
+    </div>
   </div>
 </div>
 
@@ -120,16 +139,11 @@
 .dot-soon   { background:#ffc107; }
 .dot-ok     { background:#198754; }
 .dot-unknown{ background:#adb5bd; }
-.sort-icon::after        { content:' ↕';opacity:.3;font-size:11px; }
-.sort-icon.asc::after    { content:' ↑';opacity:1; }
-.sort-icon.desc::after   { content:' ↓';opacity:1; }
+.sort-icon::after      { content:' ↕';opacity:.3;font-size:11px; }
+.sort-icon.asc::after  { content:' ↑';opacity:1; }
+.sort-icon.desc::after { content:' ↓';opacity:1; }
 #main-table thead th { white-space:nowrap;font-size:13px; }
 #main-table tbody td { font-size:13px;vertical-align:middle; }
-
-/* Статус отчёта */
-.report-running { color:#0d6efd; }
-.report-done    { color:#198754; }
-.report-error   { color:#dc3545; }
 </style>
 
 <script>
@@ -140,7 +154,6 @@ let sortCol = 'days_left';
 let sortDir = 'asc';
 let actionsLoaded = false;
 let candidatesCache = {};
-let reportPollingTimer = null;
 
 // ─── ЗАГРУЗКА ДАННЫХ ──────────────────────────────────────────────
 
@@ -150,8 +163,6 @@ async function loadItems() {
     const r = await fetch('/api/fbo-storage/items');
     const data = await r.json();
 
-    updateReportStatus(data.report_status, data.report_updated_at, data.report_error);
-
     if (data.loading) {
       document.getElementById('loading-state').innerHTML =
         '<div class="spinner-border spinner-border-sm me-2"></div> Кэш остатков обновляется…';
@@ -160,14 +171,14 @@ async function loadItems() {
     }
 
     allItems = data.items || [];
-    if (data.updated_at) {
-      document.getElementById('updated-at').textContent = 'Остатки: ' + data.updated_at;
-    }
 
-    // Если данных хранения нет — автоматически запускаем отчёт
-    const hasStorageData = allItems.some(i => i.days_left !== null);
-    if (!hasStorageData && data.report_status === 'empty') {
-      triggerReport();
+    if (data.updated_at)
+      document.getElementById('updated-at').textContent = 'Остатки: ' + data.updated_at;
+
+    if (data.report_filename) {
+      document.getElementById('report-info').innerHTML =
+        `<span style="color:var(--bs-success);">✓ ${esc(data.report_filename)}</span>` +
+        (data.report_updated_at ? ` <span class="text-muted">· ${data.report_updated_at}</span>` : '');
     }
 
     updateSummary();
@@ -179,64 +190,30 @@ async function loadItems() {
   }
 }
 
-async function triggerReport() {
-  const btn = document.getElementById('btn-report');
-  btn.disabled = true;
+async function uploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  document.getElementById('upload-progress').style.display = '';
+  const formData = new FormData();
+  formData.append('file', file);
+
   try {
-    const r = await fetch('/api/fbo-storage/report/trigger', {method:'POST'});
-    const d = await r.json();
-    if (d.ok) {
-      updateReportStatus('running', null, null);
-      startPolling();
+    const r = await fetch('/api/fbo-storage/upload', {method:'POST', body: formData});
+    const data = await r.json();
+    document.getElementById('upload-progress').style.display = 'none';
+
+    if (r.ok && data.ok) {
+      toast(`Загружено: ${data.rows} строк из "${data.filename}"`, 'success');
+      await loadItems();
     } else {
-      toast(d.message, 'warning');
-      btn.disabled = false;
+      toast('Ошибка: ' + (data.detail || JSON.stringify(data)), 'danger');
     }
   } catch(e) {
-    toast('Ошибка запуска: ' + e.message, 'danger');
-    btn.disabled = false;
+    document.getElementById('upload-progress').style.display = 'none';
+    toast('Ошибка загрузки: ' + e.message, 'danger');
   }
-}
-
-function startPolling() {
-  if (reportPollingTimer) clearInterval(reportPollingTimer);
-  reportPollingTimer = setInterval(async () => {
-    try {
-      const r = await fetch('/api/fbo-storage/report/status');
-      const d = await r.json();
-      updateReportStatus(d.status, d.updated_at, d.error);
-      if (d.status === 'done') {
-        clearInterval(reportPollingTimer);
-        reportPollingTimer = null;
-        // Перезагружаем данные с новыми данными хранения
-        await loadItems();
-        toast('Данные хранения обновлены', 'success');
-      } else if (d.status === 'error') {
-        clearInterval(reportPollingTimer);
-        reportPollingTimer = null;
-        toast('Ошибка отчёта: ' + d.error, 'danger');
-      }
-    } catch(e) {}
-  }, 6000);
-}
-
-function updateReportStatus(status, updatedAt, error) {
-  const el = document.getElementById('report-status-text');
-  const btn = document.getElementById('btn-report');
-  if (status === 'running') {
-    el.innerHTML = '<span class="report-running"><span class="spinner-border spinner-border-sm me-1" style="width:.7rem;height:.7rem;"></span>Формируется отчёт…</span>';
-    btn.disabled = true;
-  } else if (status === 'done') {
-    el.innerHTML = `<span class="report-done">✓ Данные от ${updatedAt || ''}</span>`;
-    btn.disabled = false;
-  } else if (status === 'error') {
-    el.innerHTML = `<span class="report-error">⚠ Ошибка</span>`;
-    btn.title = error || '';
-    btn.disabled = false;
-  } else {
-    el.innerHTML = '<span class="text-muted">Данных хранения нет</span>';
-    btn.disabled = false;
-  }
+  input.value = '';
 }
 
 async function syncStock() {
@@ -358,8 +335,8 @@ function formatDaysCell(days, urgency) {
 
 function getUrgency(days) {
   if (days === null || days === undefined) return 'unknown';
-  if (days < 0)  return 'paid';
-  if (days <= 7) return 'urgent';
+  if (days < 0)   return 'paid';
+  if (days <= 7)  return 'urgent';
   if (days <= 14) return 'soon';
   return 'ok';
 }
@@ -439,9 +416,7 @@ async function openAddToActionModal() {
   }
 
   const candidateMap = {};
-  candidatesCache[actionId].forEach(c => {
-    candidateMap[c.offer_id || c.id] = c;
-  });
+  candidatesCache[actionId].forEach(c => { candidateMap[c.offer_id || c.id] = c; });
 
   const selectedItems = allItems.filter(i => selectedIds.has(i.offer_id));
   const matched = [], notMatched = [];
@@ -552,13 +527,6 @@ function toast(msg, type='success') {
   setTimeout(() => el.remove(), 4000);
 }
 
-// ─── СТАРТ ────────────────────────────────────────────────────────
-
 loadItems();
-
-// Если отчёт уже формируется при загрузке — запускаем polling
-fetch('/api/fbo-storage/report/status').then(r=>r.json()).then(d => {
-  if (d.status === 'running') startPolling();
-});
 </script>
 {% endblock %}

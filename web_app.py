@@ -2405,143 +2405,19 @@ async def api_stock_fbo_sync(user: dict = Depends(require_any_role)):
     _asyncio.create_task(sync_stock_cache())
     return {"ok": True}
 
-
-
-
 # =====================================================================
-# FBO — ПЛАТНОЕ ХРАНЕНИЕ (v2 — автоматический отчёт Ozon)
+# FBO — ПЛАТНОЕ ХРАНЕНИЕ (v3 — загрузка xlsx вручную)
 # =====================================================================
-#
-# Логика:
-#   1. GET /fbo-storage           — страница
-#   2. GET /api/fbo-storage/items — остатки + данные хранения из кэша
-#   3. POST /api/fbo-storage/report/trigger — создать отчёт у Ozon, начать polling
-#   4. GET /api/fbo-storage/report/status  — статус фонового обновления
-#   5. GET /api/fbo-storage/actions        — список акций
-#   6. GET /api/fbo-storage/action-products/{action_id} — кандидаты акции
-#   7. POST /api/fbo-storage/actions/add   — добавить товары в акцию
-#
-# Кэш хранения (_storage_report_cache) хранит данные последнего отчёта.
-# При заходе на страницу JS сам проверяет свежесть и при необходимости
-# запускает обновление через /trigger.
 
 import io
-import asyncio as _asyncio
 from openpyxl import load_workbook
 
-# Кэш данных о хранении: offer_id -> {days_left, paid_date, free_qty, paid_qty}
+# Кэш данных о хранении из загруженного файла
 _storage_report_cache = {
-    "data": {},           # offer_id -> dict
-    "status": "empty",    # empty | running | done | error
+    "data": {},        # offer_id -> {days_left, paid_date, free_qty, paid_qty, daily_cost_28d}
     "updated_at": None,
-    "error": None,
-    "report_id": None,
+    "filename": None,
 }
-
-
-async def _run_storage_report():
-    """Фоновая задача: создать отчёт → дождаться → скачать → распарсить."""
-    global _storage_report_cache
-    _storage_report_cache["status"] = "running"
-    _storage_report_cache["error"] = None
-    print("FBO REPORT: starting", flush=True)
-
-    try:
-        timeout = aiohttp.ClientTimeout(total=300)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-
-            # 1. Создаём отчёт — нужна дата (сегодня)
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            async with session.post(
-                "https://api-seller.ozon.ru/v1/report/placement/by-products/create",
-                json={"date_from": today_str, "date_to": today_str},
-                headers=get_active_headers()
-            ) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise Exception(f"create report error {resp.status}: {text}")
-                data = await resp.json()
-                report_id = data.get("result", {}).get("code") or data.get("code")
-                if not report_id:
-                    raise Exception(f"no report code in response: {data}")
-                _storage_report_cache["report_id"] = report_id
-                print(f"FBO REPORT: created, code={report_id}", flush=True)
-
-            # 2. Polling — ждём пока отчёт будет готов (статус success)
-            download_url = None
-            for attempt in range(60):  # максимум 5 минут (60 * 5 сек)
-                await _asyncio.sleep(5)
-                async with session.post(
-                    "https://api-seller.ozon.ru/v1/report/info",
-                    json={"code": report_id},
-                    headers=get_active_headers()
-                ) as resp:
-                    if resp.status != 200:
-                        print(f"FBO REPORT: poll error {resp.status}", flush=True)
-                        continue
-                    info = await resp.json()
-                    result = info.get("result", {})
-                    status = result.get("status")
-                    print(f"FBO REPORT: poll attempt {attempt+1}, status={status}", flush=True)
-                    if status == "success":
-                        download_url = result.get("file")
-                        break
-                    elif status == "failed":
-                        raise Exception(f"report failed: {result.get('error')}")
-
-            if not download_url:
-                raise Exception("report not ready after 5 minutes")
-
-            print(f"FBO REPORT: downloading {download_url}", flush=True)
-
-            # 3. Скачиваем файл
-            async with session.get(download_url) as resp:
-                if resp.status != 200:
-                    raise Exception(f"download error {resp.status}")
-                content = await resp.read()
-
-            # 4. Парсим xlsx
-            wb = load_workbook(io.BytesIO(content), read_only=True)
-            ws = wb.active
-            new_data = {}
-            for row in ws.iter_rows(min_row=3, values_only=True):
-                offer_id = str(row[3]).strip() if row[3] else None
-                if not offer_id or offer_id == "None":
-                    continue
-                days_left = row[17]   # Дней до первой платности
-                paid_date = row[18]   # Дата первой платности (datetime или None)
-                free_qty  = row[12]   # Бесплатно, шт
-                paid_qty  = row[15]   # Платно, шт
-                daily_cost_28d = row[5]  # Списано денег за 28 дней
-
-                paid_date_str = None
-                if paid_date:
-                    try:
-                        if hasattr(paid_date, 'strftime'):
-                            paid_date_str = paid_date.strftime("%Y-%m-%d")
-                        else:
-                            paid_date_str = str(paid_date)[:10]
-                    except Exception:
-                        pass
-
-                new_data[offer_id] = {
-                    "days_left": int(days_left) if days_left is not None else None,
-                    "paid_date": paid_date_str,
-                    "free_qty": int(free_qty) if free_qty else 0,
-                    "paid_qty": int(paid_qty) if paid_qty else 0,
-                    "daily_cost_28d": float(daily_cost_28d) if daily_cost_28d else 0.0,
-                }
-
-            _storage_report_cache["data"] = new_data
-            _storage_report_cache["updated_at"] = datetime.now().strftime("%d.%m.%Y %H:%M")
-            _storage_report_cache["status"] = "done"
-            print(f"FBO REPORT: done, {len(new_data)} items parsed", flush=True)
-
-    except Exception as e:
-        import traceback
-        _storage_report_cache["status"] = "error"
-        _storage_report_cache["error"] = str(e)
-        print(f"FBO REPORT ERROR: {traceback.format_exc()}", flush=True)
 
 
 @app.get("/fbo-storage", response_class=HTMLResponse)
@@ -2555,13 +2431,18 @@ async def fbo_storage_page(request: Request, user: dict = Depends(require_any_ro
 
 @app.get("/api/fbo-storage/items")
 async def api_fbo_storage_items(user: dict = Depends(require_any_role)):
-    """Остатки FBO + данные хранения из последнего отчёта."""
+    """Остатки FBO + данные хранения из последнего загруженного файла."""
+    import asyncio as _asyncio
     if not _stock_cache["items"] and not _stock_cache["loading"]:
         _asyncio.create_task(sync_stock_cache())
-        return {"items": [], "loading": True, "report_status": _storage_report_cache["status"]}
+        return {"items": [], "loading": True,
+                "report_updated_at": _storage_report_cache.get("updated_at"),
+                "report_filename": _storage_report_cache.get("filename")}
 
     if _stock_cache["loading"]:
-        return {"items": [], "loading": True, "report_status": _storage_report_cache["status"]}
+        return {"items": [], "loading": True,
+                "report_updated_at": _storage_report_cache.get("updated_at"),
+                "report_filename": _storage_report_cache.get("filename")}
 
     stock_items = [i for i in _stock_cache["items"] if i["total_free"] > 0]
     storage = _storage_report_cache["data"]
@@ -2593,29 +2474,116 @@ async def api_fbo_storage_items(user: dict = Depends(require_any_role)):
         "items": result,
         "loading": False,
         "updated_at": _stock_cache.get("updated_at"),
-        "report_status": _storage_report_cache["status"],
         "report_updated_at": _storage_report_cache.get("updated_at"),
-        "report_error": _storage_report_cache.get("error"),
+        "report_filename": _storage_report_cache.get("filename"),
     }
 
 
-@app.post("/api/fbo-storage/report/trigger")
-async def api_fbo_storage_report_trigger(user: dict = Depends(require_any_role)):
-    """Запустить фоновое обновление отчёта о хранении."""
-    if _storage_report_cache["status"] == "running":
-        return {"ok": False, "message": "Отчёт уже формируется"}
-    _asyncio.create_task(_run_storage_report())
-    return {"ok": True, "message": "Запущено"}
+@app.post("/api/fbo-storage/upload")
+async def api_fbo_storage_upload(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_any_role)
+):
+    """
+    Принимает xlsx-файл отчёта Ozon 'Стоимость размещения по товарам'.
+    Парсит и сохраняет в кэш.
+    """
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Нужен файл .xlsx")
 
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), read_only=True)
+        ws = wb.active
 
-@app.get("/api/fbo-storage/report/status")
-async def api_fbo_storage_report_status(user: dict = Depends(require_any_role)):
-    return {
-        "status": _storage_report_cache["status"],
-        "updated_at": _storage_report_cache.get("updated_at"),
-        "error": _storage_report_cache.get("error"),
-        "items_count": len(_storage_report_cache["data"]),
-    }
+        # Определяем формат файла по первой строке
+        first_row = next(ws.iter_rows(max_row=1, values_only=True))
+        headers = [str(c).strip() if c else "" for c in first_row]
+
+        # Сводный отчёт: заголовки в строках 1+2 (merged), данные с 3-й строки
+        # Ищем колонки по названию
+        col_offer_id = None
+        col_days_left = None
+        col_paid_date = None
+        col_free_qty = None
+        col_paid_qty = None
+        col_cost_28d = None
+
+        # Читаем первые 3 строки чтобы найти заголовки
+        all_headers = []
+        for row in ws.iter_rows(max_row=3, values_only=True):
+            all_headers.append([str(c).strip() if c else "" for c in row])
+
+        # Ищем во всех строках заголовков
+        for row_idx, hrow in enumerate(all_headers):
+            for col_idx, h in enumerate(hrow):
+                hl = h.lower()
+                if "артикул" in hl and col_offer_id is None:
+                    col_offer_id = col_idx
+                if "дней до" in hl and "платн" in hl:
+                    col_days_left = col_idx
+                if "дата" in hl and "платн" in hl:
+                    col_paid_date = col_idx
+                if "бесплатно" in hl and "шт" in hl:
+                    col_free_qty = col_idx
+                if "платно" in hl and "шт" in hl and col_paid_qty is None:
+                    col_paid_qty = col_idx
+                if "списано" in hl and "28" in hl or ("списано" in hl and col_cost_28d is None):
+                    col_cost_28d = col_idx
+
+        print(f"FBO UPLOAD: cols offer={col_offer_id} days={col_days_left} date={col_paid_date} free={col_free_qty} paid={col_paid_qty} cost={col_cost_28d}", flush=True)
+
+        if col_offer_id is None:
+            raise HTTPException(status_code=400, detail="Не найдена колонка 'Артикул'. Загрузите файл 'Стоимость размещения по товарам' из раздела FBO Ozon.")
+
+        new_data = {}
+        row_count = 0
+        for row in ws.iter_rows(min_row=3, values_only=True):
+            offer_id = str(row[col_offer_id]).strip() if row[col_offer_id] else None
+            if not offer_id or offer_id in ("None", "Артикул", ""):
+                continue
+
+            days_left = row[col_days_left] if col_days_left is not None else None
+            paid_date = row[col_paid_date] if col_paid_date is not None else None
+            free_qty = row[col_free_qty] if col_free_qty is not None else None
+            paid_qty = row[col_paid_qty] if col_paid_qty is not None else None
+            cost_28d = row[col_cost_28d] if col_cost_28d is not None else None
+
+            paid_date_str = None
+            if paid_date:
+                try:
+                    if hasattr(paid_date, 'strftime'):
+                        paid_date_str = paid_date.strftime("%Y-%m-%d")
+                    else:
+                        paid_date_str = str(paid_date)[:10]
+                except Exception:
+                    pass
+
+            new_data[offer_id] = {
+                "days_left": int(days_left) if days_left is not None else None,
+                "paid_date": paid_date_str,
+                "free_qty": int(free_qty) if free_qty else 0,
+                "paid_qty": int(paid_qty) if paid_qty else 0,
+                "daily_cost_28d": float(cost_28d) if cost_28d else 0.0,
+            }
+            row_count += 1
+
+        if row_count == 0:
+            raise HTTPException(status_code=400, detail="Файл не содержит данных. Проверьте формат.")
+
+        _storage_report_cache["data"] = new_data
+        _storage_report_cache["updated_at"] = datetime.now().strftime("%d.%m.%Y %H:%M")
+        _storage_report_cache["filename"] = file.filename
+
+        print(f"FBO UPLOAD: parsed {row_count} rows from {file.filename}", flush=True)
+        return {"ok": True, "rows": row_count, "filename": file.filename}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"FBO UPLOAD ERROR: {traceback.format_exc()}", flush=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка парсинга: {str(e)}")
 
 
 @app.get("/api/fbo-storage/actions")
@@ -2680,10 +2648,7 @@ async def api_fbo_storage_action_products(action_id: int, user: dict = Depends(r
 
 @app.post("/api/fbo-storage/actions/add")
 async def api_fbo_storage_actions_add(request: Request, user: dict = Depends(require_any_role)):
-    """
-    Добавить товары в акцию.
-    Body: {"action_id": 123, "products": [{"product_id": 456, "action_price": 99.0}]}
-    """
+    """Добавить товары в акцию."""
     body = await request.json()
     action_id = body.get("action_id")
     products = body.get("products", [])
@@ -2720,6 +2685,9 @@ async def api_fbo_storage_actions_add(request: Request, user: dict = Depends(req
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 
 @app.post("/api/stock/fbs/zero")
