@@ -620,9 +620,19 @@ function renderExpandRow(expandTr, offerId, actions, colCount) {
           </tr>
           ${(() => {
             const ap = a.action_price || 0;
+            // Находим активный тир: ближайший порог >= action_price
+            let activeTierIdx = -1;
+            if (ap > 0) {
+              // Ищем последний тир у которого price >= ap (с допуском 5 руб)
+              for (let i = a.elastic_tiers.length - 1; i >= 0; i--) {
+                if (a.elastic_tiers[i].price >= ap - 5) {
+                  activeTierIdx = i;
+                  break;
+                }
+              }
+            }
             return a.elastic_tiers.map((t, idx) => {
-              const nextPrice = a.elastic_tiers[idx + 1]?.price ?? 0;
-              const isActive = ap > 0 && t.price <= ap && (idx === a.elastic_tiers.length - 1 || ap > nextPrice);
+              const isActive = idx === activeTierIdx;
               const rowBg = isActive ? 'background:rgba(13,110,253,0.12);' : '';
               const badge = isActive ? '<span style="font-size:10px;background:#0d6efd;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px;">сейчас</span>' : '';
               return `<tr style="${rowBg}">
