@@ -94,6 +94,7 @@
             <th style="text-align:center;">Дата платности</th>
             <th style="cursor:pointer;text-align:center;" onclick="sortBy('paid_qty')">Платно, шт <span class="sort-icon" data-col="paid_qty"></span></th>
             <th style="cursor:pointer;text-align:right;" onclick="sortBy('daily_cost_28d')">Списано за 28д, ₽ <span class="sort-icon" data-col="daily_cost_28d"></span></th>
+            <th style="text-align:center;width:80px;">Слежу</th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
@@ -330,6 +331,14 @@ function renderTable() {
       <td style="text-align:center;font-size:12px;color:var(--bs-secondary);">${paidDate}</td>
       <td style="text-align:center;">${paidQty}</td>
       <td style="text-align:right;">${cost}</td>
+      <td style="text-align:center;">
+        <div class="form-check form-switch d-flex justify-content-center mb-0">
+          <input class="form-check-input" type="checkbox" role="switch"
+            ${watchedIds.has(item.offer_id) ? 'checked' : ''}
+            onchange="toggleWatch('${esc(item.offer_id)}', this.checked)"
+            onclick="event.stopPropagation()">
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
@@ -715,6 +724,31 @@ async function addToActionFromRow(actionId, productId, actionPrice, offerId) {
   }
 }
 
+let watchedIds = new Set();
+
+async function loadWatchList() {
+  try {
+    const r = await fetch('/api/fbo-storage/sales-watch');
+    const data = await r.json();
+    watchedIds = new Set(data.items || []);
+  } catch(e) {}
+}
+
+async function toggleWatch(offerId, checked) {
+  try {
+    const method = checked ? 'POST' : 'DELETE';
+    await fetch(`/api/fbo-storage/sales-watch/${encodeURIComponent(offerId)}`, {method});
+    if (checked) watchedIds.add(offerId);
+    else watchedIds.delete(offerId);
+    toast(checked ? `Слежу за ${offerId}` : `Снято с отслеживания`, 'success');
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'danger');
+  }
+}
+
+
+loadActions();
+loadWatchList();
 loadItems();
 </script>
 {% endblock %}

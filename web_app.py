@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
-                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, FboStorageReport, init_db)
+                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, FboStorageReport, FboSalesWatch, init_db)
 
 from content_sync import get_matched_products, apply_wb_to_ozon, get_active_wb_key, get_all_wb_accounts_db
 
@@ -2447,6 +2447,107 @@ async def load_storage_report_from_db():
     except Exception as e:
         print(f"FBO STORAGE load from DB error: {e}", flush=True)
 
+# Кэш отслеживаемых позиций продаж FBO
+_fbo_sales_watch_cache = {}  # offer_id -> {item_name, fbo_snapshot}
+
+
+async def load_fbo_sales_watch_from_db():
+    """Загружает список отслеживаемых позиций из БД в кэш."""
+    global _fbo_sales_watch_cache
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = await session.execute(select(FboSalesWatch))
+            items = rows.scalars().all()
+            _fbo_sales_watch_cache = {
+                row.offer_id: {
+                    "item_name": row.item_name,
+                    "fbo_snapshot": row.fbo_snapshot,
+                }
+                for row in items
+            }
+            print(f"FBO SALES WATCH: loaded {len(_fbo_sales_watch_cache)} items from DB", flush=True)
+    except Exception as e:
+        print(f"FBO SALES WATCH load error: {e}", flush=True)
+
+
+async def check_fbo_sales_and_notify():
+    """Проверяет остатки отслеживаемых позиций и отправляет уведомления в Telegram."""
+    if not _fbo_sales_watch_cache:
+        return
+    if not _stock_cache["items"]:
+        return
+
+    stock_map = {i["item_code"]: i["total_free"] for i in _stock_cache["items"]}
+    storage_map = _storage_report_cache.get("data", {})
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not bot_token or not chat_id:
+        print("FBO SALES WATCH: no telegram credentials", flush=True)
+        return
+
+    updates = {}
+    async with AsyncSessionLocal() as session:
+        for offer_id, watch in list(_fbo_sales_watch_cache.items()):
+            current_fbo = stock_map.get(offer_id, 0)
+            prev_fbo = watch["fbo_snapshot"]
+
+            if current_fbo < prev_fbo:
+                sold = prev_fbo - current_fbo
+                days_left = storage_map.get(offer_id, {}).get("days_left")
+                days_str = f"{days_left} дн." if days_left is not None else "—"
+                name = watch["item_name"] or offer_id
+
+                if current_fbo == 0:
+                    msg = (
+                        f"✅ FBO распродан!\n"
+                        f"<b>{name}</b>\n"
+                        f"Артикул: {offer_id}\n"
+                        f"Продано: {sold} шт → остаток: 0\n"
+                        f"До платного: {days_str}\n"
+                        f"👉 Выйдите из акций и включите FBS!"
+                    )
+                else:
+                    msg = (
+                        f"📦 Продажа FBO\n"
+                        f"<b>{name}</b>\n"
+                        f"Артикул: {offer_id}\n"
+                        f"Продано: {sold} шт → остаток: {current_fbo}\n"
+                        f"До платного: {days_str}"
+                    )
+
+                # Отправляем в Telegram
+                try:
+                    import urllib.request as _urllib
+                    tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                    tg_body = json.dumps({
+                        "chat_id": chat_id,
+                        "text": msg,
+                        "parse_mode": "HTML"
+                    }).encode()
+                    tg_req = _urllib.Request(tg_url, data=tg_body,
+                                             headers={"Content-Type": "application/json"})
+                    with _urllib.urlopen(tg_req, timeout=10) as r:
+                        pass
+                    print(f"FBO SALES WATCH: notified {offer_id} sold={sold} left={current_fbo}", flush=True)
+                except Exception as e:
+                    print(f"FBO SALES WATCH telegram error: {e}", flush=True)
+
+                # Обновляем snapshot в БД и кэше
+                updates[offer_id] = current_fbo
+                _fbo_sales_watch_cache[offer_id]["fbo_snapshot"] = current_fbo
+
+        # Сохраняем обновлённые снапшоты
+        for oid, new_fbo in updates.items():
+            await session.execute(
+                update(FboSalesWatch)
+                .where(FboSalesWatch.offer_id == oid)
+                .values(fbo_snapshot=new_fbo)
+            )
+        if updates:
+            await session.commit()
+
+
 @app.get("/fbo-storage", response_class=HTMLResponse)
 async def fbo_storage_page(request: Request, user: dict = Depends(require_any_role)):
     if "stock" not in user.get("permissions", []) and user["role"] != "admin":
@@ -2627,6 +2728,49 @@ async def api_fbo_storage_upload(
         print(f"FBO UPLOAD ERROR: {traceback.format_exc()}", flush=True)
         raise HTTPException(status_code=500, detail=f"Ошибка парсинга: {str(e)}")
 
+@app.get("/api/fbo-storage/sales-watch")
+async def api_fbo_sales_watch_list(user: dict = Depends(require_any_role)):
+    """Список отслеживаемых позиций."""
+    return {"items": list(_fbo_sales_watch_cache.keys())}
+
+
+@app.post("/api/fbo-storage/sales-watch/{offer_id}")
+async def api_fbo_sales_watch_add(offer_id: str, user: dict = Depends(require_any_role)):
+    """Добавить позицию в отслеживание."""
+    # Берём текущий остаток из кэша
+    stock_item = next((i for i in _stock_cache["items"] if i["item_code"] == offer_id), None)
+    fbo_now = stock_item["total_free"] if stock_item else 0
+    item_name = stock_item["item_name"] if stock_item else offer_id
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        await session.execute(
+            pg_insert(FboSalesWatch).values(
+                offer_id=offer_id,
+                item_name=item_name,
+                fbo_snapshot=fbo_now,
+            ).on_conflict_do_update(
+                index_elements=["offer_id"],
+                set_={"fbo_snapshot": fbo_now, "item_name": item_name}
+            )
+        )
+        await session.commit()
+
+    _fbo_sales_watch_cache[offer_id] = {"item_name": item_name, "fbo_snapshot": fbo_now}
+    return {"ok": True, "offer_id": offer_id, "fbo_snapshot": fbo_now}
+
+
+@app.delete("/api/fbo-storage/sales-watch/{offer_id}")
+async def api_fbo_sales_watch_remove(offer_id: str, user: dict = Depends(require_any_role)):
+    """Убрать позицию из отслеживания."""
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            delete(FboSalesWatch).where(FboSalesWatch.offer_id == offer_id)
+        )
+        await session.commit()
+
+    _fbo_sales_watch_cache.pop(offer_id, None)
+    return {"ok": True}
 
 @app.get("/api/fbo-storage/actions")
 async def api_fbo_storage_actions(user: dict = Depends(require_any_role)):
@@ -3931,8 +4075,19 @@ async def lifespan(app: FastAPI):
     await init_db()
     await load_active_account()
     await load_storage_report_from_db()
+    await load_fbo_sales_watch_from_db()
     import asyncio
     asyncio.create_task(sync_from_ozon())
+
+    async def fbo_sales_watch_loop():
+        while True:
+            await asyncio.sleep(3600)  # каждый час
+            try:
+                await check_fbo_sales_and_notify()
+            except Exception as e:
+                print(f"FBO SALES WATCH loop error: {e}", flush=True)
+
+    asyncio.create_task(fbo_sales_watch_loop())
     yield
 
 app.router.lifespan_context = lifespan

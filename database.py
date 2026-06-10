@@ -396,3 +396,13 @@ class FboStorageReport(Base):
     paid_qty       = Column(Integer, default=0)
     daily_cost_28d = Column(Float, default=0.0)
     updated_at     = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class FboSalesWatch(Base):
+    """Позиции FBO под наблюдением продаж — уведомляем в Telegram при каждой продаже."""
+    __tablename__ = "fbo_sales_watch"
+
+    offer_id     = Column(String, primary_key=True)
+    item_name    = Column(String, nullable=True)
+    fbo_snapshot = Column(Integer, default=0)   # остаток на момент включения
+    added_at     = Column(DateTime, default=datetime.now)
