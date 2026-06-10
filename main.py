@@ -655,7 +655,10 @@ async def cmd_fbo_watch(message: types.Message):
                 f"До платного: {days_str}\n"
             )
 
-        await message.answer("\n".join(lines), parse_mode="HTML")
+        text = "\n".join(lines)
+        # Разбиваем на части по 4000 символов
+        for i in range(0, len(text), 4000):
+            await message.answer(text[i:i + 4000], parse_mode="HTML")
 
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
