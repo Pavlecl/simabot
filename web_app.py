@@ -2740,22 +2740,28 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
                             offer_id, product_id_db
                         )
 
-                # Если не нашли среди кандидатов — ищем среди участвующих
-                if not found_product:
-                    await _asyncio.sleep(0.3)
-                    async with session.post(
-                        "https://api-seller.ozon.ru/v1/actions/products",
-                        json={"action_id": action_id, "limit": 100, "offset": 0},
-                        headers=get_active_headers()
-                    ) as resp:
-                        if resp.status == 200:
-                            pdata = await resp.json()
-                            found_product = find_in_products(
-                                pdata.get("result", {}).get("products", []),
-                                offer_id, product_id_db
-                            )
-                            if found_product:
-                                is_participating = True
+                        # Если не нашли среди кандидатов — ищем среди участвующих (с пагинацией)
+                        if not found_product:
+                            p_offset = 0
+                            while True:
+                                await _asyncio.sleep(0.3)
+                                async with session.post(
+                                        "https://api-seller.ozon.ru/v1/actions/products",
+                                        json={"action_id": action_id, "limit": 100, "offset": p_offset},
+                                        headers=get_active_headers()
+                                ) as resp:
+                                    if resp.status != 200:
+                                        break
+                                    pdata = await resp.json()
+                                    p_items = pdata.get("result", {}).get("products", [])
+                                    p_total = pdata.get("result", {}).get("total", 0)
+                                    found_product = find_in_products(p_items, offer_id, product_id_db)
+                                    if found_product:
+                                        is_participating = True
+                                        break
+                                    if p_offset + 100 >= p_total:
+                                        break
+                                    p_offset += 100
 
                 if not found_product:
                     continue
