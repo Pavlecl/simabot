@@ -618,20 +618,28 @@ function renderExpandRow(expandTr, offerId, actions, colCount) {
           <tr style="color:var(--bs-secondary);font-size:11px;">
             <td>Порог</td><td>Цена акции</td><td>Скидка</td><td>Бустинг</td><td></td>
           </tr>
-          ${a.elastic_tiers.map(t => `
-          <tr>
-            <td style="color:var(--bs-secondary);">${esc(t.name)}</td>
-            <td><strong>${t.price} ₽</strong></td>
-            <td style="color:#fd7e14;">${t.discount_pct}%</td>
-            <td style="color:#0d6efd;font-weight:600;">+${t.boost}%</td>
-            <td style="text-align:right;">
-              <button class="btn btn-xs btn-outline-primary"
-                style="font-size:11px;padding:1px 8px;"
-                onclick="addToActionFromRow(${a.action_id}, ${a.product_id}, ${t.price}, '${esc(offerId)}')">
-                Участвовать
-              </button>
-            </td>
-          </tr>`).join('')}
+          ${(() => {
+            const ap = a.action_price || 0;
+            return a.elastic_tiers.map((t, idx) => {
+              const nextPrice = a.elastic_tiers[idx + 1]?.price ?? 0;
+              const isActive = ap > 0 && t.price <= ap && (idx === a.elastic_tiers.length - 1 || ap > nextPrice);
+              const rowBg = isActive ? 'background:rgba(13,110,253,0.12);' : '';
+              const badge = isActive ? '<span style="font-size:10px;background:#0d6efd;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px;">сейчас</span>' : '';
+              return `<tr style="${rowBg}">
+                <td style="color:var(--bs-secondary);">${esc(t.name)}${badge}</td>
+                <td><strong>${t.price} ₽</strong></td>
+                <td style="color:#fd7e14;">${t.discount_pct}%</td>
+                <td style="color:#0d6efd;font-weight:600;">+${t.boost}%</td>
+                <td style="text-align:right;">
+                  <button class="btn btn-xs btn-outline-primary"
+                    style="font-size:11px;padding:1px 8px;"
+                    onclick="addToActionFromRow(${a.action_id}, ${a.product_id}, ${t.price}, '${esc(offerId)}')">
+                    Участвовать
+                  </button>
+                </td>
+              </tr>`;
+            }).join('');
+          })()}
         </table>`;
     } else {
       const discountPct = a.current_price && a.max_action_price
