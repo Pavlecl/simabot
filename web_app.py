@@ -2772,6 +2772,46 @@ async def api_fbo_sales_watch_remove(offer_id: str, user: dict = Depends(require
     _fbo_sales_watch_cache.pop(offer_id, None)
     return {"ok": True}
 
+
+@app.post("/api/fbo-storage/test-notify")
+async def api_fbo_test_notify(user: dict = Depends(require_any_role)):
+    """Тестовое уведомление — имитирует продажу первого отслеживаемого товара."""
+    if not _fbo_sales_watch_cache:
+        return {"ok": False, "message": "Нет отслеживаемых позиций"}
+
+    offer_id = list(_fbo_sales_watch_cache.keys())[0]
+    watch = _fbo_sales_watch_cache[offer_id]
+    storage = _storage_report_cache.get("data", {}).get(offer_id, {})
+    days_left = storage.get("days_left")
+    days_str = f"{days_left} дн." if days_left is not None else "—"
+
+    msg = (
+        f"📦 Продажа FBO (ТЕСТ)\n"
+        f"<b>{watch['item_name'] or offer_id}</b>\n"
+        f"Артикул: {offer_id}\n"
+        f"Продано: 1 шт → остаток: {max(0, watch['fbo_snapshot'] - 1)}\n"
+        f"До платного: {days_str}"
+    )
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "") or os.getenv("BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "") or os.getenv("ADMIN_ID", "")
+
+    try:
+        import urllib.request as _urllib
+        tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        tg_body = json.dumps({
+            "chat_id": chat_id,
+            "text": msg,
+            "parse_mode": "HTML"
+        }).encode()
+        tg_req = _urllib.Request(tg_url, data=tg_body,
+                                  headers={"Content-Type": "application/json"})
+        with _urllib.urlopen(tg_req, timeout=10) as r:
+            result = json.loads(r.read())
+        return {"ok": True, "offer_id": offer_id, "tg": result.get("ok")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
 @app.get("/api/fbo-storage/actions")
 async def api_fbo_storage_actions(user: dict = Depends(require_any_role)):
     """Список доступных акций Ozon."""
