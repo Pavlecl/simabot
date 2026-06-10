@@ -637,12 +637,11 @@ async def cmd_fbo_watch(message: types.Message):
             storage_rows = await session.execute(sa_select(FboStorageReport))
             storage_map = {r.offer_id: r for r in storage_rows.scalars().all()}
 
-            # Текущие FBO остатки берём из снапшота в FboSalesWatch
-            stock_map = {item.offer_id: item.fbo_snapshot for item in items}
+
 
         lines = ["📦 <b>FBO под наблюдением:</b>\n"]
         for item in items:
-            fbo_now = stock_map.get(item.offer_id, item.fbo_snapshot)
+            fbo_now = item.fbo_snapshot
             storage = storage_map.get(item.offer_id)
             days_left = storage.days_left if storage else None
             days_str = f"{days_left} дн." if days_left is not None else "—"
