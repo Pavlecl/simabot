@@ -384,3 +384,15 @@ class WbProductCache(Base):
     images_json     = Column(Text,     nullable=True)   # JSON список URL
     attributes_json = Column(Text,     nullable=True)   # JSON список атрибутов
     updated_at      = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    class FboStorageReport(Base):
+        """Данные о платном хранении FBO из загруженного отчёта Ozon."""
+        __tablename__ = "fbo_storage_report"
+
+        offer_id = Column(String, primary_key=True)
+        days_left = Column(Integer, nullable=True)
+        paid_date = Column(String, nullable=True)  # YYYY-MM-DD
+        free_qty = Column(Integer, default=0)
+        paid_qty = Column(Integer, default=0)
+        daily_cost_28d = Column(Float, default=0.0)
+        updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

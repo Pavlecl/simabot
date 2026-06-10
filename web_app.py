@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
-                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, init_db)
+                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, FboStorageReport, init_db)
 
 from content_sync import get_matched_products, apply_wb_to_ozon, get_active_wb_key, get_all_wb_accounts_db
 
@@ -2419,6 +2419,33 @@ _storage_report_cache = {
     "filename": None,
 }
 
+async def load_storage_report_from_db():
+    """Загружает данные хранения из БД в кэш при старте приложения."""
+    global _storage_report_cache
+    try:
+        async with AsyncSessionLocal() as session:
+            rows = await session.execute(select(FboStorageReport))
+            items = rows.scalars().all()
+            if not items:
+                return
+            data = {}
+            max_updated = None
+            for row in items:
+                data[row.offer_id] = {
+                    "days_left": row.days_left,
+                    "paid_date": row.paid_date,
+                    "free_qty": row.free_qty,
+                    "paid_qty": row.paid_qty,
+                    "daily_cost_28d": row.daily_cost_28d,
+                }
+                if row.updated_at and (max_updated is None or row.updated_at > max_updated):
+                    max_updated = row.updated_at
+            _storage_report_cache["data"] = data
+            if max_updated:
+                _storage_report_cache["updated_at"] = max_updated.strftime("%d.%m.%Y %H:%M")
+            print(f"FBO STORAGE: loaded {len(data)} rows from DB", flush=True)
+    except Exception as e:
+        print(f"FBO STORAGE load from DB error: {e}", flush=True)
 
 @app.get("/fbo-storage", response_class=HTMLResponse)
 async def fbo_storage_page(request: Request, user: dict = Depends(require_any_role)):
@@ -2571,11 +2598,26 @@ async def api_fbo_storage_upload(
         if row_count == 0:
             raise HTTPException(status_code=400, detail="Файл не содержит данных. Проверьте формат.")
 
+            # Сохраняем в БД — полная перезапись
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import delete as sa_delete
+            await session.execute(sa_delete(FboStorageReport))
+            for oid, vals in new_data.items():
+                session.add(FboStorageReport(
+                    offer_id=oid,
+                    days_left=vals["days_left"],
+                    paid_date=vals["paid_date"],
+                    free_qty=vals["free_qty"],
+                    paid_qty=vals["paid_qty"],
+                    daily_cost_28d=vals["daily_cost_28d"],
+                ))
+            await session.commit()
+
         _storage_report_cache["data"] = new_data
         _storage_report_cache["updated_at"] = datetime.now().strftime("%d.%m.%Y %H:%M")
         _storage_report_cache["filename"] = file.filename
 
-        print(f"FBO UPLOAD: parsed {row_count} rows from {file.filename}", flush=True)
+        print(f"FBO UPLOAD: parsed {row_count} rows from {file.filename}, saved to DB", flush=True)
         return {"ok": True, "rows": row_count, "filename": file.filename}
 
     except HTTPException:
@@ -3756,6 +3798,7 @@ async def api_sima_assemble(request: Request):
 async def lifespan(app: FastAPI):
     await init_db()
     await load_active_account()
+    await load_storage_report_from_db()
     import asyncio
     asyncio.create_task(sync_from_ozon())
     yield
