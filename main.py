@@ -637,28 +637,31 @@ async def cmd_fbo_watch(message: types.Message):
             storage_rows = await session.execute(sa_select(FboStorageReport))
             storage_map = {r.offer_id: r for r in storage_rows.scalars().all()}
 
+        header = f"📦 <b>FBO под наблюдением ({len(items)} позиций):</b>\n"
+        await message.answer(header, parse_mode="HTML")
 
-
-        lines = ["📦 <b>FBO под наблюдением:</b>\n"]
+        # Отправляем по 10 позиций за раз
+        chunk = []
         for item in items:
             fbo_now = item.fbo_snapshot
             storage = storage_map.get(item.offer_id)
             days_left = storage.days_left if storage else None
             days_str = f"{days_left} дн." if days_left is not None else "—"
             sold = max(0, item.fbo_snapshot - fbo_now)
-            name = (item.item_name or item.offer_id)[:40]
-            status = "✅ Распродан" if fbo_now == 0 else f"📦 Остаток: {fbo_now}"
-            lines.append(
-                f"<b>{name}</b>\n"
-                f"Артикул: <code>{item.offer_id}</code>\n"
-                f"{status} | Продано: {sold} шт\n"
-                f"До платного: {days_str}\n"
+            name = (item.item_name or item.offer_id)[:35]
+            status = "✅ Распродан" if fbo_now == 0 else f"📦 {fbo_now} шт"
+
+            chunk.append(
+                f"<code>{item.offer_id}</code> {name}\n"
+                f"{status} · До платного: {days_str}"
             )
 
-        text = "\n".join(lines)
-        # Разбиваем на части по 4000 символов
-        for i in range(0, len(text), 4000):
-            await message.answer(text[i:i + 4000], parse_mode="HTML")
+            if len(chunk) == 10:
+                await message.answer("\n\n".join(chunk), parse_mode="HTML")
+                chunk = []
+
+        if chunk:
+            await message.answer("\n\n".join(chunk), parse_mode="HTML")
 
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
