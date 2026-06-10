@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Импорт ваших модулей
 from database import (
     init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders,
-    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory
+    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory, FboSalesWatch
 )
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
@@ -96,9 +96,11 @@ def get_main_kb():
     kb = [
         [KeyboardButton(text="Получить заказы Сима")],
         [KeyboardButton(text="Проверить заказ")],
+        [KeyboardButton(text="📦 FBO под наблюдением")],
         [KeyboardButton(text="📊 Аналитика")],
         [KeyboardButton(text="📂 Виртуальные заказы")],
         [KeyboardButton(text="📈 Статус системы")],
+
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -612,6 +614,66 @@ async def cmd_status(message: types.Message):
         logging.error(f"cmd_status error: {e}")
         await message.answer(f"❌ Ошибка получения статуса: {e}")
 
+@dp.message(F.text == "📦 FBO под наблюдением")
+async def cmd_fbo_watch(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import select as sa_select
+            rows = await session.execute(sa_select(FboSalesWatch))
+            items = rows.scalars().all()
+
+        if not items:
+            await message.answer("📦 Список наблюдения пуст.\nДобавьте позиции на странице FBO → Платное хранение.")
+            return
+
+        # Берём текущие остатки из веб-кэша через HTTP
+        import aiohttp
+        async with aiohttp.ClientSession() as http:
+            async with http.get("http://web:8000/api/fbo-storage/items",
+                                cookies={"session": ""}) as r:
+                data = await r.json() if r.status == 200 else {}
+
+        stock_map = {i["offer_id"]: i for i in data.get("items", [])}
+        storage_map = {i["offer_id"]: i for i in data.get("items", [])}
+
+        lines = ["📦 <b>FBO под наблюдением:</b>\n"]
+        for item in items:
+            current = stock_map.get(item.offer_id, {})
+            fbo_now = current.get("fbo", item.fbo_snapshot)
+            days_left = current.get("days_left")
+            days_str = f"{days_left} дн." if days_left is not None else "—"
+            sold = item.fbo_snapshot - fbo_now if fbo_now < item.fbo_snapshot else 0
+            name = (item.item_name or item.offer_id)[:40]
+
+            status = "✅ Распродан" if fbo_now == 0 else f"📦 Остаток: {fbo_now}"
+            lines.append(
+                f"<b>{name}</b>\n"
+                f"Артикул: {item.offer_id}\n"
+                f"{status} | Продано: {sold} шт\n"
+                f"До платного: {days_str}\n"
+            )
+
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@dp.message(F.text == "🧪 Тест FBO уведомление")
+async def cmd_fbo_test_notify(message: types.Message):
+    """Тестовое уведомление как будто продался товар."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    test_msg = (
+        "📦 Продажа FBO\n"
+        "<b>Тестовый товар — Гель для душа виски</b>\n"
+        "Артикул: 4782373\n"
+        "Продано: 1 шт → остаток: 40\n"
+        "До платного: 9 дн."
+    )
+    await message.answer(test_msg, parse_mode="HTML")
 
 async def main():
     await init_db()
