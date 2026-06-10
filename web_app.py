@@ -2688,7 +2688,7 @@ async def api_fbo_storage_action_products(action_id: int, user: dict = Depends(r
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/fbo-storage/product-actions/{offer_id}")@app.get("/api/fbo-storage/product-actions/{offer_id}")
+@app.get("/api/fbo-storage/product-actions/{offer_id}")
 async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(require_any_role)):
     """Акции в которых товар является кандидатом, с ценами и порогами бустинга."""
     import asyncio as _asyncio
