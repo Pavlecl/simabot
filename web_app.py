@@ -2694,7 +2694,6 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
     import asyncio as _asyncio
     from sqlalchemy import select as sa_select
 
-    # Получаем product_id из БД по offer_id
     product_id_db = None
     async with AsyncSessionLocal() as session:
         row = await session.execute(
@@ -2712,7 +2711,7 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
         return None
 
     try:
-        timeout = aiohttp.ClientTimeout(total=90)
+        timeout = aiohttp.ClientTimeout(total=180)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(
                 "https://api-seller.ozon.ru/v1/actions",
@@ -2729,47 +2728,47 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
 
                 # Сначала ищем среди участвующих — их меньше, быстрее
                 p_offset = 0
-            while True:
-                await _asyncio.sleep(0.2)
-                async with session.post(
+                while True:
+                    await _asyncio.sleep(0.2)
+                    async with session.post(
                         "https://api-seller.ozon.ru/v1/actions/products",
                         json={"action_id": action_id, "limit": 100, "offset": p_offset},
                         headers=get_active_headers()
-                ) as resp:
-                    if resp.status != 200:
-                        break
-                    pdata = await resp.json()
-                    p_items = pdata.get("result", {}).get("products", [])
-                    p_total = pdata.get("result", {}).get("total", 0)
-                    found_product = find_in_products(p_items, offer_id, product_id_db)
-                    if found_product:
-                        is_participating = True
-                        break
-                    if p_offset + 100 >= p_total:
-                        break
-                    p_offset += 100
+                    ) as resp:
+                        if resp.status != 200:
+                            break
+                        pdata = await resp.json()
+                        p_items = pdata.get("result", {}).get("products", [])
+                        p_total = pdata.get("result", {}).get("total", 0)
+                        found_product = find_in_products(p_items, offer_id, product_id_db)
+                        if found_product:
+                            is_participating = True
+                            break
+                        if p_offset + 100 >= p_total:
+                            break
+                        p_offset += 100
 
-                    # Если не нашли среди участвующих — ищем среди кандидатов (с пагинацией)
-                    if not found_product:
-                        c_offset = 0
-                        while True:
-                            await _asyncio.sleep(0.2)
-                            async with session.post(
-                                    "https://api-seller.ozon.ru/v1/actions/candidates",
-                                    json={"action_id": action_id, "limit": 100, "offset": c_offset},
-                                    headers=get_active_headers()
-                            ) as resp:
-                                if resp.status != 200:
-                                    break
-                                cdata = await resp.json()
-                                c_items = cdata.get("result", {}).get("products", [])
-                                c_total = cdata.get("result", {}).get("total", 0)
-                                found_product = find_in_products(c_items, offer_id, product_id_db)
-                                if found_product:
-                                    break
-                                if c_offset + 100 >= c_total:
-                                    break
-                                c_offset += 100
+                # Если не нашли среди участвующих — ищем среди кандидатов
+                if not found_product:
+                    c_offset = 0
+                    while True:
+                        await _asyncio.sleep(0.2)
+                        async with session.post(
+                            "https://api-seller.ozon.ru/v1/actions/candidates",
+                            json={"action_id": action_id, "limit": 100, "offset": c_offset},
+                            headers=get_active_headers()
+                        ) as resp:
+                            if resp.status != 200:
+                                break
+                            cdata = await resp.json()
+                            c_items = cdata.get("result", {}).get("products", [])
+                            c_total = cdata.get("result", {}).get("total", 0)
+                            found_product = find_in_products(c_items, offer_id, product_id_db)
+                            if found_product:
+                                break
+                            if c_offset + 100 >= c_total:
+                                break
+                            c_offset += 100
 
                 if not found_product:
                     continue
