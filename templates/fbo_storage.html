@@ -331,13 +331,15 @@ function renderTable() {
       <td style="text-align:center;font-size:12px;color:var(--bs-secondary);">${paidDate}</td>
       <td style="text-align:center;">${paidQty}</td>
       <td style="text-align:right;">${cost}</td>
-      <td style="text-align:center;">
-        <div class="form-check form-switch d-flex justify-content-center mb-0">
-          <input class="form-check-input" type="checkbox" role="switch"
+      <td style="text-align:center;" onclick="event.stopPropagation()">
+        <label class="fbo-toggle">
+          <input type="checkbox"
             ${watchedIds.has(item.offer_id) ? 'checked' : ''}
-            onchange="toggleWatch('${esc(item.offer_id)}', this.checked)"
-            onclick="event.stopPropagation()">
-        </div>
+            onchange="toggleWatch('${esc(item.offer_id)}', this.checked)">
+          <div class="fbo-toggle-track">
+            <div class="fbo-toggle-thumb"></div>
+          </div>
+        </label>
       </td>
     </tr>`;
   }).join('');
