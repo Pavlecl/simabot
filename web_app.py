@@ -2729,25 +2729,25 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
 
                 # Сначала ищем среди участвующих — их меньше, быстрее
                 p_offset = 0
-                    while True:
-                        await _asyncio.sleep(0.2)
-                        async with session.post(
-                                "https://api-seller.ozon.ru/v1/actions/products",
-                                json={"action_id": action_id, "limit": 100, "offset": p_offset},
-                                headers=get_active_headers()
-                        ) as resp:
-                            if resp.status != 200:
-                                break
-                            pdata = await resp.json()
-                            p_items = pdata.get("result", {}).get("products", [])
-                            p_total = pdata.get("result", {}).get("total", 0)
-                            found_product = find_in_products(p_items, offer_id, product_id_db)
-                            if found_product:
-                                is_participating = True
-                                break
-                            if p_offset + 100 >= p_total:
-                                break
-                            p_offset += 100
+            while True:
+                await _asyncio.sleep(0.2)
+                async with session.post(
+                        "https://api-seller.ozon.ru/v1/actions/products",
+                        json={"action_id": action_id, "limit": 100, "offset": p_offset},
+                        headers=get_active_headers()
+                ) as resp:
+                    if resp.status != 200:
+                        break
+                    pdata = await resp.json()
+                    p_items = pdata.get("result", {}).get("products", [])
+                    p_total = pdata.get("result", {}).get("total", 0)
+                    found_product = find_in_products(p_items, offer_id, product_id_db)
+                    if found_product:
+                        is_participating = True
+                        break
+                    if p_offset + 100 >= p_total:
+                        break
+                    p_offset += 100
 
                     # Если не нашли среди участвующих — ищем среди кандидатов (с пагинацией)
                     if not found_product:
