@@ -4083,6 +4083,11 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(3600)  # каждый час
             try:
+                # Сначала обновляем кэш остатков
+                await sync_stock_cache()
+                # Ждём пока загрузится
+                await asyncio.sleep(30)
+                # Потом проверяем продажи
                 await check_fbo_sales_and_notify()
             except Exception as e:
                 print(f"FBO SALES WATCH loop error: {e}", flush=True)
