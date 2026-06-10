@@ -2727,18 +2727,26 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
                 found_product = None
                 is_participating = False
 
-                # Сначала ищем среди кандидатов
-                async with session.post(
-                    "https://api-seller.ozon.ru/v1/actions/candidates",
-                    json={"action_id": action_id, "limit": 100, "offset": 0},
-                    headers=get_active_headers()
-                ) as resp:
-                    if resp.status == 200:
+                # Сначала ищем среди кандидатов (с пагинацией)
+                c_offset = 0
+                while True:
+                    await _asyncio.sleep(0.2)
+                    async with session.post(
+                            "https://api-seller.ozon.ru/v1/actions/candidates",
+                            json={"action_id": action_id, "limit": 100, "offset": c_offset},
+                            headers=get_active_headers()
+                    ) as resp:
+                        if resp.status != 200:
+                            break
                         cdata = await resp.json()
-                        found_product = find_in_products(
-                            cdata.get("result", {}).get("products", []),
-                            offer_id, product_id_db
-                        )
+                        c_items = cdata.get("result", {}).get("products", [])
+                        c_total = cdata.get("result", {}).get("total", 0)
+                        found_product = find_in_products(c_items, offer_id, product_id_db)
+                        if found_product:
+                            break
+                        if c_offset + 100 >= c_total:
+                            break
+                        c_offset += 100
 
                         # Если не нашли среди кандидатов — ищем среди участвующих (с пагинацией)
                         if not found_product:
