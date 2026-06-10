@@ -83,6 +83,7 @@
       <table class="table table-sm table-hover mb-0" id="main-table">
         <thead>
           <tr>
+            <th style="width:28px;"></th>
             <th style="width:36px;padding:8px 6px 8px 12px;">
               <input type="checkbox" id="check-all" onchange="toggleAll(this.checked)">
             </th>
@@ -144,6 +145,16 @@
 .sort-icon.desc::after { content:' ↓';opacity:1; }
 #main-table thead th { white-space:nowrap;font-size:13px; }
 #main-table tbody td { font-size:13px;vertical-align:middle; }
+
+.expand-row td { background: var(--bs-dark, #1a1a2e) !important; padding: 0 !important; }
+.expand-inner { padding: 12px 16px; }
+.row-expand-icon { font-size:10px; color: var(--bs-secondary); transition: transform .15s; display:inline-block; }
+.row-expand-icon.open { transform: rotate(90deg); color: var(--bs-primary); }
+.tier-table { width:100%; border-collapse:collapse; font-size:12px; }
+.tier-table td { padding:4px 8px; border-bottom:1px solid var(--bs-border-color); }
+.tier-table tr:last-child td { border-bottom:none; }
+.action-card { background:var(--bs-body-bg); border:1px solid var(--bs-border-color); border-radius:6px; padding:10px 14px; margin-bottom:8px; }
+.action-card:last-child { margin-bottom:0; }
 </style>
 
 <script>
@@ -305,6 +316,9 @@ function renderTable() {
       : '—';
 
     return `<tr class="${rowCls}">
+      <td style="padding:8px 6px 8px 8px;cursor:pointer;" onclick="toggleRow('${esc(item.offer_id)}', this)">
+        <span class="row-expand-icon" id="icon-${esc(item.offer_id)}">▶</span>
+      </td>
       <td style="padding:8px 6px 8px 12px;">
         <input type="checkbox" ${checked} onchange="toggleItem('${esc(item.offer_id)}', this.checked)">
       </td>
@@ -525,6 +539,162 @@ function toast(msg, type='success') {
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), 4000);
+}
+
+// ─── АККОРДЕОН ────────────────────────────────────────────────────
+
+const expandedRows = new Set();
+const actionsCache = {};  // offer_id -> данные акций
+
+async function toggleRow(offerId, td) {
+  const icon = document.getElementById('icon-' + offerId);
+  const existingExpand = document.getElementById('expand-' + offerId);
+
+  if (existingExpand) {
+    existingExpand.remove();
+    icon.classList.remove('open');
+    expandedRows.delete(offerId);
+    return;
+  }
+
+  icon.classList.add('open');
+  expandedRows.add(offerId);
+
+  // Вставляем строку-лоадер
+  const tr = td.closest('tr');
+  const colCount = tr.cells.length;
+  const expandTr = document.createElement('tr');
+  expandTr.id = 'expand-' + offerId;
+  expandTr.className = 'expand-row';
+  expandTr.innerHTML = `<td colspan="${colCount}">
+    <div class="expand-inner text-muted small">
+      <span class="spinner-border spinner-border-sm me-1"></span> Загружаем акции…
+    </div>
+  </td>`;
+  tr.insertAdjacentElement('afterend', expandTr);
+
+  // Загружаем данные
+  if (!actionsCache[offerId]) {
+    try {
+      const r = await fetch(`/api/fbo-storage/product-actions/${encodeURIComponent(offerId)}`);
+      actionsCache[offerId] = (await r.json()).actions || [];
+    } catch(e) {
+      expandTr.querySelector('td').innerHTML =
+        `<div class="expand-inner text-danger small">Ошибка загрузки: ${esc(e.message)}</div>`;
+      return;
+    }
+  }
+
+  renderExpandRow(expandTr, offerId, actionsCache[offerId], colCount);
+}
+
+function renderExpandRow(expandTr, offerId, actions, colCount) {
+  if (!actions.length) {
+    expandTr.querySelector('td').innerHTML =
+      `<div class="expand-inner text-muted small">Товар не является кандидатом ни в одной акции</div>`;
+    return;
+  }
+
+  const item = allItems.find(i => i.offer_id === offerId);
+  const currentPrice = item ? null : null;
+
+  const cards = actions.map(a => {
+    const isElastic = a.action_type === 'MARKETPLACE_MULTI_LEVEL_DISCOUNT_ON_AMOUNT';
+    const isParticipating = a.is_participating;
+    const dateEnd = a.date_end ? ' · до ' + fmtDate(a.date_end) : '';
+    const participatingBadge = isParticipating
+      ? `<span style="font-size:11px;background:#198754;color:#fff;padding:1px 6px;border-radius:3px;margin-left:6px;">участвует</span>`
+      : '';
+
+    let body = '';
+
+    if (isElastic && a.elastic_tiers && a.elastic_tiers.length) {
+      body += `
+        <div style="font-size:12px;color:var(--bs-secondary);margin-bottom:6px;">
+          Текущая цена: <strong style="color:var(--bs-body-color);">${a.current_price} ₽</strong>
+          ${a.current_boost ? `· Текущий бустинг: <strong>${a.current_boost}%</strong>` : ''}
+        </div>
+        <table class="tier-table">
+          <tr style="color:var(--bs-secondary);font-size:11px;">
+            <td>Порог</td><td>Цена акции</td><td>Скидка</td><td>Бустинг</td><td></td>
+          </tr>
+          ${a.elastic_tiers.map(t => `
+          <tr>
+            <td style="color:var(--bs-secondary);">${esc(t.name)}</td>
+            <td><strong>${t.price} ₽</strong></td>
+            <td style="color:#fd7e14;">${t.discount_pct}%</td>
+            <td style="color:#0d6efd;font-weight:600;">+${t.boost}%</td>
+            <td style="text-align:right;">
+              <button class="btn btn-xs btn-outline-primary"
+                style="font-size:11px;padding:1px 8px;"
+                onclick="addToActionFromRow(${a.action_id}, ${a.product_id}, ${t.price}, '${esc(offerId)}')">
+                Участвовать
+              </button>
+            </td>
+          </tr>`).join('')}
+        </table>`;
+    } else {
+      const discountPct = a.current_price && a.max_action_price
+        ? Math.round((a.current_price - a.max_action_price) / a.current_price * 100)
+        : null;
+      body += `
+        <div style="font-size:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+          <span>Текущая цена: <strong>${a.current_price} ₽</strong></span>
+          ${a.max_action_price ? `<span>Цена акции: <strong style="color:#fd7e14;">${a.max_action_price} ₽</strong></span>` : ''}
+          ${discountPct ? `<span style="color:#fd7e14;">−${discountPct}%</span>` : ''}
+          ${a.current_boost ? `<span>Бустинг: <strong style="color:#0d6efd;">+${a.current_boost}%</strong></span>` : ''}
+          <button class="btn btn-xs btn-outline-primary"
+            style="font-size:11px;padding:1px 8px;margin-left:auto;"
+            onclick="addToActionFromRow(${a.action_id}, ${a.product_id}, ${a.max_action_price || a.action_price}, '${esc(offerId)}')">
+            Участвовать
+          </button>
+        </div>`;
+    }
+
+    return `<div class="action-card">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">
+        ${esc(a.title)}${participatingBadge}
+        <span style="font-size:11px;font-weight:normal;color:var(--bs-secondary);">${dateEnd}</span>
+      </div>
+      ${body}
+    </div>`;
+  }).join('');
+
+  expandTr.querySelector('td').innerHTML =
+    `<div class="expand-inner">${cards}</div>`;
+}
+
+async function addToActionFromRow(actionId, productId, actionPrice, offerId) {
+  try {
+    const r = await fetch('/api/fbo-storage/actions/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        action_id: actionId,
+        products: [{product_id: productId, action_price: actionPrice}]
+      })
+    });
+    const data = await r.json();
+    if (data.ok && data.added_count > 0) {
+      toast('Добавлено в акцию ✓', 'success');
+      // Сбрасываем кэш и перезагружаем аккордеон
+      delete actionsCache[offerId];
+      const expandTr = document.getElementById('expand-' + offerId);
+      if (expandTr) {
+        expandTr.querySelector('td').innerHTML =
+          `<div class="expand-inner text-muted small">
+            <span class="spinner-border spinner-border-sm me-1"></span> Обновляем…
+          </div>`;
+        const r2 = await fetch(`/api/fbo-storage/product-actions/${encodeURIComponent(offerId)}`);
+        actionsCache[offerId] = (await r2.json()).actions || [];
+        renderExpandRow(expandTr, offerId, actionsCache[offerId], expandTr.querySelector('td').colSpan);
+      }
+    } else {
+      toast('Отклонено Ozon: ' + JSON.stringify(data.rejected || data), 'warning');
+    }
+  } catch(e) {
+    toast('Ошибка: ' + e.message, 'danger');
+  }
 }
 
 loadItems();

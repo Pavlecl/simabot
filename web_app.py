@@ -2688,6 +2688,79 @@ async def api_fbo_storage_action_products(action_id: int, user: dict = Depends(r
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/fbo-storage/product-actions/{offer_id}")@app.get("/api/fbo-storage/product-actions/{offer_id}")
+async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(require_any_role)):
+    """Акции в которых товар является кандидатом, с ценами и порогами бустинга."""
+    import asyncio as _asyncio
+    try:
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                "https://api-seller.ozon.ru/v1/actions",
+                headers=get_active_headers()
+            ) as resp:
+                data = await resp.json()
+                all_actions = {a["id"]: a for a in data.get("result", [])}
+
+            result = []
+            for action_id, action in all_actions.items():
+                await _asyncio.sleep(0.3)
+                async with session.post(
+                    "https://api-seller.ozon.ru/v1/actions/candidates",
+                    json={"action_id": action_id, "limit": 100, "offset": 0},
+                    headers=get_active_headers()
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    cdata = await resp.json()
+                    products = cdata.get("result", {}).get("products", [])
+                    for p in products:
+                        if str(p.get("offer_id", "")) == offer_id:
+                            is_elastic = action.get("action_type") == "MARKETPLACE_MULTI_LEVEL_DISCOUNT_ON_AMOUNT"
+                            entry = {
+                                "action_id": action_id,
+                                "title": action.get("title"),
+                                "action_type": action.get("action_type"),
+                                "date_end": action.get("date_end"),
+                                "is_participating": action.get("is_participating", False),
+                                "product_id": p.get("id"),
+                                "current_price": p.get("price", 0),
+                                "action_price": p.get("action_price", 0),
+                                "max_action_price": p.get("max_action_price", 0),
+                                "min_stock": p.get("min_stock", 0),
+                                "current_boost": p.get("current_boost"),
+                            }
+                            if is_elastic:
+                                price = p.get("price", 0)
+                                price_min = p.get("price_min_elastic", 0)
+                                price_max = p.get("price_max_elastic", 0)
+                                min_boost = p.get("min_boost", 0)
+                                max_boost = p.get("max_boost", 0)
+                                tiers = []
+                                if price_min and price_max and price:
+                                    steps = [
+                                        (price_min, min_boost, "Минимальный"),
+                                        (int(price_min - (price_min - price_max) * 0.33), int(min_boost + (max_boost - min_boost) * 0.33), "Средний"),
+                                        (int(price_min - (price_min - price_max) * 0.66), int(min_boost + (max_boost - min_boost) * 0.66), "Высокий"),
+                                        (price_max, max_boost, "Максимальный"),
+                                    ]
+                                    for tier_price, tier_boost, tier_name in steps:
+                                        discount_pct = round((price - tier_price) / price * 100, 1) if price else 0
+                                        tiers.append({
+                                            "name": tier_name,
+                                            "price": tier_price,
+                                            "discount_pct": discount_pct,
+                                            "boost": tier_boost,
+                                        })
+                                entry["elastic_tiers"] = tiers
+                            result.append(entry)
+                            break
+
+            return {"actions": result, "offer_id": offer_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/fbo-storage/actions/add")
 async def api_fbo_storage_actions_add(request: Request, user: dict = Depends(require_any_role)):
     """Добавить товары в акцию."""
