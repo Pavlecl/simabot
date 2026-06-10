@@ -652,8 +652,10 @@ async def cmd_fbo_watch(message: types.Message):
             status = "✅ Распродан" if fbo_now == 0 else f"📦 {fbo_now} шт"
 
             chunk.append(
-                f"<code>{item.offer_id}</code> {name}\n"
-                f"{status} · До платного: {days_str}"
+                f"{name}\n"
+                f"Артикул: {item.offer_id}\n"
+                f"{status} | Продано: {sold} шт\n"
+                f"До платного: {days_str}"
             )
 
             if len(chunk) == 10:
