@@ -2692,6 +2692,18 @@ async def api_fbo_storage_action_products(action_id: int, user: dict = Depends(r
 async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(require_any_role)):
     """Акции в которых товар является кандидатом, с ценами и порогами бустинга."""
     import asyncio as _asyncio
+    from sqlalchemy import select as sa_select
+
+    # Получаем product_id из БД по offer_id
+    product_id_db = None
+    async with AsyncSessionLocal() as session:
+        row = await session.execute(
+            sa_select(Product.product_id).where(Product.offer_id == offer_id)
+        )
+        result = row.scalar_one_or_none()
+        if result:
+            product_id_db = int(result)
+
     try:
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -2715,7 +2727,12 @@ async def api_fbo_storage_product_actions(offer_id: str, user: dict = Depends(re
                     cdata = await resp.json()
                     products = cdata.get("result", {}).get("products", [])
                     for p in products:
-                        if str(p.get("offer_id", "")) == offer_id:
+                        # Сопоставляем по offer_id или по product_id из БД
+                        match = (
+                            str(p.get("offer_id", "")) == offer_id
+                            or (product_id_db and int(p.get("id", 0)) == product_id_db)
+                        )
+                        if match:
                             is_elastic = action.get("action_type") == "MARKETPLACE_MULTI_LEVEL_DISCOUNT_ON_AMOUNT"
                             entry = {
                                 "action_id": action_id,
