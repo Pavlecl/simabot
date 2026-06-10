@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Импорт ваших модулей
 from database import (
     init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders,
-    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory, FboSalesWatch, FboStorageReport, StockItem
+    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory, FboSalesWatch, FboStorageReport
 )
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
@@ -637,11 +637,8 @@ async def cmd_fbo_watch(message: types.Message):
             storage_rows = await session.execute(sa_select(FboStorageReport))
             storage_map = {r.offer_id: r for r in storage_rows.scalars().all()}
 
-        # Текущие FBO остатки из stock_items в БД
-        async with AsyncSessionLocal() as session:
-            from sqlalchemy import select as sa_select
-            stock_rows = await session.execute(sa_select(StockItem))
-            stock_map = {r.offer_id: r.fbo for r in stock_rows.scalars().all()}
+            # Текущие FBO остатки берём из снапшота в FboSalesWatch
+            stock_map = {item.offer_id: item.fbo_snapshot for item in items}
 
         lines = ["📦 <b>FBO под наблюдением:</b>\n"]
         for item in items:
