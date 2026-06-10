@@ -22,7 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Импорт ваших модулей
 from database import (
     init_db, get_order_details, get_virtual_orders_full, clear_virtual_orders,
-    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory, FboSalesWatch
+    AsyncSessionLocal, Order, VirtualOrder, Product, CostHistory, FboSalesWatch, FboStorageReport, StockItem
 )
 from ozon_api import get_new_orders, assemble_orders
 from analytics import OzonAnalytics
@@ -625,32 +625,36 @@ async def cmd_fbo_watch(message: types.Message):
             items = rows.scalars().all()
 
         if not items:
-            await message.answer("📦 Список наблюдения пуст.\nДобавьте позиции на странице FBO → Платное хранение.")
+            await message.answer(
+                "📦 Список наблюдения пуст.\n"
+                "Добавьте позиции на странице FBO → Платное хранение."
+            )
             return
 
-        # Берём текущие остатки из веб-кэша через HTTP
-        import aiohttp
-        async with aiohttp.ClientSession() as http:
-            async with http.get("http://web:8000/api/fbo-storage/items",
-                                cookies={"session": ""}) as r:
-                data = await r.json() if r.status == 200 else {}
+        # Берём текущие остатки и данные хранения напрямую из БД
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import select as sa_select
+            storage_rows = await session.execute(sa_select(FboStorageReport))
+            storage_map = {r.offer_id: r for r in storage_rows.scalars().all()}
 
-        stock_map = {i["offer_id"]: i for i in data.get("items", [])}
-        storage_map = {i["offer_id"]: i for i in data.get("items", [])}
+        # Текущие FBO остатки из stock_items в БД
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import select as sa_select
+            stock_rows = await session.execute(sa_select(StockItem))
+            stock_map = {r.offer_id: r.fbo for r in stock_rows.scalars().all()}
 
         lines = ["📦 <b>FBO под наблюдением:</b>\n"]
         for item in items:
-            current = stock_map.get(item.offer_id, {})
-            fbo_now = current.get("fbo", item.fbo_snapshot)
-            days_left = current.get("days_left")
+            fbo_now = stock_map.get(item.offer_id, item.fbo_snapshot)
+            storage = storage_map.get(item.offer_id)
+            days_left = storage.days_left if storage else None
             days_str = f"{days_left} дн." if days_left is not None else "—"
-            sold = item.fbo_snapshot - fbo_now if fbo_now < item.fbo_snapshot else 0
+            sold = max(0, item.fbo_snapshot - fbo_now)
             name = (item.item_name or item.offer_id)[:40]
-
             status = "✅ Распродан" if fbo_now == 0 else f"📦 Остаток: {fbo_now}"
             lines.append(
                 f"<b>{name}</b>\n"
-                f"Артикул: {item.offer_id}\n"
+                f"Артикул: <code>{item.offer_id}</code>\n"
                 f"{status} | Продано: {sold} шт\n"
                 f"До платного: {days_str}\n"
             )
