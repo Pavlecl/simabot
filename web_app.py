@@ -2518,17 +2518,15 @@ async def check_fbo_sales_and_notify():
 
                 # Отправляем в Telegram
                 try:
-                    import urllib.request as _urllib
-                    tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-                    tg_body = json.dumps({
-                        "chat_id": chat_id,
-                        "text": msg,
-                        "parse_mode": "HTML"
-                    }).encode()
-                    tg_req = _urllib.Request(tg_url, data=tg_body,
-                                             headers={"Content-Type": "application/json"})
-                    with _urllib.urlopen(tg_req, timeout=10) as r:
-                        pass
+                    from aiohttp_socks import ProxyConnector
+                    proxy_url = os.getenv("PROXY_URL", "socks5://72.56.17.252:1080")
+                    connector = ProxyConnector.from_url(proxy_url)
+                    async with aiohttp.ClientSession(connector=connector) as tg_session:
+                        await tg_session.post(
+                            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                            json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                            timeout=aiohttp.ClientTimeout(total=15)
+                        )
                     print(f"FBO SALES WATCH: notified {offer_id} sold={sold} left={current_fbo}", flush=True)
                 except Exception as e:
                     print(f"FBO SALES WATCH telegram error: {e}", flush=True)
@@ -2797,17 +2795,16 @@ async def api_fbo_test_notify(user: dict = Depends(require_any_role)):
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "") or os.getenv("ADMIN_ID", "")
 
     try:
-        import urllib.request as _urllib
-        tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        tg_body = json.dumps({
-            "chat_id": chat_id,
-            "text": msg,
-            "parse_mode": "HTML"
-        }).encode()
-        tg_req = _urllib.Request(tg_url, data=tg_body,
-                                  headers={"Content-Type": "application/json"})
-        with _urllib.urlopen(tg_req, timeout=10) as r:
-            result = json.loads(r.read())
+        from aiohttp_socks import ProxyConnector
+        proxy_url = os.getenv("PROXY_URL", "socks5://72.56.17.252:1080")
+        connector = ProxyConnector.from_url(proxy_url)
+        async with aiohttp.ClientSession(connector=connector) as tg_session:
+            resp = await tg_session.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                timeout=aiohttp.ClientTimeout(total=15)
+            )
+            result = await resp.json()
         return {"ok": True, "offer_id": offer_id, "tg": result.get("ok")}
     except Exception as e:
         return {"ok": False, "error": str(e)}
