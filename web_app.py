@@ -4189,12 +4189,13 @@ async def api_unit_economics_products(
                 "price": p.price or 0,
                 "old_price": p.old_price or 0,
                 "min_price": p.min_price or 0,
-                "cost_price": (p.cost_price or 0) + (p.ff_cost or 80),
+                "cost_price": p.cost_price or 0,
+                "ff_cost": p.ff_cost or 0,
                 "commission_fbs_percent": p.commission_fbs_percent or 0,
                 "commission_fbs_logistics": p.commission_fbs_logistics or 0,
                 "volume_liters": p.volume_liters or 0,
                 "fbs_return_amount": p.fbs_return_amount or 0,
-                "volume_liters": p.volume_liters or 0,
+                "category_name": p.category_name or "",
             }
             for p in products
         ]
@@ -4253,6 +4254,23 @@ async def api_unit_economics_update_prices(
     return {"ok": True, "total": len(prices), "errors": len(errors), "error_items": errors[:5]}
 
 _ue_sync_status = {"running": False, "progress": "", "synced": 0, "error": ""}
+
+
+@app.get("/api/unit-economics/filters")
+async def api_ue_filters(
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import select, distinct
+    brands_r = await db.execute(
+        select(distinct(Product.brand)).where(Product.brand != None, Product.brand != '')
+    )
+    cats_r = await db.execute(
+        select(distinct(Product.category_name)).where(Product.category_name != None, Product.category_name != '')
+    )
+    brands = sorted([r[0] for r in brands_r if r[0]])
+    categories = sorted([r[0] for r in cats_r if r[0]])
+    return {"brands": brands, "categories": categories}
 
 @app.get("/api/unit-economics/sync/status")
 async def api_ue_sync_status(user: dict = Depends(require_any_role)):

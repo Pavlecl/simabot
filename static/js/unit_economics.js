@@ -1,468 +1,527 @@
-// =====================================================================
-// ЮНИТ-ЭКОНОМИКА
-// =====================================================================
+// unit_economics.js v2  — layout: statsponedelnik, style: simacontrol
 
-let uePage = 1;
-let ueTotalPages = 1;
-let ueProducts = [];       // текущая страница
-let ueEdits = {};          // offer_id -> {price, target_margin}
-let ueChecked = new Set(); // выбранные offer_id
-let ueSearchTimer = null;
-const UE_PER_PAGE = 100;
+let uePage = 1, ueTotalPages = 1;
+let ueAll = [];       // all products (for client-side filter)
+let ueSlice = [];     // current visible page
+let ueEdits = {};     // {offer_id: {field: value}}
+let ueChecked = new Set();
+let ueMode = 'fbs';
+let ueNoErr = true;
+let ueFocus = false;
+let ueTimer = null;
+const UE_PER = 100;
+const PVZ = 25;
 
-// =====================================================================
-// CONFIRM MODAL
-// =====================================================================
-function ueConfirm(title, bodyHtml) {
-  return new Promise(resolve => {
-    const modal = document.getElementById('ue-confirm-modal');
-    document.getElementById('ue-confirm-title').textContent = title;
-    document.getElementById('ue-confirm-body').innerHTML = bodyHtml;
-    modal.style.display = 'flex';
-    const ok = document.getElementById('ue-confirm-ok');
-    const cancel = document.getElementById('ue-confirm-cancel');
-    function close(r) {
-      modal.style.display = 'none';
-      ok.removeEventListener('click', onOk);
-      cancel.removeEventListener('click', onCancel);
-      resolve(r);
-    }
-    const onOk = () => close(true);
-    const onCancel = () => close(false);
-    ok.addEventListener('click', onOk);
-    cancel.addEventListener('click', onCancel);
-  });
-}
-
-// ── FBS тарифная таблица по объёму ────────────────────────────────
 const FBS_TARIFFS = [
-  { maxVol: 2,        base: 101.9,  perLiter: 0  },
-  { maxVol: 5,        base: 76.9,   perLiter: 25 },
-  { maxVol: 10,       base: 151.9,  perLiter: 20 },
-  { maxVol: 20,       base: 251.9,  perLiter: 15 },
-  { maxVol: 50,       base: 401.9,  perLiter: 10 },
-  { maxVol: 100,      base: 701.9,  perLiter: 8  },
-  { maxVol: Infinity, base: 1101.9, perLiter: 5  },
+  { max:2,        base:101.9, per:0  },
+  { max:5,        base:76.9,  per:25 },
+  { max:10,       base:151.9, per:20 },
+  { max:20,       base:251.9, per:15 },
+  { max:50,       base:401.9, per:10 },
+  { max:100,      base:701.9, per:8  },
+  { max:Infinity, base:1101.9,per:5  },
 ];
 
-function calcLogisticsByVolume(vol) {
-  if (!vol || vol <= 0) return null;
+function baseLog(vol) {
+  if (!vol || vol <= 0) return PVZ;
   let prev = 0;
-  for (const tier of FBS_TARIFFS) {
-    if (vol <= tier.maxVol) {
-      return tier.base + Math.max(0, vol - prev) * tier.perLiter;
-    }
-    prev = tier.maxVol;
+  for (const t of FBS_TARIFFS) {
+    if (vol <= t.max) return t.base + Math.max(0, vol - prev) * t.per;
+    prev = t.max;
   }
-  return null;
-}
-// =====================================================================
-// РАСЧЁТ ЮНИТ-ЭКОНОМИКИ
-// =====================================================================
-function calcUE(p, priceOverride) {
-  const price = priceOverride !== undefined ? priceOverride : (p.price || 0);
-  const cost = p.cost_price || 0;
-  const commPct = (p.commission_fbs_percent || 0) / 100;
-  const logistics = (p.volume_liters > 0 ? calcLogisticsByVolume(p.volume_liters) : null) ?? p.commission_fbs_logistics ?? 0;
-  const acquiringPct = parseFloat(document.getElementById('ue-acquiring')?.value || 1.5) / 100;
-  const adsPct = parseFloat(document.getElementById('ue-ads')?.value || 0) / 100;
-  const returnsPct = parseFloat(document.getElementById('ue-returns')?.value || 5) / 100;
-
-  const commission = price * commPct;
-  const acquiring = price * acquiringPct;
-  const ads = price * adsPct;
-  // Стоимость возвратов: доля от логистики
-  const returnsCost = logistics * returnsPct;
-  const other = ads + returnsCost;
-
-  const payout = price - commission - logistics - acquiring - other;
-  const profit = payout - cost;
-  const margin = payout > 0 ? (profit / payout * 100) : 0;
-  const roi = cost > 0 ? (profit / cost * 100) : 0;
-
-  return { price, cost, commission, logistics, acquiring, other, payout, profit, margin, roi };
+  return PVZ;
 }
 
-// Обратный расчёт: целевая маржа → рекомендованная цена
-// margin = (payout - cost) / payout
-// payout = cost / (1 - margin)
-// price = payout / (1 - commPct - acquiringPct - adsPct) + logistics / (...)
-function calcPriceFromMargin(p, targetMarginPct) {
-  const targetMargin = targetMarginPct / 100;
-  if (targetMargin >= 1 || targetMargin < 0) return null;
+function gAcq() { return parseFloat(document.getElementById('ue-acquiring')?.value ?? 1.9) || 1.9; }
+function gNR()  { return parseFloat(document.getElementById('ue-non-red')?.value ?? 5) || 5; }
 
+function ge(oid, f, fb) {
+  const v = ueEdits[oid]?.[f];
+  return v !== undefined ? v : (parseFloat(fb) || 0);
+}
+
+function calcRow(p) {
+  const oid   = p.offer_id;
+  const price = ge(oid, 'price', p.price);
+  const commPct = ueMode === 'fbs' ? (p.commission_fbs_percent || 0) : (p.commission_fbs_percent || 0);
+  const vol   = p.volume_liters || 0;
+
+  const priemka   = ge(oid, 'priemka',  p.ff_cost || 0);
+  const viezd     = ge(oid, 'viezd',    0);
+  const dostKur   = ge(oid, 'dostKur',  0);
+  const prodvizh  = ge(oid, 'prodvizh', 0);
+  const oplataPct = ge(oid, 'oplataPct',0);
+  const acqPct    = ge(oid, 'acqPct',   gAcq());
+  const nrPct     = ge(oid, 'nrPct',    gNR());
+
+  const oplataRub  = price * oplataPct / 100;
+  const otherTotal = priemka + viezd + dostKur + prodvizh + oplataRub;
+
+  const base  = baseLog(vol);
+  const nev   = base * nrPct / 100;
+  const logTot= base + nev + PVZ;
+
+  const commRub = price * commPct / 100;
+  const acqRub  = price * acqPct / 100;
+
+  const payout = price - commRub - logTot - acqRub - otherTotal;
+  const profit = payout - (p.cost_price || 0);
+  const margin = payout ? profit / payout * 100 : 0;
+  const roi    = p.cost_price ? profit / p.cost_price * 100 : 0;
+
+  return { price, commPct, commRub,
+    priemka, viezd, dostKur, prodvizh, oplataPct, oplataRub, otherTotal,
+    base, nev, logTot,
+    acqPct, acqRub,
+    payout, profit, margin, roi };
+}
+
+function calcMarginPrice(p, tgt) {
+  if (tgt >= 100 || tgt <= 0) return null;
   const cost = p.cost_price || 0;
-  const commPct = (p.commission_fbs_percent || 0) / 100;
-  const logistics = (p.volume_liters > 0 ? calcLogisticsByVolume(p.volume_liters) : null) ?? p.commission_fbs_logistics ?? 0;
-  const acquiringPct = parseFloat(document.getElementById('ue-acquiring')?.value || 1.5) / 100;
-  const adsPct = parseFloat(document.getElementById('ue-ads')?.value || 0) / 100;
-  const returnsPct = parseFloat(document.getElementById('ue-returns')?.value || 5) / 100;
-
-  const returnsCost = logistics * returnsPct;
-  // payout = price * (1 - commPct - acquiringPct - adsPct) - logistics - returnsCost
-  // profit = payout - cost
-  // margin = profit / payout => profit = payout * targetMargin
-  // payout - cost = payout * targetMargin
-  // payout * (1 - targetMargin) = cost
-  // payout = cost / (1 - targetMargin)
-  const payout = cost / (1 - targetMargin);
-  // payout = price * (1 - rateSum) - fixedCosts
-  const rateSum = commPct + acquiringPct + adsPct;
-  const fixedCosts = logistics + returnsCost;
+  if (!cost) return null;
+  const oid = p.offer_id;
+  const commPct  = p.commission_fbs_percent || 0;
+  const vol      = p.volume_liters || 0;
+  const priemka  = ge(oid, 'priemka',  p.ff_cost || 0);
+  const viezd    = ge(oid, 'viezd',    0);
+  const dostKur  = ge(oid, 'dostKur',  0);
+  const prodvizh = ge(oid, 'prodvizh', 0);
+  const oplataPct= ge(oid, 'oplataPct',0);
+  const acqPct   = ge(oid, 'acqPct',   gAcq());
+  const nrPct    = ge(oid, 'nrPct',    gNR());
+  const bl       = baseLog(vol);
+  const logTot   = bl + bl * nrPct / 100 + PVZ;
+  const fixed    = priemka + viezd + dostKur + prodvizh + logTot;
+  const tPayout  = cost / (1 - tgt / 100);
+  const rateSum  = (commPct + acqPct + oplataPct) / 100;
   if (1 - rateSum <= 0) return null;
-  const price = (payout + fixedCosts) / (1 - rateSum);
-  return Math.ceil(price);
+  return Math.ceil((tPayout + fixed) / (1 - rateSum));
 }
 
-// =====================================================================
-// ЗАГРУЗКА И РЕНДЕР
-// =====================================================================
+function calcROIPrice(p, tgt) {
+  const cost = p.cost_price || 0;
+  if (!cost || tgt <= 0) return null;
+  const oid = p.offer_id;
+  const commPct  = p.commission_fbs_percent || 0;
+  const vol      = p.volume_liters || 0;
+  const priemka  = ge(oid, 'priemka',  p.ff_cost || 0);
+  const viezd    = ge(oid, 'viezd',    0);
+  const dostKur  = ge(oid, 'dostKur',  0);
+  const prodvizh = ge(oid, 'prodvizh', 0);
+  const oplataPct= ge(oid, 'oplataPct',0);
+  const acqPct   = ge(oid, 'acqPct',   gAcq());
+  const nrPct    = ge(oid, 'nrPct',    gNR());
+  const bl       = baseLog(vol);
+  const logTot   = bl + bl * nrPct / 100 + PVZ;
+  const fixed    = priemka + viezd + dostKur + prodvizh + logTot;
+  const tPayout  = cost * (1 + tgt / 100);
+  const rateSum  = (commPct + acqPct + oplataPct) / 100;
+  if (1 - rateSum <= 0) return null;
+  return Math.ceil((tPayout + fixed) / (1 - rateSum));
+}
+
+// ── Mode toggle ────────────────────────────────────────────────────
+function setUEMode(mode) {
+  ueMode = mode;
+  document.getElementById('ue-tab-fbs').className = 'ue-tab' + (mode === 'fbs' ? ' fbs-on' : '');
+  document.getElementById('ue-tab-fbo').className = 'ue-tab' + (mode === 'fbo' ? ' fbo-on' : '');
+  renderUE();
+}
+
+function toggleNoErr() {
+  ueNoErr = !ueNoErr;
+  document.getElementById('ue-noerr-t').className = 'ue-tw' + (ueNoErr ? ' on' : '');
+  applyUEFilters(1);
+}
+
+function toggleFocus() {
+  ueFocus = !ueFocus;
+  document.getElementById('ue-focus-t').className = 'ue-tw' + (ueFocus ? ' on' : '');
+  applyUEFilters(1);
+}
+
+// ── Filters ────────────────────────────────────────────────────────
 function debounceUE() {
-  clearTimeout(ueSearchTimer);
-  ueSearchTimer = setTimeout(() => loadUE(1), 400);
+  clearTimeout(ueTimer);
+  ueTimer = setTimeout(() => applyUEFilters(1), 350);
 }
 
 function clearUEFilters() {
-  document.getElementById('ue-search').value = '';
-  document.getElementById('ue-brand').value = '';
-  loadUE(1);
+  ['ue-search','ue-brand','ue-category',
+   'uf-prof-lo','uf-prof-hi','uf-mar-lo','uf-mar-hi','uf-roi-lo','uf-roi-hi']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  applyUEFilters(1);
 }
 
-async function loadUE(page = 1) {
-  uePage = page;
-  const search = document.getElementById('ue-search')?.value || '';
+function applyUEFilters(pg) {
+  uePage = pg || uePage;
+  const srch  = document.getElementById('ue-search')?.value.trim().toLowerCase() || '';
   const brand = document.getElementById('ue-brand')?.value || '';
-  document.getElementById('ue-tbody').innerHTML = '<tr><td colspan="13" class="state-msg">ЗАГРУЗКА...</td></tr>';
+  const cat   = document.getElementById('ue-category')?.value || '';
+  const plo   = parseFloat(document.getElementById('uf-prof-lo')?.value) || null;
+  const phi   = parseFloat(document.getElementById('uf-prof-hi')?.value) || null;
+  const mlo   = parseFloat(document.getElementById('uf-mar-lo')?.value)  || null;
+  const mhi   = parseFloat(document.getElementById('uf-mar-hi')?.value)  || null;
+  const rlo   = parseFloat(document.getElementById('uf-roi-lo')?.value)  || null;
+  const rhi   = parseFloat(document.getElementById('uf-roi-hi')?.value)  || null;
 
+  let list = ueAll;
+  if (srch)  list = list.filter(p => p.offer_id.toLowerCase().includes(srch) || (p.name||'').toLowerCase().includes(srch));
+  if (brand) list = list.filter(p => p.brand === brand);
+  if (cat)   list = list.filter(p => p.category_name === cat);
+
+  if (plo!==null||phi!==null||mlo!==null||mhi!==null||rlo!==null||rhi!==null) {
+    list = list.filter(p => {
+      const r = calcRow(p);
+      if (plo!==null && r.profit < plo) return false;
+      if (phi!==null && r.profit > phi) return false;
+      if (mlo!==null && r.margin < mlo) return false;
+      if (mhi!==null && r.margin > mhi) return false;
+      if (rlo!==null && r.roi    < rlo) return false;
+      if (rhi!==null && r.roi    > rhi) return false;
+      return true;
+    });
+  }
+  if (ueNoErr)  list = list.filter(p => calcRow(p).profit >= 0);
+  if (ueFocus)  list = list.filter(p => ueChecked.has(p.offer_id));
+
+  const total = list.length;
+  ueTotalPages = Math.ceil(total / UE_PER) || 1;
+  if (uePage > ueTotalPages) uePage = 1;
+  const off = (uePage - 1) * UE_PER;
+  ueSlice = list.slice(off, off + UE_PER);
+
+  document.getElementById('ue-badge').textContent = total;
+  document.getElementById('ue-count').textContent = total ? total.toLocaleString('ru') + ' товаров' : '';
+  renderUE();
+  renderUEPager(total);
+}
+
+// ── Load ───────────────────────────────────────────────────────────
+async function loadUE() {
+  document.getElementById('ue-tbody').innerHTML = '<tr><td colspan="30" class="state-msg">ЗАГРУЗКА...</td></tr>';
   try {
-    const params = new URLSearchParams({ page, per_page: UE_PER_PAGE, search, brand });
-    const r = await fetch(`/api/unit-economics/products?${params}`).then(r => r.json());
-    ueProducts = r.products || [];
-    const total = r.total || 0;
-    ueTotalPages = Math.ceil(total / UE_PER_PAGE);
-    document.getElementById('ue-count').textContent = total ? `${total} товаров` : '';
-    renderUE();
-    renderUEPagination(total);
+    const r = await fetch('/api/unit-economics/products?per_page=5000').then(r => r.json());
+    ueAll = r.products || [];
+    await loadUEFiltersDropdown();
+    applyUEFilters(1);
   } catch(e) {
-    document.getElementById('ue-tbody').innerHTML = '<tr><td colspan="13" class="state-msg" style="color:var(--red)">ОШИБКА</td></tr>';
+    document.getElementById('ue-tbody').innerHTML =
+      `<tr><td colspan="30" class="state-msg" style="color:var(--red,#e84)">ОШИБКА: ${e.message}</td></tr>`;
   }
 }
 
-async function loadUEFilters() {
+async function loadUEFiltersDropdown() {
   try {
-    const r = await fetch('/api/repricer/filters').then(r => r.json());
-    const sel = document.getElementById('ue-brand');
+    const r = await fetch('/api/unit-economics/filters').then(r => r.json());
+    const bs = document.getElementById('ue-brand');
+    const cs = document.getElementById('ue-category');
+    const sb = bs.value, sc = cs.value;
+    bs.innerHTML = '<option value="">Бренд</option>';
     (r.brands || []).forEach(b => {
       const o = document.createElement('option');
       o.value = b; o.textContent = b;
-      sel.appendChild(o);
+      if (b === sb) o.selected = true;
+      bs.appendChild(o);
+    });
+    cs.innerHTML = '<option value="">Категория</option>';
+    (r.categories || []).forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      if (c === sc) o.selected = true;
+      cs.appendChild(o);
     });
   } catch {}
 }
 
-function recalcAll() {
-  renderUE();
+// ── Render ─────────────────────────────────────────────────────────
+function fmt(n, d) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return (+n).toFixed(d ?? 2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+function mkI(oid, f, val, cls, extra) {
+  const m = ueEdits[oid]?.[f] !== undefined ? ' m' : '';
+  return `<input class="ui ${cls}${m}" type="number" step="any" value="${val ?? ''}"
+    onchange="onEC('${oid}','${f}',this)" onfocus="this.select()" ${extra||''}>`;
 }
 
 function renderUE() {
-  const tbody = document.getElementById('ue-tbody');
-  if (!ueProducts.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="state-msg">НЕТ ДАННЫХ</td></tr>';
+  const tb = document.getElementById('ue-tbody');
+  if (!ueSlice.length) {
+    tb.innerHTML = '<tr><td colspan="30" class="state-msg">Нет товаров</td></tr>';
+    updateSendBtn();
     return;
   }
 
-  tbody.innerHTML = ueProducts.map(p => {
-    const priceOverride = ueEdits[p.offer_id]?.price;
-    const targetMargin = ueEdits[p.offer_id]?.target_margin;
-    const displayPrice = priceOverride !== undefined ? priceOverride : p.price;
-    const calc = calcUE(p, priceOverride);
-    const isChecked = ueChecked.has(p.offer_id);
-    const hasEdit = priceOverride !== undefined;
+  tb.innerHTML = ueSlice.map(p => {
+    const oid = p.offer_id;
+    const r   = calcRow(p);
+    const chk = ueChecked.has(oid);
+    const img = p.image_url
+      ? `<img src="${p.image_url}" alt="" loading="lazy">`
+      : `<span class="ni"></span>`;
 
-    const marginColor = calc.margin < 5 ? 'var(--red)' : calc.margin < 15 ? 'var(--yellow,#f0a500)' : 'var(--green)';
-    const profitColor = calc.profit < 0 ? 'var(--red)' : calc.profit < 50 ? 'var(--yellow,#f0a500)' : 'var(--green)';
+    const pCls = r.profit < 0 ? 'trd' : 'tgr';
+    const mCls = r.margin < 0 ? 'trd' : 'tgr';
+    const rCls = r.roi    < 0 ? 'trd' : 'tgr';
 
-    return `<tr style="${isChecked ? 'background:rgba(255,106,0,0.08)' : hasEdit ? 'background:rgba(0,200,100,0.04)' : ''}">
-      <td style="text-align:center;padding:4px 8px">
-        <input type="checkbox" ${isChecked ? 'checked' : ''}
-          onchange="toggleUECheck('${p.offer_id}', this.checked)"
-          style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent)">
-      </td>
-      <td style="color:var(--accent);font-family:monospace;font-size:11px;padding:6px 8px;cursor:pointer;white-space:nowrap"
-        onclick="copyUECell('${p.offer_id}', this)">${p.offer_id}</td>
-      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--text-dim);padding:6px 8px">${p.name || '—'}</td>
-      <td style="text-align:right;padding:6px 8px;color:${p.cost_price ? 'var(--text)' : 'var(--text-dim)'}">${p.cost_price ? p.cost_price.toLocaleString('ru') + ' ₽' : '—'}</td>
-      <td style="padding:4px 6px;text-align:right">
-        <input type="number" min="0" value="${displayPrice}"
-          style="width:80px;padding:3px 6px;background:var(--surface2);border:1px solid ${hasEdit ? 'var(--green)' : 'var(--border)'};color:var(--text);font-size:12px;text-align:right"
-          onchange="setUEPrice('${p.offer_id}', this.value)"
-          oninput="setUEPrice('${p.offer_id}', this.value)">
-      </td>
-      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);font-size:11px">${fmtRub(calc.commission)} (${p.commission_fbs_percent || 0}%)</td>
-      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);font-size:11px">${fmtRub(calc.logistics)}</td>
-      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);font-size:11px">${fmtRub(calc.acquiring + (calc.other - calc.other + calc.acquiring === calc.acquiring ? 0 : 0))}${fmtRub(calc.other)}</td>
-      <td style="text-align:right;padding:6px 8px;font-weight:600">${fmtRub(calc.payout)}</td>
-      <td style="text-align:right;padding:6px 8px;font-weight:700;color:${profitColor}">${fmtRub(calc.profit)}</td>
-      <td style="padding:4px 6px;text-align:right">
-        <input type="number" min="0" max="100" step="0.1"
-          value="${targetMargin !== undefined ? targetMargin : ''}"
-          placeholder="—"
-          style="width:65px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;text-align:right"
-          onchange="setUETargetMargin('${p.offer_id}', this.value)"
-          oninput="setUETargetMargin('${p.offer_id}', this.value)">
-      </td>
-      <td style="text-align:right;padding:6px 8px;font-weight:600;color:${marginColor}">${calc.margin.toFixed(1)}%</td>
-      <td style="text-align:right;padding:6px 8px;color:var(--text-dim);font-size:11px">${calc.roi.toFixed(1)}%</td>
-    </tr>`;
+    const tmVal = ueEdits[oid]?.tm ?? '';
+    const trVal = ueEdits[oid]?.tr ?? '';
+    const pv = ge(oid, 'price', p.price);
+
+    return `<tr>
+<td style="text-align:center;padding:3px 4px"><input type="checkbox" ${chk?'checked':''}
+  onchange="onChk('${oid}',this.checked)" style="accent-color:var(--accent);cursor:pointer"></td>
+<td style="text-align:left;padding:4px 5px;color:var(--accent);font-family:monospace;font-size:11px"
+  onclick="navigator.clipboard?.writeText('${oid}')" title="Копировать">${oid}</td>
+<td class="tim">${img}</td>
+<td class="tnm" title="${(p.name||'').replace(/"/g,'&quot;')}">${p.name||''}</td>
+<td class="tdl">${fmt(p.cost_price)}</td>
+<td class="tdl">${mkI(oid,'priemka', ge(oid,'priemka',p.ff_cost||0),'')}</td>
+<td>${mkI(oid,'viezd',   ge(oid,'viezd',0),'')}</td>
+<td>${mkI(oid,'dostKur', ge(oid,'dostKur',0),'')}</td>
+<td>${mkI(oid,'prodvizh',ge(oid,'prodvizh',0),'')}</td>
+<td>${mkI(oid,'oplataPct',ge(oid,'oplataPct',0),'')}</td>
+<td data-c="${oid}-or">${fmt(r.oplataRub)}</td>
+<td class="tcn tdl" data-c="${oid}-lt">${fmt(r.logTot)}</td>
+<td data-c="${oid}-bl" class="tdi">${fmt(r.base)}</td>
+<td>${mkI(oid,'nrPct',ge(oid,'nrPct',gNR()),'')}</td>
+<td class="tdi">${PVZ}</td>
+<td class="tdl tdi">${fmt(r.commPct,0)}%</td>
+<td data-c="${oid}-cr">${fmt(r.commRub)}</td>
+<td>${mkI(oid,'acqPct',ge(oid,'acqPct',gAcq()),'')}</td>
+<td class="tdl"><input class="ui p${ueEdits[oid]?.price!==undefined?' m':''}" type="number" step="1"
+  value="${pv}" onchange="onEC('${oid}','price',this)" onfocus="this.select()"></td>
+<td><input class="ui t" type="number" step="0.1" placeholder="%"
+  value="${tmVal}" onchange="onTM('${oid}',this)"></td>
+<td><input class="ui t" type="number" step="0.1" placeholder="%"
+  value="${trVal}" onchange="onTR('${oid}',this)"></td>
+<td class="tdl" data-c="${oid}-py">${fmt(r.payout)}</td>
+<td class="${pCls}" data-c="${oid}-pr">${fmt(r.profit)}</td>
+<td class="${mCls}" data-c="${oid}-mg">${fmt(r.margin,2)}%</td>
+<td class="${rCls}" data-c="${oid}-ri">${fmt(r.roi,2)}%</td>
+</tr>`;
   }).join('');
-
-  updateUECheckAll();
-  updateUESendBtn();
+  updateSendBtn();
 }
 
-function fmtRub(val) {
-  if (val === null || val === undefined || isNaN(val)) return '—';
-  return Math.round(val).toLocaleString('ru') + ' ₽';
+// ── Cell handlers ──────────────────────────────────────────────────
+function onEC(oid, f, inp) {
+  const v = parseFloat(inp.value);
+  if (!ueEdits[oid]) ueEdits[oid] = {};
+  ueEdits[oid][f] = isNaN(v) ? 0 : v;
+  inp.classList.add('m');
+  rcalc(oid);
+  updateSendBtn();
 }
 
-function copyUECell(text, el) {
-  navigator.clipboard.writeText(text).then(() => {
-    const orig = el.style.color;
-    el.style.color = 'var(--green)';
-    setTimeout(() => el.style.color = orig, 800);
-  });
-}
-
-// =====================================================================
-// РЕДАКТИРОВАНИЕ
-// =====================================================================
-function setUEPrice(offerId, value) {
-  const num = parseFloat(value);
-  if (!isNaN(num) && num > 0) {
-    if (!ueEdits[offerId]) ueEdits[offerId] = {};
-    ueEdits[offerId].price = num;
-  } else {
-    if (ueEdits[offerId]) delete ueEdits[offerId].price;
+function onTM(oid, inp) {
+  const pct = parseFloat(inp.value);
+  if (!ueEdits[oid]) ueEdits[oid] = {};
+  ueEdits[oid].tm = isNaN(pct) ? '' : pct;
+  if (!isNaN(pct) && pct > 0 && pct < 100) {
+    const p = ueAll.find(x => x.offer_id === oid);
+    if (p) {
+      const np = calcMarginPrice(p, pct);
+      if (np) {
+        ueEdits[oid].price = np;
+        const pi = document.querySelector(`td input.p[onchange*="'${oid}','price'"]`);
+        if (pi) { pi.value = np; pi.classList.add('m'); }
+        rcalc(oid);
+        updateSendBtn();
+      }
+    }
   }
-  // Пересчитываем только строку без полного ре-рендера
-  rerenderRow(offerId);
 }
 
-function setUETargetMargin(offerId, value) {
-  const p = ueProducts.find(x => x.offer_id === offerId);
+function onTR(oid, inp) {
+  const pct = parseFloat(inp.value);
+  if (!ueEdits[oid]) ueEdits[oid] = {};
+  ueEdits[oid].tr = isNaN(pct) ? '' : pct;
+  if (!isNaN(pct) && pct > 0) {
+    const p = ueAll.find(x => x.offer_id === oid);
+    if (p) {
+      const np = calcROIPrice(p, pct);
+      if (np) {
+        ueEdits[oid].price = np;
+        const pi = document.querySelector(`td input.p[onchange*="'${oid}','price'"]`);
+        if (pi) { pi.value = np; pi.classList.add('m'); }
+        rcalc(oid);
+        updateSendBtn();
+      }
+    }
+  }
+}
+
+function rcalc(oid) {
+  const p = ueAll.find(x => x.offer_id === oid);
   if (!p) return;
-  const num = parseFloat(value);
-  if (!isNaN(num) && num > 0 && num < 100) {
-    if (!ueEdits[offerId]) ueEdits[offerId] = {};
-    ueEdits[offerId].target_margin = num;
-    const newPrice = calcPriceFromMargin(p, num);
-    if (newPrice) {
-      ueEdits[offerId].price = newPrice;
-      // Обновляем инпут цены
-      const priceInput = document.querySelector(`input[data-offer-price="${offerId}"]`);
-      if (priceInput) priceInput.value = newPrice;
-    }
-  } else {
-    if (ueEdits[offerId]) {
-      delete ueEdits[offerId].target_margin;
-    }
-  }
-  rerenderRow(offerId);
+  const r = calcRow(p);
+  const s = (a, v, d) => { const el = document.querySelector(`[data-c="${a}"]`); if (el) el.textContent = fmt(v, d); };
+  s(`${oid}-or`, r.oplataRub);
+  s(`${oid}-lt`, r.logTot);
+  s(`${oid}-bl`, r.base);
+  s(`${oid}-cr`, r.commRub);
+  s(`${oid}-py`, r.payout);
+  s(`${oid}-pr`, r.profit);
+  s(`${oid}-mg`, r.margin, 2);
+  s(`${oid}-ri`, r.roi, 2);
+  const pf = document.querySelector(`[data-c="${oid}-pr"]`);
+  if (pf) pf.className = r.profit < 0 ? 'trd' : 'tgr';
+  const mf = document.querySelector(`[data-c="${oid}-mg"]`);
+  if (mf) mf.className = r.margin < 0 ? 'trd' : 'tgr';
+  const rf = document.querySelector(`[data-c="${oid}-ri"]`);
+  if (rf) rf.className = r.roi < 0 ? 'trd' : 'tgr';
 }
 
-function applyTargetMarginAll() {
-  const globalMargin = parseFloat(document.getElementById('ue-target-margin')?.value);
-  if (isNaN(globalMargin) || globalMargin <= 0) return;
-  ueProducts.forEach(p => {
-    if (!ueEdits[p.offer_id]) ueEdits[p.offer_id] = {};
-    ueEdits[p.offer_id].target_margin = globalMargin;
-    const newPrice = calcPriceFromMargin(p, globalMargin);
-    if (newPrice) ueEdits[p.offer_id].price = newPrice;
-  });
-  renderUE();
-  showToast(`✓ Целевая маржа ${globalMargin}% применена к ${ueProducts.length} товарам`);
-}
-
-function rerenderRow(offerId) {
-  // Полный ре-рендер таблицы — просто и надёжно
-  renderUE();
-}
-
-// =====================================================================
-// ЧЕКБОКСЫ
-// =====================================================================
-function toggleUECheck(offerId, checked) {
-  if (checked) ueChecked.add(offerId);
-  else ueChecked.delete(offerId);
-  updateUECheckAll();
-  updateUESendBtn();
+// ── Checkboxes ─────────────────────────────────────────────────────
+function onChk(oid, checked) {
+  if (checked) ueChecked.add(oid); else ueChecked.delete(oid);
+  updateSendBtn();
 }
 
 function toggleUEAll(checked) {
-  ueProducts.forEach(p => {
-    if (checked) ueChecked.add(p.offer_id);
-    else ueChecked.delete(p.offer_id);
-  });
-  updateUESendBtn();
-  renderUE();
+  ueSlice.forEach(p => { if (checked) ueChecked.add(p.offer_id); else ueChecked.delete(p.offer_id); });
+  document.querySelectorAll('#ue-tbody input[type=checkbox]').forEach(el => el.checked = checked);
+  updateSendBtn();
 }
 
-function updateUECheckAll() {
-  const cb = document.getElementById('ue-check-all');
-  if (!cb) return;
-  const checkedOnPage = ueProducts.filter(p => ueChecked.has(p.offer_id)).length;
-  cb.indeterminate = checkedOnPage > 0 && checkedOnPage < ueProducts.length;
-  cb.checked = ueProducts.length > 0 && checkedOnPage === ueProducts.length;
+function updateSendBtn() {
+  const priceChg = [...ueChecked].filter(oid => ueEdits[oid]?.price !== undefined).length;
+  const btn = document.getElementById('ue-send-btn');
+  btn.disabled = priceChg === 0;
+  document.getElementById('ue-send-count').textContent = priceChg;
 }
 
-function updateUESendBtn() {
-  const count = ueChecked.size;
-  document.getElementById('ue-send-count').textContent = count;
-  document.getElementById('ue-send-btn').disabled = count === 0;
-  const el = document.getElementById('ue-selected-count');
-  el.textContent = count > 0 ? `✓ Выбрано: ${count}` : '';
-}
-
-// =====================================================================
-// ПЕРЕДАЧА ЦЕН
-// =====================================================================
-async function sendPrices() {
-  const prices = [];
-  ueChecked.forEach(offerId => {
-    const p = ueProducts.find(x => x.offer_id === offerId);
-    if (!p) return;
-    const newPrice = ueEdits[offerId]?.price ?? p.price;
-    if (!newPrice || newPrice <= 0) return;
-    prices.push({
-      offer_id: offerId,
-      price: String(Math.round(newPrice)),
-      old_price: String(Math.round(p.price * 1.1)),
-      min_price: String(Math.round(newPrice * 0.9)),
-      currency_code: "RUB",
-      vat: "0.1",
-      auto_action_enabled: "UNKNOWN",
-      price_strategy_enabled: "UNKNOWN",
-    });
-  });
-
-  if (!prices.length) {
-    showToast('Нет данных для передачи', 'error');
-    return;
+// ── Pagination ─────────────────────────────────────────────────────
+function renderUEPager(total) {
+  const el = document.getElementById('ue-pagination');
+  if (!el || ueTotalPages <= 1) { if (el) el.innerHTML = ''; return; }
+  let h = `<button ${uePage===1?'disabled':''} onclick="applyUEFilters(${uePage-1})">‹</button>`;
+  for (let i = 1; i <= ueTotalPages; i++) {
+    if (ueTotalPages > 10 && Math.abs(i - uePage) > 2 && i !== 1 && i !== ueTotalPages) {
+      if (i === uePage - 3 || i === uePage + 3) h += '<button disabled>…</button>';
+      continue;
+    }
+    h += `<button class="${i===uePage?'cur':''}" onclick="applyUEFilters(${i})">${i}</button>`;
   }
+  h += `<button ${uePage===ueTotalPages?'disabled':''} onclick="applyUEFilters(${uePage+1})">›</button>`;
+  h += `<span class="pgi">стр. ${uePage} из ${ueTotalPages}</span>`;
+  el.innerHTML = h;
+}
 
-  const previewRows = prices.slice(0, 10).map(p => {
-    const prod = ueProducts.find(x => x.offer_id === p.offer_id);
-    const oldPrice = prod?.price || 0;
-    const diff = Math.round(p.price) - oldPrice;
-    const diffStr = diff > 0 ? `<span style="color:var(--green)">+${diff}</span>` : diff < 0 ? `<span style="color:var(--red)">${diff}</span>` : '0';
+// ── CSV ────────────────────────────────────────────────────────────
+function downloadUECSV() {
+  const h = ['Артикул','Название','Бренд','Категория','Себест.','ff_cost','Цена',
+    'Ком.%','Ком.₽','База','Невыкупы','Лог.Итого','Эквайр.',
+    'К выплате','Прибыль₽','Маржа%','ROI%'];
+  const rows = ueAll.map(p => {
+    const r = calcRow(p);
+    return [p.offer_id, p.name, p.brand, p.category_name, p.cost_price, p.ff_cost,
+      r.price, r.commPct, r.commRub, r.base, r.nev, r.logTot, r.acqRub,
+      r.payout, r.profit, r.margin.toFixed(2), r.roi.toFixed(2)].join(';');
+  });
+  const csv = [h.join(';'), ...rows].join('\n');
+  const b = new Blob(['﻿' + csv], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = 'unit_economics.csv'; a.click();
+}
+
+// ── Send prices ────────────────────────────────────────────────────
+async function sendPrices() {
+  const items = [...ueChecked]
+    .filter(oid => ueEdits[oid]?.price !== undefined)
+    .map(oid => {
+      const p = ueAll.find(x => x.offer_id === oid);
+      const np = ueEdits[oid].price;
+      return {
+        offer_id: oid,
+        price: String(Math.round(np)),
+        old_price: String(Math.round((p?.price || np) * 1.1)),
+        min_price: String(Math.round(np * 0.9)),
+        currency_code: 'RUB', vat: '0.1',
+        auto_action_enabled: 'UNKNOWN', price_strategy_enabled: 'UNKNOWN',
+      };
+    });
+  if (!items.length) return;
+
+  const preview = items.slice(0,10).map(i => {
+    const p = ueAll.find(x => x.offer_id === i.offer_id);
+    const old = p?.price || 0;
+    const diff = Math.round(i.price) - old;
+    const dc = diff > 0 ? `<span style="color:var(--green)">+${diff}</span>` : diff < 0 ? `<span style="color:var(--red,#e84);">${diff}</span>` : '0';
     return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
-      <span style="color:var(--accent);font-family:monospace">${p.offer_id}</span>
-      <span>${oldPrice} → <b>${p.price}</b> ₽ ${diffStr}</span>
-    </div>`;
+      <span style="color:var(--accent);font-family:monospace">${i.offer_id}</span>
+      <span>${old} → <b>${i.price}</b> ₽ ${dc}</span></div>`;
   }).join('');
+  const more = items.length > 10 ? `<div style="color:var(--text-dim);font-size:11px;margin-top:6px">...и ещё ${items.length-10}</div>` : '';
 
-  const more = prices.length > 10 ? `<div style="color:var(--text-dim);font-size:11px;margin-top:8px">... и ещё ${prices.length - 10} позиций</div>` : '';
-
-  if (!await ueConfirm(`Передать цены — ${prices.length} позиций`, previewRows + more)) return;
-
+  if (!await ueConfirm(`Передать цены — ${items.length} позиций`, preview + more)) return;
   const btn = document.getElementById('ue-send-btn');
   btn.disabled = true;
-  btn.textContent = '⏳ Передаём...';
-
   try {
     const r = await fetch('/api/unit-economics/update-prices', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ prices })
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({prices: items}),
     }).then(r => r.json());
-
-    if (r.errors > 0) {
-      showToast(`⚠ Обновлено ${r.total - r.errors} из ${r.total}, ошибок: ${r.errors}`, 'error');
-    } else {
-      showToast(`✓ Цены обновлены для ${r.total} позиций`);
-      ueChecked.clear();
-      ueEdits = {};
-      loadUE(uePage);
-    }
-  } catch {
-    showToast('Ошибка передачи цен', 'error');
-  } finally {
-    btn.disabled = ueChecked.size === 0;
-    const cnt = document.getElementById('ue-send-count');
-    if (cnt) cnt.textContent = ueChecked.size;
-    btn.innerHTML = `→ Передать цены в Ozon (<span id="ue-send-count">${ueChecked.size}</span>)`;
+    if (r.errors > 0) showToast(`Обновлено ${(r.total||0)-(r.errors||0)} из ${r.total||0}, ошибок: ${r.errors}`, 'error');
+    else showToast(`✓ Цены обновлены для ${r.total||items.length} позиций`);
+    ueChecked.clear();
+    ueEdits = {};
+    await loadUE();
+  } catch(e) {
+    showToast('Ошибка: ' + e.message, 'error');
+    btn.disabled = false;
+    updateSendBtn();
   }
 }
 
-// =====================================================================
-// ПАГИНАЦИЯ
-// =====================================================================
-function renderUEPagination(total) {
-  const el = document.getElementById('ue-pagination');
-  const totalPages = Math.ceil(total / UE_PER_PAGE);
-  if (totalPages <= 1) { el.innerHTML = ''; return; }
-
-  const btnStyle = 'display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;padding:0 8px;margin:0 2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;';
-  const activeBtnStyle = btnStyle + 'border-color:var(--accent);color:var(--accent);background:rgba(255,106,0,0.1);';
-  const dimBtnStyle = btnStyle + 'color:var(--text-dim);cursor:default;';
-
-  const pages = buildUEPages(uePage, totalPages);
-  let html = '<div style="display:flex;align-items:center;justify-content:center;gap:4px;padding:12px 0;flex-wrap:wrap">';
-  html += uePage > 1 ? `<button style="${btnStyle}" onclick="loadUE(${uePage-1})">‹</button>` : `<button style="${dimBtnStyle}" disabled>‹</button>`;
-  for (const p of pages) {
-    if (p === '...') html += `<span style="${dimBtnStyle}">…</span>`;
-    else if (p === uePage) html += `<button style="${activeBtnStyle}">${p}</button>`;
-    else html += `<button style="${btnStyle}" onclick="loadUE(${p})">${p}</button>`;
-  }
-  html += uePage < totalPages ? `<button style="${btnStyle}" onclick="loadUE(${uePage+1})">›</button>` : `<button style="${dimBtnStyle}" disabled>›</button>`;
-  html += `<span style="margin-left:12px;font-size:11px;color:var(--text-dim)">стр. ${uePage} из ${totalPages}</span></div>`;
-  el.innerHTML = html;
-}
-
-function buildUEPages(current, total) {
-  if (total <= 7) return Array.from({length: total}, (_, i) => i + 1);
-  const around = new Set([1, total, current, current-1, current+1, current-2, current+2]);
-  const sorted = [...around].filter(p => p >= 1 && p <= total).sort((a, b) => a - b);
-  const pages = [];
-  for (let i = 0; i < sorted.length; i++) {
-    if (i > 0 && sorted[i] - sorted[i-1] > 1) pages.push('...');
-    pages.push(sorted[i]);
-  }
-  return pages;
-}
-
+// ── Sync ───────────────────────────────────────────────────────────
 async function syncUEProducts() {
   const btn = document.getElementById('ue-sync-btn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Запускаем...';
+  btn.disabled = true; btn.textContent = '⟳ СИНХРОНИЗАЦИЯ...';
   try {
-    await fetch('/api/unit-economics/sync', {method: 'POST'});
-    while (true) {
+    await fetch('/api/unit-economics/sync', {method:'POST'});
+    let att = 0;
+    while (++att < 120) {
       await new Promise(r => setTimeout(r, 2000));
       const s = await fetch('/api/unit-economics/sync/status').then(r => r.json());
-      if (s.running) {
-        btn.textContent = `⏳ ${s.progress || 'Синхронизация...'}`;
-      } else if (s.error) {
-        showToast(`Ошибка: ${s.error}`, 'error');
-        break;
-      } else {
-        showToast(`✓ Синхронизировано ${s.synced.toLocaleString('ru')} товаров`);
-        loadUE(1);
-        break;
-      }
+      if (s.running) { btn.textContent = `⟳ ${s.progress || '...'}`;
+      } else if (s.error) { showToast('Ошибка: ' + s.error, 'error'); break;
+      } else { showToast(`✓ Синхронизировано ${(s.synced||0).toLocaleString('ru')} товаров`); await loadUE(); break; }
     }
-  } catch {
-    showToast('Ошибка синхронизации', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⟳ Синхронизировать';
-  }
+  } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '⟳ ПОЛУЧИТЬ ДАННЫЕ С OZON'; }
 }
 
+// ── Confirm modal ──────────────────────────────────────────────────
+function ueConfirm(title, bodyHtml) {
+  return new Promise(res => {
+    const m = document.getElementById('ue-confirm-modal');
+    document.getElementById('ue-confirm-title').textContent = title;
+    document.getElementById('ue-confirm-body').innerHTML = bodyHtml;
+    m.classList.add('show');
+    const ok = document.getElementById('ue-confirm-ok');
+    const cn = document.getElementById('ue-confirm-cancel');
+    function close(r) { m.classList.remove('show'); ok.removeEventListener('click',onOk); cn.removeEventListener('click',onCn); res(r); }
+    const onOk = () => close(true), onCn = () => close(false);
+    ok.addEventListener('click',onOk); cn.addEventListener('click',onCn);
+  });
+}
 
-// =====================================================================
-// ИНИЦИАЛИЗАЦИЯ
-// =====================================================================
-loadUEFilters();
-loadUE(1);
-document.getElementById('ue-send-btn').addEventListener('click', sendPrices);
+// ── Toast ──────────────────────────────────────────────────────────
+function showToast(msg, type) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  el.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:9999;padding:10px 18px;
+    background:${type==='error'?'var(--red,#e84444)':'#1a7a4a'};color:#fff;font-size:12px;
+    border-radius:4px;max-width:380px;box-shadow:0 4px 16px rgba(0,0,0,.5)`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Init ───────────────────────────────────────────────────────────
+loadUE();
