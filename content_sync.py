@@ -519,6 +519,7 @@ async def find_wb_missing_from_ozon(ozon_account_id: int, wb_api_key: str) -> li
             "nm_id":         p.nm_id,
             "name":          p.name or "",
             "image":         images[0] if images else "",
+            "subject_name":  getattr(p, "subject_name", None) or "",
             "orders_week":   orders_week,
             "orders_month":  orders_month,
         })
