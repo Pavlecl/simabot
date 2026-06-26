@@ -569,27 +569,38 @@ async def _load_ozon_cat_pairs(session: aiohttp.ClientSession, headers: dict) ->
 
 async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, name: str) -> tuple[int, int]:
     """Ищет (description_category_id, type_id) по ключевым словам из названия товара."""
+    import re as _re
     pairs = await _load_ozon_cat_pairs(session, headers)
     if not pairs:
         return 0, 0
 
-    words = set(name.lower().split())
-    best_score, best = 0, (0, 0)
+    # Токенизация: разбиваем по пробелам и дефисам, минимум 3 символа
+    raw_words = name.lower().split()
+    tokens: set[str] = set()
+    for w in raw_words:
+        tokens.add(w)
+        for part in _re.split(r'[-/]', w):
+            if len(part) >= 3:
+                tokens.add(part)
 
+    # 1. Максимальное пересечение слов
+    best_score, best = 0, (0, 0)
     for desc_cat, type_id, cat_name in pairs:
         cat_words = set(cat_name.split())
-        score = len(words & cat_words)
+        score = len(tokens & cat_words)
         if score > best_score:
             best_score = score
             best = (desc_cat, type_id)
 
     if best_score > 0:
         return best
-    # Fallback: substring match on first word
-    first_word = name.lower().split()[0] if name else ""
-    if first_word:
+
+    # 2. Substring: каждый токен ищем внутри имени категории
+    for token in sorted(tokens, key=len, reverse=True):  # длинные слова — приоритет
+        if len(token) < 4:
+            continue
         for desc_cat, type_id, cat_name in pairs:
-            if first_word in cat_name:
+            if token in cat_name:
                 return desc_cat, type_id
 
     return 0, 0
