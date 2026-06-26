@@ -646,17 +646,45 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 continue
 
             # Заполняем атрибуты
+            import re as _re
             req_attrs  = await _ozon_required_attrs(session, headers, desc_cat_id, type_id)
-            wb_attrs   = {a["name"].lower(): a["value"] for a in _json.loads(p.attributes_json or "[]")}
+            wb_chars   = _json.loads(p.attributes_json or "[]")
+            wb_attrs   = {a["name"].lower(): str(a.get("value", "")) for a in wb_chars}
             ozon_attrs = []
             for attr in req_attrs:
-                key = attr.get("name", "").lower()
-                val = wb_attrs.get(key) or (p.name or vc)
-                ozon_attrs.append({
-                    "id": attr["id"],
-                    "complex_id": 0,
-                    "values": [{"value": str(val)[:500]}],
-                })
+                attr_id   = attr["id"]
+                attr_name = attr.get("name", "").lower()
+                dict_type = attr.get("attribute_type", "None")  # "None", "Option", "Tree"
+                val_type  = attr.get("type", "String")          # "String", "Integer", "Float"
+                wb_val    = wb_attrs.get(attr_name, "")
+
+                if dict_type in ("Option", "Tree"):
+                    # Словарный атрибут — без dictionary_value_id не отправляем (вызывает ошибку)
+                    continue
+
+                if val_type in ("Integer", "Float"):
+                    nums = _re.findall(r'\d+(?:\.\d+)?', wb_val)
+                    num  = nums[0] if nums else "0"
+                    ozon_attrs.append({"id": attr_id, "complex_id": 0, "values": [{"value": num}]})
+                else:
+                    val = wb_val or (p.name or vc)
+                    ozon_attrs.append({"id": attr_id, "complex_id": 0, "values": [{"value": str(val)[:500]}]})
+
+            # Размеры: пробуем вытащить из WB-характеристик, иначе ставим минимум 1
+            def _dim(keys: list[str]) -> int:
+                for k in keys:
+                    v = wb_attrs.get(k, "")
+                    nums = _re.findall(r'\d+', v)
+                    if nums:
+                        return max(1, int(nums[0]))
+                return 1
+
+            depth  = _dim(["глубина, мм", "длина, мм", "длина"])
+            width  = _dim(["ширина, мм", "ширина"])
+            height = _dim(["высота, мм", "высота"])
+            weight = _dim(["вес, г", "вес брутто, г", "вес нетто, г", "вес"])
+            if weight == 1:
+                weight = 100  # минимум 100 г по умолчанию
 
             item = {
                 "name":                    (p.name or vc)[:500],
@@ -667,6 +695,12 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 "vat":                     "0",
                 "images":                  images,
                 "description":             (p.description or "")[:10000],
+                "depth":                   depth,
+                "width":                   width,
+                "height":                  height,
+                "dimension_unit":          "mm",
+                "weight":                  weight,
+                "weight_unit":             "g",
                 "attributes":              ozon_attrs,
             }
 
