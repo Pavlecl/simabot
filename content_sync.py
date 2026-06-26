@@ -428,15 +428,18 @@ async def _ozon_get_offer_ids(headers: dict) -> set[str]:
     return ids
 
 
-async def _wb_get_stats(wb_api_key: str, nm_ids: list[int]) -> dict[int, dict]:
-    """Заказы за неделю и месяц по nm_id через WB nm-report."""
+async def _wb_get_stats(wb_api_key: str, nm_ids: list[int]) -> Optional[dict[int, dict]]:
+    """Заказы за неделю и месяц по nm_id через WB nm-report.
+    Возвращает None если API недоступен (не тот тип токена).
+    """
     if not nm_ids:
         return {}
 
     today = datetime.now()
-    stats_week: dict[int, int] = {}
+    stats_week: dict[int, int]  = {}
     stats_month: dict[int, int] = {}
     headers = {"Authorization": wb_api_key, "Content-Type": "application/json"}
+    url = "https://seller-analytics-api.wildberries.ru/api/v2/nm-report/detail"
 
     async with aiohttp.ClientSession() as session:
         for period_key, days, store in [
@@ -449,8 +452,7 @@ async def _wb_get_stats(wb_api_key: str, nm_ids: list[int]) -> dict[int, dict]:
             while True:
                 try:
                     async with session.post(
-                        "https://suppliers-api.wildberries.ru/api/v2/nm-report/detail",
-                        headers=headers,
+                        url, headers=headers,
                         json={
                             "nmIDs": nm_ids,
                             "timezone": "Europe/Moscow",
@@ -458,7 +460,11 @@ async def _wb_get_stats(wb_api_key: str, nm_ids: list[int]) -> dict[int, dict]:
                             "orderBy": {"field": "ordersCount", "mode": "desc"},
                             "page": page,
                         },
+                        timeout=aiohttp.ClientTimeout(total=10),
                     ) as resp:
+                        if resp.status in (401, 403, 404):
+                            print(f"[wb-stats] API недоступен: {resp.status} (нужен токен типа Analytics)", flush=True)
+                            return None
                         data = await resp.json(content_type=None)
                     cards = data.get("data", {}).get("cards", [])
                     for card in cards:
@@ -471,7 +477,7 @@ async def _wb_get_stats(wb_api_key: str, nm_ids: list[int]) -> dict[int, dict]:
                     page += 1
                 except Exception as e:
                     print(f"[wb-stats] {period_key} error: {e}", flush=True)
-                    break
+                    return None
 
     return {
         nm_id: {"week": stats_week.get(nm_id, 0), "month": stats_month.get(nm_id, 0)}
@@ -493,7 +499,7 @@ async def find_wb_missing_from_ozon(ozon_account_id: int, wb_api_key: str) -> li
     missing = [p for p in wb_all if p.vendor_code not in ozon_ids]
 
     nm_ids = [p.nm_id for p in missing if p.nm_id]
-    stats: dict[int, dict] = {}
+    stats: Optional[dict[int, dict]] = None
     try:
         stats = await _wb_get_stats(wb_api_key, nm_ids)
     except Exception as e:
@@ -502,35 +508,90 @@ async def find_wb_missing_from_ozon(ozon_account_id: int, wb_api_key: str) -> li
     result = []
     for p in missing:
         images = _json.loads(p.images_json or "[]")
-        nm_stat = stats.get(p.nm_id, {"week": 0, "month": 0}) if p.nm_id else {"week": 0, "month": 0}
+        if stats is None:
+            orders_week, orders_month = None, None
+        else:
+            nm_stat = stats.get(p.nm_id, {"week": 0, "month": 0}) if p.nm_id else {"week": 0, "month": 0}
+            orders_week  = nm_stat["week"]
+            orders_month = nm_stat["month"]
         result.append({
             "vendor_code":   p.vendor_code,
             "nm_id":         p.nm_id,
             "name":          p.name or "",
             "image":         images[0] if images else "",
-            "orders_week":   nm_stat["week"],
-            "orders_month":  nm_stat["month"],
+            "orders_week":   orders_week,
+            "orders_month":  orders_month,
         })
 
-    result.sort(key=lambda x: x["orders_month"], reverse=True)
+    result.sort(key=lambda x: (x["orders_month"] or 0), reverse=True)
     return result
 
 
-async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, name: str) -> tuple[int, int]:
-    """Поиск description_category_id + type_id по названию товара."""
+# Кэш дерева категорий Ozon (обновляется раз в сессию)
+_ozon_cat_pairs: list[tuple[int, int, str]] = []
+
+
+async def _load_ozon_cat_pairs(session: aiohttp.ClientSession, headers: dict) -> list[tuple[int, int, str]]:
+    """Загружает и кэширует плоский список (desc_cat_id, type_id, name) из дерева Ozon."""
+    global _ozon_cat_pairs
+    if _ozon_cat_pairs:
+        return _ozon_cat_pairs
+
     try:
         async with session.post(
-            "https://api-seller.ozon.ru/v1/description-category/search",
+            "https://api-seller.ozon.ru/v1/description-category/tree",
             headers=headers,
-            json={"language": "RU", "query": name[:100]},
+            json={},
         ) as resp:
-            data = await resp.json(content_type=None)
-        results = data.get("result", [])
-        if results:
-            first = results[0]
-            return first.get("description_category_id", 0), first.get("type_id", 0)
+            tree = await resp.json(content_type=None)
     except Exception as e:
-        print(f"[cat-search] {e}", flush=True)
+        print(f"[cat-tree] {e}", flush=True)
+        return []
+
+    pairs: list[tuple[int, int, str]] = []
+
+    def traverse(nodes: list, parent_desc_cat: int = 0) -> None:
+        for n in nodes:
+            desc_cat = n.get("description_category_id") or parent_desc_cat
+            type_id  = n.get("type_id", 0)
+            name     = (n.get("category_name") or n.get("type_name") or "").lower()
+            children = n.get("children") or []
+            if type_id and not children and not n.get("disabled"):
+                pairs.append((desc_cat, type_id, name))
+            if children:
+                traverse(children, desc_cat)
+
+    traverse(tree.get("result", []))
+    _ozon_cat_pairs = pairs
+    print(f"[cat-tree] loaded {len(pairs)} leaf categories", flush=True)
+    return pairs
+
+
+async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, name: str) -> tuple[int, int]:
+    """Ищет (description_category_id, type_id) по ключевым словам из названия товара."""
+    pairs = await _load_ozon_cat_pairs(session, headers)
+    if not pairs:
+        return 0, 0
+
+    words = set(name.lower().split())
+    best_score, best = 0, (0, 0)
+
+    for desc_cat, type_id, cat_name in pairs:
+        cat_words = set(cat_name.split())
+        score = len(words & cat_words)
+        if score > best_score:
+            best_score = score
+            best = (desc_cat, type_id)
+
+    if best_score > 0:
+        return best
+    # Fallback: substring match on first word
+    first_word = name.lower().split()[0] if name else ""
+    if first_word:
+        for desc_cat, type_id, cat_name in pairs:
+            if first_word in cat_name:
+                return desc_cat, type_id
+
     return 0, 0
 
 

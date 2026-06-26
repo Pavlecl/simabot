@@ -71,7 +71,8 @@
     <button class="btn primary" id="btn-compare" onclick="runCompare()">↔ Сравнить</button>
   </div>
   <div id="compare-hint" style="margin-top:12px;font-size:11px;color:var(--text-dim)">
-    Будут показаны товары из WB, которых нет в выбранном кабинете Ozon.
+    Будут показаны товары из WB, которых нет в выбранном кабинете Ozon.<br>
+    <span style="color:rgba(255,255,255,.3)">⚠ Статистика заказов WB доступна только с токеном типа <b>Аналитика</b> (не Content). Для настройки добавьте нужный ключ в кабинете WB.</span>
   </div>
 </div>
 
@@ -185,8 +186,8 @@ function renderResults(data) {
         <span class="art-chip" onclick="event.stopPropagation();copyArt(this,'${x(item.vendor_code)}')">${x(item.vendor_code)}</span>
       </td>
       <td><span class="item-name" title="${x(item.name)}">${x(item.name) || '—'}</span></td>
-      <td class="orders-num ${item.orders_week === 0 ? 'zero' : ''}">${item.orders_week}</td>
-      <td class="orders-num orders-month ${item.orders_month === 0 ? 'zero' : ''}">${item.orders_month}</td>
+      <td class="orders-num ${!item.orders_week ? 'zero' : ''}">${item.orders_week ?? '—'}</td>
+      <td class="orders-num orders-month ${!item.orders_month ? 'zero' : ''}">${item.orders_month ?? '—'}</td>
     </tr>
   `).join('');
   updateSelCount();
