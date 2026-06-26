@@ -684,8 +684,9 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 results.append({"vendor_code": vc, "status": "error", "error": "Нет фотографий"})
                 continue
 
-            # Определяем категорию
-            desc_cat_id, type_id = await _ozon_search_category(session, headers, p.name or vc)
+            # Определяем категорию: сначала по subjectName WB, иначе по названию
+            cat_query = getattr(p, "subject_name", None) or p.name or vc
+            desc_cat_id, type_id = await _ozon_search_category(session, headers, cat_query)
             if not desc_cat_id:
                 results.append({"vendor_code": vc, "status": "error", "error": "Не удалось определить категорию Ozon"})
                 continue
@@ -736,29 +737,39 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                     val = wb_val or (p.name or vc)
                     ozon_attrs.append({"id": attr_id, "complex_id": 0, "values": [{"value": str(val)[:500]}]})
 
-            # Размеры: WB хранит в см, Ozon принимает в мм → умножаем на 10
-            def _dim_cm_to_mm(keys: list[str], default_mm: int = 50) -> int:
+            # Размеры: берём из WB dimensions_json (мм) → Ozon (мм), 1:1
+            # Fallback: ищем в характеристиках в см, умножаем на 10
+            wb_dims = _json.loads(getattr(p, "dimensions_json", None) or "{}")
+
+            def _from_dims(key: str) -> Optional[int]:
+                v = wb_dims.get(key)
+                if v and int(v) > 0:
+                    return int(v)
+                return None
+
+            def _from_attrs_cm(keys: list[str]) -> Optional[int]:
                 for k in keys:
                     v = wb_attrs.get(k, "")
                     nums = _re.findall(r'\d+(?:\.\d+)?', v)
                     if nums:
-                        return max(10, int(float(nums[0]) * 10))
-                return default_mm
+                        mm = int(float(nums[0]) * 10)
+                        return max(10, mm)
+                return None
 
-            # Вес: WB хранит в кг (например "0.5") → переводим в граммы
+            depth  = (_from_dims("length") or _from_attrs_cm(["глубина предмета", "длина предмета", "толщина предмета"]) or 50)
+            width  = (_from_dims("width")  or _from_attrs_cm(["ширина предмета", "ширина"]) or 50)
+            height = (_from_dims("height") or _from_attrs_cm(["высота предмета", "высота"]) or 50)
+
+            # Вес: из характеристик (кг → г), дефолт 500г
             def _weight_to_g(keys: list[str], default_g: int = 500) -> int:
                 for k in keys:
                     v = wb_attrs.get(k, "")
                     nums = _re.findall(r'\d+(?:\.\d+)?', v)
                     if nums:
                         w = float(nums[0])
-                        # Если < 100 — скорее всего кг, иначе г
                         return max(1, int(w * 1000 if w < 100 else w))
                 return default_g
 
-            depth  = _dim_cm_to_mm(["глубина предмета", "длина предмета", "толщина предмета", "глубина"])
-            width  = _dim_cm_to_mm(["ширина предмета", "ширина"])
-            height = _dim_cm_to_mm(["высота предмета", "высота"])
             weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
 
             wb_barcodes = _json.loads(getattr(p, "barcodes_json", None) or "[]")

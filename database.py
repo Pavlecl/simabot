@@ -382,9 +382,11 @@ class WbProductCache(Base):
     name            = Column(String,   nullable=True)
     description     = Column(Text,     nullable=True)
     brand           = Column(String,   nullable=True)
+    subject_name    = Column(String,   nullable=True)   # Категория WB (subjectName)
     images_json     = Column(Text,     nullable=True)   # JSON список URL
     attributes_json = Column(Text,     nullable=True)   # JSON список атрибутов
     barcodes_json   = Column(Text,     nullable=True)   # JSON список штрихкодов
+    dimensions_json = Column(Text,     nullable=True)   # JSON {length,width,height} в мм
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 class FboStorageReport(Base):
