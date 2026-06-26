@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.tool-header{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:20px}
+.setup-card{background:var(--surface);border:1px solid var(--border);padding:20px;margin-bottom:16px}
+.setup-row{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.setup-field{display:flex;flex-direction:column;gap:6px}
+.setup-label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim)}
+.setup-select{padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;min-width:200px;cursor:pointer}
+.setup-select:focus{border-color:var(--accent);outline:none}
+
+.results-card{background:var(--surface);border:1px solid var(--border)}
+.results-toolbar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.results-count{font-size:12px;color:var(--text-dim)}
+.results-count b{color:var(--text)}
+.sel-count{font-size:11px;background:rgba(255,106,0,.12);color:var(--accent);padding:3px 10px;border-radius:2px}
+
+.items-table{width:100%;border-collapse:collapse}
+.items-table th{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim);padding:8px 12px;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
+.items-table th.num{text-align:right}
+.items-table td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:middle;font-size:12px}
+.items-table tr:hover td{background:rgba(255,255,255,.02)}
+.items-table tr.selected td{background:rgba(255,106,0,.05)}
+
+.thumb{width:48px;height:48px;object-fit:cover;border:1px solid var(--border)}
+.thumb-ph{width:48px;height:48px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:18px}
+.art-chip{font-family:monospace;color:var(--accent);cursor:pointer;border-bottom:1px dashed var(--accent)}
+.art-chip:hover{color:#fff}
+.art-chip.copied{color:#22c55e;border-color:#22c55e}
+.item-name{color:var(--text);max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.orders-num{text-align:right;font-weight:bold}
+.orders-num.zero{color:var(--text-dim);font-weight:normal}
+.orders-month{color:var(--accent)}
+
+.create-bar{padding:16px;border-top:2px solid var(--border);display:flex;align-items:center;gap:16px;background:var(--surface)}
+.create-result{margin-top:16px}
+.result-row{display:flex;align-items:center;gap:10px;padding:6px 12px;font-size:11px;border-bottom:1px solid var(--border)}
+.result-row .art{font-family:monospace;color:var(--accent);min-width:100px}
+.result-ok{color:#22c55e}
+.result-err{color:#ef4444}
+
+.loader-overlay{display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:12px;color:var(--text-dim);font-size:12px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+
+<div class="tool-header">
+  WB → Ozon <span style="color:var(--accent)">Переливка карточек</span>
+</div>
+
+<!-- Настройка -->
+<div class="setup-card">
+  <div class="setup-row">
+    <div class="setup-field">
+      <span class="setup-label">Кабинет WB (источник)</span>
+      <select id="wb-account" class="setup-select">
+        {% for acc in wb_accounts %}
+        <option value="{{ acc.id }}" {% if acc.is_active %}selected{% endif %}>{{ acc.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="setup-field">
+      <span class="setup-label">Кабинет Ozon (куда заливать)</span>
+      <select id="ozon-account" class="setup-select">
+        {% for acc in ozon_accounts %}
+        <option value="{{ acc.id }}" {% if acc.is_active %}selected{% endif %}>{{ acc.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn primary" id="btn-compare" onclick="runCompare()">↔ Сравнить</button>
+  </div>
+  <div id="compare-hint" style="margin-top:12px;font-size:11px;color:var(--text-dim)">
+    Будут показаны товары из WB, которых нет в выбранном кабинете Ozon.
+  </div>
+</div>
+
+<!-- Результаты сравнения -->
+<div id="results-section" style="display:none">
+  <div class="results-card">
+    <div class="loader-overlay" id="compare-loader">
+      <div class="spinner"></div>
+      <span>Сравниваю кабинеты и запрашиваю статистику WB...</span>
+    </div>
+
+    <div id="results-body" style="display:none">
+      <div class="results-toolbar">
+        <div class="results-count">Найдено <b id="found-count">0</b> артикулов WB, которых нет на Ozon</div>
+        <button class="btn" onclick="toggleAll(true)"  style="font-size:10px">✓ Выбрать все</button>
+        <button class="btn" onclick="toggleAll(false)" style="font-size:10px">✗ Снять все</button>
+        <span class="sel-count" id="sel-count" style="display:none">Выбрано: <b id="sel-num">0</b></span>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th style="width:36px"><input type="checkbox" id="check-all" onchange="toggleAll(this.checked)"></th>
+              <th style="width:56px">Фото</th>
+              <th>Артикул</th>
+              <th>Название</th>
+              <th class="num">Заказов<br>за нед.</th>
+              <th class="num">Заказов<br>за мес.</th>
+            </tr>
+          </thead>
+          <tbody id="items-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="create-bar">
+        <button class="btn primary" id="btn-create" onclick="createCards()" disabled>
+          ✦ Создать карточки на Ozon
+        </button>
+        <span style="font-size:11px;color:var(--text-dim)" id="create-hint">Выберите артикулы выше</span>
+      </div>
+    </div>
+
+    <div id="empty-state" style="display:none;padding:60px;text-align:center;color:var(--text-dim);font-size:13px">
+      ✅ Все товары WB уже есть в выбранном кабинете Ozon.
+    </div>
+  </div>
+
+  <!-- Результаты создания -->
+  <div id="create-results" style="display:none;margin-top:16px;background:var(--surface);border:1px solid var(--border)">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:bold">
+      Результаты создания карточек
+    </div>
+    <div id="create-results-list"></div>
+  </div>
+</div>
+
+<script>
+let _compareData = [];
+let _ozonAccountId = null;
+
+async function runCompare() {
+  const wbId   = document.getElementById('wb-account').value;
+  const ozonId = document.getElementById('ozon-account').value;
+  _ozonAccountId = ozonId;
+
+  document.getElementById('results-section').style.display = '';
+  document.getElementById('compare-loader').style.display = 'flex';
+  document.getElementById('results-body').style.display = 'none';
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('create-results').style.display = 'none';
+  document.getElementById('btn-compare').disabled = true;
+
+  try {
+    const r = await fetch('/api/wb-to-ozon/compare', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: ozonId, wb_account_id: wbId}),
+    });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ошибка'); }
+    _compareData = await r.json();
+
+    if (!_compareData.length) {
+      document.getElementById('empty-state').style.display = '';
+    } else {
+      renderResults(_compareData);
+      document.getElementById('results-body').style.display = '';
+    }
+  } catch(e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    document.getElementById('compare-loader').style.display = 'none';
+    document.getElementById('btn-compare').disabled = false;
+  }
+}
+
+function renderResults(data) {
+  document.getElementById('found-count').textContent = data.length;
+  const tbody = document.getElementById('items-tbody');
+  tbody.innerHTML = data.map((item, i) => `
+    <tr id="row-${i}" onclick="toggleRow(${i})">
+      <td onclick="event.stopPropagation()">
+        <input type="checkbox" id="chk-${i}" onchange="onCheckChange()" data-vc="${x(item.vendor_code)}">
+      </td>
+      <td>
+        ${item.image
+          ? `<img class="thumb" src="/api/img-proxy?url=${encodeURIComponent(item.image)}" onerror="this.style.display='none'">`
+          : `<div class="thumb-ph">📦</div>`}
+      </td>
+      <td>
+        <span class="art-chip" onclick="event.stopPropagation();copyArt(this,'${x(item.vendor_code)}')">${x(item.vendor_code)}</span>
+      </td>
+      <td><span class="item-name" title="${x(item.name)}">${x(item.name) || '—'}</span></td>
+      <td class="orders-num ${item.orders_week === 0 ? 'zero' : ''}">${item.orders_week}</td>
+      <td class="orders-num orders-month ${item.orders_month === 0 ? 'zero' : ''}">${item.orders_month}</td>
+    </tr>
+  `).join('');
+  updateSelCount();
+}
+
+function toggleRow(i) {
+  const chk = document.getElementById('chk-' + i);
+  chk.checked = !chk.checked;
+  onCheckChange();
+}
+
+function toggleAll(on) {
+  document.querySelectorAll('[id^="chk-"]').forEach(c => c.checked = on);
+  document.getElementById('check-all').checked = on;
+  onCheckChange();
+}
+
+function onCheckChange() {
+  const checked = document.querySelectorAll('[id^="chk-"]:checked');
+  const total   = document.querySelectorAll('[id^="chk-"]');
+  document.getElementById('check-all').checked = checked.length === total.length && total.length > 0;
+
+  document.querySelectorAll('[id^="row-"]').forEach(row => {
+    const idx = row.id.replace('row-', '');
+    row.classList.toggle('selected', document.getElementById('chk-' + idx)?.checked);
+  });
+
+  updateSelCount();
+}
+
+function updateSelCount() {
+  const n = document.querySelectorAll('[id^="chk-"]:checked').length;
+  document.getElementById('sel-num').textContent = n;
+  document.getElementById('sel-count').style.display = n ? '' : 'none';
+  document.getElementById('btn-create').disabled = n === 0;
+  document.getElementById('create-hint').textContent = n ? `Выбрано ${n} артикулов` : 'Выберите артикулы выше';
+}
+
+async function createCards() {
+  const checked = [...document.querySelectorAll('[id^="chk-"]:checked')];
+  const vcs = checked.map(c => c.dataset.vc);
+  if (!vcs.length) return;
+
+  const btn = document.getElementById('btn-create');
+  btn.disabled = true;
+  btn.textContent = '⏳ Создаю карточки...';
+
+  try {
+    const r = await fetch('/api/wb-to-ozon/create-cards', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: _ozonAccountId, vendor_codes: vcs}),
+    });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ошибка'); }
+    const results = await r.json();
+    renderCreateResults(results);
+  } catch(e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✦ Создать карточки на Ozon';
+  }
+}
+
+function renderCreateResults(results) {
+  const ok  = results.filter(r => r.status === 'ok').length;
+  const err = results.filter(r => r.status === 'error').length;
+
+  document.getElementById('create-results').style.display = '';
+  document.getElementById('create-results-list').innerHTML = `
+    <div style="padding:8px 16px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border)">
+      ✅ Создано: <b style="color:#22c55e">${ok}</b> &nbsp; ❌ Ошибок: <b style="color:#ef4444">${err}</b>
+    </div>
+    ${results.map(r => `
+      <div class="result-row">
+        <span class="art">${x(r.vendor_code)}</span>
+        ${r.status === 'ok'
+          ? `<span class="result-ok">✓ Создана${r.task_id ? ' (task: ' + r.task_id + ')' : ''}</span>`
+          : `<span class="result-err">✗ ${x(r.error || 'Ошибка')}</span>`}
+      </div>
+    `).join('')}
+  `;
+  document.getElementById('create-results').scrollIntoView({behavior: 'smooth'});
+}
+
+function copyArt(el, art) {
+  navigator.clipboard.writeText(art).then(() => {
+    const orig = el.textContent;
+    el.classList.add('copied');
+    el.textContent = '✓ ' + orig;
+    setTimeout(() => { el.classList.remove('copied'); el.textContent = orig; }, 1500);
+  });
+}
+
+function x(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

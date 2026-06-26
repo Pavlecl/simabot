@@ -3941,6 +3941,46 @@ async def api_content_sync_products(request: Request):
         for m in matched
     ]
 
+# ── WB → Ozon: перенос карточек ──────────────────────────────────────────────
+
+@app.get("/wb-to-ozon", response_class=HTMLResponse)
+async def wb_to_ozon_page(request: Request, user: dict = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+    ozon_accounts = (await db.execute(select(OzonAccount).order_by(OzonAccount.id))).scalars().all()
+    wb_accounts   = (await db.execute(select(WbAccount).order_by(WbAccount.id))).scalars().all()
+    return templates.TemplateResponse("wb_to_ozon.html", {
+        "request": request, "user": user, "active_tab": "wb-to-ozon",
+        "ozon_accounts": ozon_accounts,
+        "wb_accounts":   wb_accounts,
+    })
+
+
+@app.post("/api/wb-to-ozon/compare")
+async def api_wb_to_ozon_compare(request: Request, user: dict = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+    from content_sync import find_wb_missing_from_ozon
+    body = await request.json()
+    ozon_account_id = int(body["ozon_account_id"])
+    wb_account_id   = int(body["wb_account_id"])
+
+    wb_acc = (await db.execute(select(WbAccount).where(WbAccount.id == wb_account_id))).scalar_one_or_none()
+    if not wb_acc:
+        raise HTTPException(status_code=404, detail="WB-аккаунт не найден")
+
+    result = await find_wb_missing_from_ozon(ozon_account_id, wb_acc.api_key)
+    return result
+
+
+@app.post("/api/wb-to-ozon/create-cards")
+async def api_wb_to_ozon_create(request: Request, user: dict = Depends(require_any_role)):
+    from content_sync import create_ozon_cards_from_wb
+    body = await request.json()
+    ozon_account_id = int(body["ozon_account_id"])
+    vendor_codes    = list(body["vendor_codes"])
+    if not vendor_codes:
+        raise HTTPException(status_code=400, detail="Не выбраны артикулы")
+    result = await create_ozon_cards_from_wb(ozon_account_id, vendor_codes)
+    return result
+
+
 # ── Заказы Сима ──────────────────────────────────────────────────────────────
 
 @app.get("/sima-orders")

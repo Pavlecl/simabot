@@ -385,3 +385,244 @@ async def get_all_wb_accounts_db() -> list[WbAccount]:
     async with AsyncSessionLocal() as db:
         r = await db.execute(select(WbAccount).order_by(WbAccount.id))
         return r.scalars().all()
+
+
+# ═══════════════════════════════════════════════════════════════
+# WB → OZON: ПЕРЕНОС КАРТОЧЕК
+# ═══════════════════════════════════════════════════════════════
+
+import json as _json
+from datetime import datetime, timedelta
+
+
+async def _ozon_headers_for_account(account_id: int) -> dict:
+    from database import OzonAccount
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(OzonAccount).where(OzonAccount.id == account_id))
+        acc = r.scalar_one_or_none()
+    if not acc:
+        raise ValueError(f"Ozon account {account_id} not found")
+    return {"Client-Id": str(acc.client_id), "Api-Key": acc.api_key, "Content-Type": "application/json"}
+
+
+async def _ozon_get_offer_ids(headers: dict) -> set[str]:
+    """Получаем все offer_id из кабинета Ozon."""
+    ids: set[str] = set()
+    last_id = ""
+    async with aiohttp.ClientSession() as session:
+        while True:
+            async with session.post(
+                "https://api-seller.ozon.ru/v3/product/list",
+                headers=headers,
+                json={"filter": {}, "last_id": last_id, "limit": 1000},
+            ) as resp:
+                data = await resp.json(content_type=None)
+            items = data.get("result", {}).get("items", [])
+            if not items:
+                break
+            for item in items:
+                ids.add(item["offer_id"])
+            last_id = data.get("result", {}).get("last_id", "")
+            if not last_id:
+                break
+    return ids
+
+
+async def _wb_get_stats(wb_api_key: str, nm_ids: list[int]) -> dict[int, dict]:
+    """Заказы за неделю и месяц по nm_id через WB nm-report."""
+    if not nm_ids:
+        return {}
+
+    today = datetime.now()
+    stats_week: dict[int, int] = {}
+    stats_month: dict[int, int] = {}
+    headers = {"Authorization": wb_api_key, "Content-Type": "application/json"}
+
+    async with aiohttp.ClientSession() as session:
+        for period_key, days, store in [
+            ("week",  7,  stats_week),
+            ("month", 30, stats_month),
+        ]:
+            begin = (today - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
+            end   = today.strftime("%Y-%m-%d 23:59:59")
+            page  = 1
+            while True:
+                try:
+                    async with session.post(
+                        "https://suppliers-api.wildberries.ru/api/v2/nm-report/detail",
+                        headers=headers,
+                        json={
+                            "nmIDs": nm_ids,
+                            "timezone": "Europe/Moscow",
+                            "period": {"begin": begin, "end": end},
+                            "orderBy": {"field": "ordersCount", "mode": "desc"},
+                            "page": page,
+                        },
+                    ) as resp:
+                        data = await resp.json(content_type=None)
+                    cards = data.get("data", {}).get("cards", [])
+                    for card in cards:
+                        nm_id = card.get("nmID")
+                        for stat in card.get("statistics", []):
+                            sp = stat.get("selectedPeriod", stat)
+                            store[nm_id] = store.get(nm_id, 0) + sp.get("ordersCount", 0)
+                    if not data.get("data", {}).get("isNext"):
+                        break
+                    page += 1
+                except Exception as e:
+                    print(f"[wb-stats] {period_key} error: {e}", flush=True)
+                    break
+
+    return {
+        nm_id: {"week": stats_week.get(nm_id, 0), "month": stats_month.get(nm_id, 0)}
+        for nm_id in nm_ids
+    }
+
+
+async def find_wb_missing_from_ozon(ozon_account_id: int, wb_api_key: str) -> list[dict]:
+    """WB-товары, которых нет в указанном Ozon-кабинете, с заказами за нед/мес."""
+    from database import WbProductCache
+
+    headers  = await _ozon_headers_for_account(ozon_account_id)
+    ozon_ids = await _ozon_get_offer_ids(headers)
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(WbProductCache))
+        wb_all = r.scalars().all()
+
+    missing = [p for p in wb_all if p.vendor_code not in ozon_ids]
+
+    nm_ids = [p.nm_id for p in missing if p.nm_id]
+    stats: dict[int, dict] = {}
+    try:
+        stats = await _wb_get_stats(wb_api_key, nm_ids)
+    except Exception as e:
+        print(f"[cross] stats failed: {e}", flush=True)
+
+    result = []
+    for p in missing:
+        images = _json.loads(p.images_json or "[]")
+        nm_stat = stats.get(p.nm_id, {"week": 0, "month": 0}) if p.nm_id else {"week": 0, "month": 0}
+        result.append({
+            "vendor_code":   p.vendor_code,
+            "nm_id":         p.nm_id,
+            "name":          p.name or "",
+            "image":         images[0] if images else "",
+            "orders_week":   nm_stat["week"],
+            "orders_month":  nm_stat["month"],
+        })
+
+    result.sort(key=lambda x: x["orders_month"], reverse=True)
+    return result
+
+
+async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, name: str) -> tuple[int, int]:
+    """Поиск description_category_id + type_id по названию товара."""
+    try:
+        async with session.post(
+            "https://api-seller.ozon.ru/v1/description-category/search",
+            headers=headers,
+            json={"language": "RU", "query": name[:100]},
+        ) as resp:
+            data = await resp.json(content_type=None)
+        results = data.get("result", [])
+        if results:
+            first = results[0]
+            return first.get("description_category_id", 0), first.get("type_id", 0)
+    except Exception as e:
+        print(f"[cat-search] {e}", flush=True)
+    return 0, 0
+
+
+async def _ozon_required_attrs(
+    session: aiohttp.ClientSession, headers: dict, desc_cat_id: int, type_id: int
+) -> list[dict]:
+    """Обязательные атрибуты категории Ozon."""
+    try:
+        async with session.post(
+            "https://api-seller.ozon.ru/v1/description-category/attribute",
+            headers=headers,
+            json={"description_category_id": desc_cat_id, "type_id": type_id, "language": "RU"},
+        ) as resp:
+            data = await resp.json(content_type=None)
+        return [a for a in data.get("result", []) if a.get("is_required")]
+    except Exception as e:
+        print(f"[attrs] {e}", flush=True)
+    return []
+
+
+async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str]) -> list[dict]:
+    """Создаёт новые карточки на Ozon из WB-кэша."""
+    from database import WbProductCache
+
+    headers = await _ozon_headers_for_account(ozon_account_id)
+    PROXY = "https://simacontrol.ru/api/img-proxy?url="
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            select(WbProductCache).where(WbProductCache.vendor_code.in_(vendor_codes))
+        )
+        cache = {p.vendor_code: p for p in r.scalars().all()}
+
+    results = []
+    async with aiohttp.ClientSession() as session:
+        for vc in vendor_codes:
+            p = cache.get(vc)
+            if not p:
+                results.append({"vendor_code": vc, "status": "error", "error": "Не найден в кеше WB"})
+                continue
+
+            images_raw = _json.loads(p.images_json or "[]")
+            images = [f"{PROXY}{u}" for u in images_raw[:10] if u]
+            if not images:
+                results.append({"vendor_code": vc, "status": "error", "error": "Нет фотографий"})
+                continue
+
+            # Определяем категорию
+            desc_cat_id, type_id = await _ozon_search_category(session, headers, p.name or vc)
+            if not desc_cat_id:
+                results.append({"vendor_code": vc, "status": "error", "error": "Не удалось определить категорию Ozon"})
+                continue
+
+            # Заполняем атрибуты
+            req_attrs  = await _ozon_required_attrs(session, headers, desc_cat_id, type_id)
+            wb_attrs   = {a["name"].lower(): a["value"] for a in _json.loads(p.attributes_json or "[]")}
+            ozon_attrs = []
+            for attr in req_attrs:
+                key = attr.get("name", "").lower()
+                val = wb_attrs.get(key) or (p.name or vc)
+                ozon_attrs.append({
+                    "id": attr["id"],
+                    "complex_id": 0,
+                    "values": [{"value": str(val)[:500]}],
+                })
+
+            item = {
+                "name":                    (p.name or vc)[:500],
+                "offer_id":                vc,
+                "description_category_id": desc_cat_id,
+                "type_id":                 type_id,
+                "price":                   "100",
+                "vat":                     "0",
+                "images":                  images,
+                "description":             (p.description or "")[:10000],
+                "attributes":              ozon_attrs,
+            }
+
+            try:
+                async with session.post(
+                    "https://api-seller.ozon.ru/v3/product/import",
+                    headers=headers,
+                    json={"items": [item]},
+                ) as resp:
+                    resp_data = await resp.json(content_type=None)
+                if resp.status == 200:
+                    task_id = resp_data.get("result", {}).get("task_id")
+                    results.append({"vendor_code": vc, "status": "ok", "task_id": task_id})
+                else:
+                    err = resp_data.get("message") or str(resp_data)[:300]
+                    results.append({"vendor_code": vc, "status": "error", "error": f"Ozon {resp.status}: {err}"})
+            except Exception as e:
+                results.append({"vendor_code": vc, "status": "error", "error": str(e)})
+
+    return results
