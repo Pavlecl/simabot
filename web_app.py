@@ -3832,13 +3832,18 @@ async def wb_cache_refresh(request: Request):
                             }
                             for ch in card.get("characteristics", []) if ch.get("name")
                         ]
+                        barcodes = []
+                        for size in card.get("sizes", []):
+                            barcodes.extend(size.get("skus", []))
                         batch.append(WbProductCache(
                             vendor_code     = vc,
                             nm_id           = card.get("nmID"),
                             name            = card.get("title", ""),
                             description     = card.get("description", ""),
-                            images_json     = _json.dumps(images, ensure_ascii=False),
-                            attributes_json = _json.dumps(attrs,   ensure_ascii=False),
+                            brand           = card.get("brand", ""),
+                            images_json     = _json.dumps(images,    ensure_ascii=False),
+                            attributes_json = _json.dumps(attrs,     ensure_ascii=False),
+                            barcodes_json   = _json.dumps(barcodes,  ensure_ascii=False),
                             updated_at      = datetime.now(),
                         ))
 

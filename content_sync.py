@@ -695,21 +695,27 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
             req_attrs  = await _ozon_required_attrs(session, headers, desc_cat_id, type_id)
             wb_chars   = _json.loads(p.attributes_json or "[]")
             wb_attrs   = {a["name"].lower(): str(a.get("value", "")) for a in wb_chars}
+            wb_brand   = getattr(p, "brand", None) or ""
+            wb_desc    = p.description or ""
             ozon_attrs = []
             for attr in req_attrs:
                 attr_id   = attr["id"]
                 attr_name = attr.get("name", "").lower()
                 dict_type = attr.get("attribute_type", "None")  # "None", "Option", "Tree"
                 val_type  = attr.get("type", "String")          # "String", "Integer", "Float"
-                # Пробуем найти значение в WB по нескольким синонимам
-                wb_val = (
-                    wb_attrs.get(attr_name)
-                    or wb_attrs.get("код тн вэд")        # alias для ТН ВЭД
-                    if "тн вэд" in attr_name else wb_attrs.get(attr_name)
-                ) or ""
+
+                # Специальные источники по типу атрибута
+                if "бренд" in attr_name:
+                    wb_val = wb_brand or wb_attrs.get(attr_name, "")
+                elif "тн вэд" in attr_name:
+                    wb_val = wb_attrs.get("код тн вэд") or wb_attrs.get(attr_name, "")
+                elif "аннотация" in attr_name or "annotation" in attr_name:
+                    wb_val = wb_desc[:200].strip()
+                else:
+                    wb_val = wb_attrs.get(attr_name, "")
 
                 if dict_type in ("Option", "Tree"):
-                    # Словарный атрибут — пробуем найти в словаре Ozon
+                    # Словарный атрибут — ищем dictionary_value_id в Ozon
                     if wb_val:
                         dict_val_id = await _find_ozon_dict_value(
                             session, headers, attr_id, desc_cat_id, wb_val
@@ -755,6 +761,8 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
             height = _dim_cm_to_mm(["высота предмета", "высота"])
             weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
 
+            wb_barcodes = _json.loads(getattr(p, "barcodes_json", None) or "[]")
+
             item = {
                 "name":                    (p.name or vc)[:500],
                 "offer_id":                vc,
@@ -770,6 +778,8 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 "weight":                  weight,
                 "attributes":              ozon_attrs,
             }
+            if wb_barcodes:
+                item["barcodes"] = wb_barcodes[:3]
 
             try:
                 async with session.post(
