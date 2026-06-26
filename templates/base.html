@@ -22,7 +22,13 @@
       <a href="/orders" class="{{ 'active' if active_tab == 'orders' }}">Заказы</a>
       {% endif %}
 
-      <a href="/sima-orders" class="{{ 'active' if active_tab == 'sima-orders' }}">Сима</a>
+      <div class="nav-dropdown">
+        <span class="nav-drop-btn {{ 'active' if active_tab in ['sima-orders','sima-history'] }}">Сима ▾</span>
+        <div class="nav-drop-menu">
+          <a href="/sima-orders" class="{{ 'active' if active_tab == 'sima-orders' }}">Заказы Сима</a>
+          <a href="/sima-history" class="{{ 'active' if active_tab == 'sima-history' }}">История заказов</a>
+        </div>
+      </div>
 
       {% if user.role == 'admin' or 'stock' in perms or 'costs' in perms %}
       <div class="nav-dropdown">

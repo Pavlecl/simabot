@@ -19,10 +19,14 @@
 .diff-row{display:flex;align-items:center;gap:12px;padding:8px;border-bottom:1px solid var(--border);font-size:12px}
 .diff-row.excess{border-left:3px solid #f59e0b}
 .diff-row.missing{border-left:3px solid var(--red)}
-.diff-art{font-family:monospace;color:var(--accent);min-width:100px}
+.diff-art{font-family:monospace;color:var(--accent);min-width:100px;cursor:pointer;border-bottom:1px dashed var(--accent);transition:color .15s}
+.diff-art:hover{color:#fff}
+.diff-art.copied{color:#22c55e;border-color:#22c55e}
 .badge{font-size:10px;padding:2px 6px;border-radius:2px}
 .badge.excess{background:rgba(245,158,11,.15);color:#f59e0b}
 .badge.missing{background:rgba(239,68,68,.15);color:var(--red)}
+.diff-info{font-size:11px;color:var(--text-dim)}
+.diff-needed{color:var(--text);font-weight:bold;background:rgba(255,255,255,.07);padding:1px 5px;border-radius:2px}
 .cost-row{display:flex;justify-content:space-between;padding:4px 8px;font-size:11px;border-bottom:1px solid var(--border)}
 .drop-zone{border:2px dashed var(--border);padding:30px;text-align:center;cursor:pointer;transition:all .2s;color:var(--text-dim)}
 .drop-zone:hover,.drop-zone.drag{border-color:var(--accent);color:var(--accent);background:rgba(255,106,0,.04)}
@@ -149,6 +153,7 @@
 <script>
 let _excelB64 = null;
 let _excelFilename = null;
+let _fileOrderData = null; // {number, sum, qty} из загруженного файла корзины
 
 // ── Шаг 1: Получить заказы ───────────────────────────────────────────────────
 async function getOrders() {
@@ -245,6 +250,13 @@ async function checkCart(file) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail);
 
+    // Сохраняем данные файла для передачи в assemble
+    _fileOrderData = {
+      number: d.file_order_number || null,
+      sum:    d.file_total_sum    || null,
+      qty:    d.file_total_qty    || null,
+    };
+
     // Расхождения
     if (d.ok) {
       document.getElementById('check-ok').style.display = '';
@@ -254,9 +266,9 @@ async function checkCart(file) {
       document.getElementById('check-diffs').style.display = '';
       document.getElementById('diffs-list').innerHTML = d.diffs.map(diff => `
         <div class="diff-row ${diff.type}">
-          <span class="diff-art">${x(diff.art)}</span>
+          <span class="diff-art" onclick="copyArt(this,'${x(diff.art)}')" title="Нажмите для копирования">${x(diff.art)}</span>
           <span class="badge ${diff.type}">${diff.type==='excess'?'Лишних':'Не хватает'}: ${diff.delta}</span>
-          <span style="color:var(--text-dim);font-size:11px">В файле: ${diff.in_file} шт. | Нужно: ${diff.needed} шт.</span>
+          <span class="diff-info">В файле: ${diff.in_file} шт. &nbsp;|&nbsp; Нужно: <span class="diff-needed">${diff.needed} шт.</span></span>
         </div>
       `).join('');
     }
@@ -265,12 +277,16 @@ async function checkCart(file) {
     if (d.cost_changes && d.cost_changes.length > 0) {
       document.getElementById('cost-result').style.display = '';
       document.getElementById('cost-ok').style.display = 'none';
-      document.getElementById('cost-list').innerHTML = d.cost_changes.map(c => `
+      document.getElementById('cost-list').innerHTML = d.cost_changes.map(c => {
+        const oldCost = parseInt(c.old, 10);
+        const newCost = parseInt(c['new'], 10);
+        const dir = newCost < oldCost ? '#22c55e' : newCost > oldCost ? '#ef4444' : 'var(--text)';
+        return `
         <div class="cost-row">
           <span style="font-family:monospace;color:var(--accent)">${x(c.offer_id)}</span>
-          <span style="color:var(--text-dim)">${c.old} ₽ → <b style="color:var(--text)">${c.new} ₽</b></span>
-        </div>
-      `).join('');
+          <span style="color:var(--text-dim)">${c.old} ₽ → <b style="color:${dir}">${c['new']} ₽</b></span>
+        </div>`;
+      }).join('');
     } else {
       document.getElementById('cost-result').style.display = 'none';
       document.getElementById('cost-ok').style.display = '';
@@ -301,7 +317,13 @@ async function assembleOrders() {
     const r = await fetch('/api/sima/assemble', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sima_num: simaNum, supply_date: supplyDate }),
+      body: JSON.stringify({
+        sima_num: simaNum,
+        supply_date: supplyDate,
+        file_order_number: _fileOrderData?.number || null,
+        file_total_sum:    _fileOrderData?.sum    || null,
+        file_total_qty:    _fileOrderData?.qty    || null,
+      }),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail);
@@ -314,6 +336,15 @@ async function assembleOrders() {
     document.getElementById('assemble-loader').style.display = 'none';
     btn.disabled = false;
   }
+}
+
+function copyArt(el, art) {
+  navigator.clipboard.writeText(art).then(() => {
+    el.classList.add('copied');
+    const orig = el.textContent;
+    el.textContent = '✓ ' + orig;
+    setTimeout(() => { el.classList.remove('copied'); el.textContent = orig; }, 1500);
+  });
 }
 
 function x(s) {

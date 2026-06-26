@@ -4187,7 +4187,7 @@ async def api_sima_history(user: dict = Depends(require_any_role), db: AsyncSess
 
 
 @app.delete("/api/sima/history/{record_id}")
-async def api_sima_history_delete(record_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+async def api_sima_history_delete(record_id: int, user: dict = Depends(require_role("admin")), db: AsyncSession = Depends(get_db)):
     from database import SimaOrderHistory
     await db.execute(delete(SimaOrderHistory).where(SimaOrderHistory.id == record_id))
     await db.commit()
