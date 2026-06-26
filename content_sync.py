@@ -595,6 +595,51 @@ async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, n
     return 0, 0
 
 
+async def _find_ozon_dict_value(
+    session: aiohttp.ClientSession, headers: dict,
+    attr_id: int, desc_cat_id: int, search_val: str,
+) -> Optional[int]:
+    """Ищет dictionary_value_id в словаре атрибута Ozon по строке.
+    Сначала пробует эндпоинт поиска, иначе перебирает первые страницы."""
+    # Пробуем search-эндпоинт (если существует)
+    try:
+        async with session.post(
+            "https://api-seller.ozon.ru/v3/category/attribute/values/search",
+            headers=headers,
+            json={"attribute_id": attr_id, "category_id": desc_cat_id, "language": "RU", "value": search_val[:255]},
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json(content_type=None)
+                results = data.get("result", [])
+                if results:
+                    return results[0]["id"]
+    except Exception:
+        pass
+
+    # Fallback: перебираем словарь постранично (max 5 страниц по 1000)
+    search_lower = search_val.lower().strip()
+    last_id = 0
+    for _ in range(5):
+        try:
+            async with session.post(
+                "https://api-seller.ozon.ru/v2/category/attribute/values",
+                headers=headers,
+                json={"attribute_id": attr_id, "category_id": desc_cat_id,
+                      "language": "RU", "limit": 1000, "last_value_id": last_id},
+            ) as resp:
+                data = await resp.json(content_type=None)
+            items = data.get("result", [])
+            for item in items:
+                if item.get("value", "").lower().strip() == search_lower:
+                    return item["id"]
+            if not data.get("has_next"):
+                break
+            last_id = items[-1]["id"] if items else 0
+        except Exception:
+            break
+    return None
+
+
 async def _ozon_required_attrs(
     session: aiohttp.ClientSession, headers: dict, desc_cat_id: int, type_id: int
 ) -> list[dict]:
@@ -656,10 +701,25 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 attr_name = attr.get("name", "").lower()
                 dict_type = attr.get("attribute_type", "None")  # "None", "Option", "Tree"
                 val_type  = attr.get("type", "String")          # "String", "Integer", "Float"
-                wb_val    = wb_attrs.get(attr_name, "")
+                # Пробуем найти значение в WB по нескольким синонимам
+                wb_val = (
+                    wb_attrs.get(attr_name)
+                    or wb_attrs.get("код тн вэд")        # alias для ТН ВЭД
+                    if "тн вэд" in attr_name else wb_attrs.get(attr_name)
+                ) or ""
 
                 if dict_type in ("Option", "Tree"):
-                    # Словарный атрибут — без dictionary_value_id не отправляем (вызывает ошибку)
+                    # Словарный атрибут — пробуем найти в словаре Ozon
+                    if wb_val:
+                        dict_val_id = await _find_ozon_dict_value(
+                            session, headers, attr_id, desc_cat_id, wb_val
+                        )
+                        if dict_val_id:
+                            ozon_attrs.append({
+                                "id": attr_id, "complex_id": 0,
+                                "values": [{"dictionary_value_id": dict_val_id, "value": wb_val}],
+                            })
+                    # Если не нашли — пропускаем (пустое поле лучше неверного)
                     continue
 
                 if val_type in ("Integer", "Float"):
@@ -670,21 +730,30 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                     val = wb_val or (p.name or vc)
                     ozon_attrs.append({"id": attr_id, "complex_id": 0, "values": [{"value": str(val)[:500]}]})
 
-            # Размеры: пробуем вытащить из WB-характеристик, иначе ставим минимум 1
-            def _dim(keys: list[str]) -> int:
+            # Размеры: WB хранит в см, Ozon принимает в мм → умножаем на 10
+            def _dim_cm_to_mm(keys: list[str], default_mm: int = 50) -> int:
                 for k in keys:
                     v = wb_attrs.get(k, "")
-                    nums = _re.findall(r'\d+', v)
+                    nums = _re.findall(r'\d+(?:\.\d+)?', v)
                     if nums:
-                        return max(1, int(nums[0]))
-                return 1
+                        return max(10, int(float(nums[0]) * 10))
+                return default_mm
 
-            depth  = _dim(["глубина, мм", "длина, мм", "длина"])
-            width  = _dim(["ширина, мм", "ширина"])
-            height = _dim(["высота, мм", "высота"])
-            weight = _dim(["вес, г", "вес брутто, г", "вес нетто, г", "вес"])
-            if weight == 1:
-                weight = 100  # минимум 100 г по умолчанию
+            # Вес: WB хранит в кг (например "0.5") → переводим в граммы
+            def _weight_to_g(keys: list[str], default_g: int = 500) -> int:
+                for k in keys:
+                    v = wb_attrs.get(k, "")
+                    nums = _re.findall(r'\d+(?:\.\d+)?', v)
+                    if nums:
+                        w = float(nums[0])
+                        # Если < 100 — скорее всего кг, иначе г
+                        return max(1, int(w * 1000 if w < 100 else w))
+                return default_g
+
+            depth  = _dim_cm_to_mm(["глубина предмета", "длина предмета", "толщина предмета", "глубина"])
+            width  = _dim_cm_to_mm(["ширина предмета", "ширина"])
+            height = _dim_cm_to_mm(["высота предмета", "высота"])
+            weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
 
             item = {
                 "name":                    (p.name or vc)[:500],
@@ -698,9 +767,7 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 "depth":                   depth,
                 "width":                   width,
                 "height":                  height,
-                "dimension_unit":          "mm",
                 "weight":                  weight,
-                "weight_unit":             "g",
                 "attributes":              ozon_attrs,
             }
 
