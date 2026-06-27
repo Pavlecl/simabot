@@ -772,17 +772,20 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
             width  = (_from_dims("width")  or _from_attrs_cm(["ширина предмета", "ширина"]) or 50)
             height = (_from_dims("height") or _from_attrs_cm(["высота предмета", "высота"]) or 50)
 
-            # Вес: из характеристик (кг → г), дефолт 500г
-            def _weight_to_g(keys: list[str], default_g: int = 500) -> int:
-                for k in keys:
-                    v = wb_attrs.get(k, "")
-                    nums = _re.findall(r'\d+(?:\.\d+)?', v)
-                    if nums:
-                        w = float(nums[0])
-                        return max(1, int(w * 1000 if w < 100 else w))
-                return default_g
-
-            weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
+            # Вес: сначала из dimensions.weightBrutto (кг → г, только если > 0), иначе из характеристик
+            wb_weight_brutto = wb_dims.get("weightBrutto") or 0
+            if float(wb_weight_brutto) > 0:
+                weight = max(1, int(float(wb_weight_brutto) * 1000))
+            else:
+                def _weight_to_g(keys: list[str], default_g: int = 500) -> int:
+                    for k in keys:
+                        v = wb_attrs.get(k, "")
+                        nums = _re.findall(r'\d+(?:\.\d+)?', v)
+                        if nums:
+                            w = float(nums[0])
+                            return max(1, int(w * 1000 if w < 100 else w))
+                    return default_g
+                weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
 
             wb_barcodes = _json.loads(getattr(p, "barcodes_json", None) or "[]")
 
