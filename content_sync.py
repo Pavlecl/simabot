@@ -783,10 +783,11 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
             # Fallback: ищем в характеристиках в см, умножаем на 10
             wb_dims = _json.loads(getattr(p, "dimensions_json", None) or "{}")
 
+            # WB dimensions_json хранит значения в СМ → конвертируем в мм (×10) для Ozon API
             def _from_dims(key: str) -> Optional[int]:
                 v = wb_dims.get(key)
                 if v and int(v) > 0:
-                    return int(v)
+                    return max(10, int(v) * 10)
                 return None
 
             def _from_attrs_cm(keys: list[str]) -> Optional[int]:
@@ -819,6 +820,16 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
 
             wb_barcodes = _json.loads(getattr(p, "barcodes_json", None) or "[]")
 
+            # Добавляем аннотацию (id=4191) — не обязательный атрибут, но важный для контента
+            wb_annotation = (p.description or "")[:4000].strip()
+            if wb_annotation:
+                # Убираем дубликат, если аннотация уже добавлена как required
+                if not any(a["id"] == 4191 for a in ozon_attrs):
+                    ozon_attrs.append({
+                        "id": 4191, "complex_id": 0,
+                        "values": [{"value": wb_annotation}],
+                    })
+
             item = {
                 "name":                    (p.name or vc)[:500],
                 "offer_id":                vc,
@@ -831,7 +842,9 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 "depth":                   depth,
                 "width":                   width,
                 "height":                  height,
+                "dimension_unit":          "mm",
                 "weight":                  weight,
+                "weight_unit":             "g",
                 "attributes":              ozon_attrs,
             }
             if wb_barcodes:
@@ -844,6 +857,7 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                     json={"items": [item]},
                 ) as resp:
                     resp_data = await resp.json(content_type=None)
+                print(f"[ozon-import] {vc} status={resp.status} resp={str(resp_data)[:300]}", flush=True)
                 if resp.status == 200:
                     task_id = resp_data.get("result", {}).get("task_id")
                     results.append({"vendor_code": vc, "status": "ok", "task_id": task_id})
