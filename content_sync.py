@@ -584,16 +584,46 @@ async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, n
             if len(part) >= 3:
                 tokens.add(part)
 
-    # 1. Максимальное пересечение слов
-    best_score, best = 0, (0, 0)
+    # 1. Префиксный матч: общий префикс ≥ 4 символа → считается совпадением.
+    #    effective = raw * matched / total_cat_words * (2 если первый токен совпал) - штраф за длину
+    #    Бонус ×2 за совпадение первого (главного) токена гарантирует, что
+    #    "крючок" бьёт "настенные часы" для запроса "Крючки настенные".
+    first_token = next((w for w in name.lower().split() if len(w) >= 3), None)
+    best_score, best = 0.0, (0, 0)
     for desc_cat, type_id, cat_name in pairs:
-        cat_words = set(cat_name.split())
-        score = len(tokens & cat_words)
-        if score > best_score:
-            best_score = score
-            best = (desc_cat, type_id)
+        cat_words_list = cat_name.split()
+        raw = 0.0
+        matched_cat_words = 0
+        first_token_matched = False
+        for cat_word in cat_words_list:
+            if len(cat_word) < 3:
+                continue
+            for token in tokens:
+                if len(token) < 3:
+                    continue
+                # Длина общего (совпадающего) префикса
+                common = 0
+                for i in range(min(len(token), len(cat_word))):
+                    if token[i] == cat_word[i]:
+                        common += 1
+                    else:
+                        break
+                if common >= 4:
+                    raw += common
+                    matched_cat_words += 1
+                    if token == first_token:
+                        first_token_matched = True
+                    break
+        if raw > 0 and matched_cat_words > 0:
+            effective = raw * matched_cat_words / len(cat_words_list)
+            if first_token_matched:
+                effective *= 3.0
+            effective -= 0.001 * len(cat_name)  # тайбрейкер: предпочитаем короткие имена
+            if effective > best_score:
+                best_score = effective
+                best = (desc_cat, type_id)
 
-    if best_score > 0:
+    if best_score >= 4.0:
         return best
 
     # 2. Substring: каждый токен ищем внутри имени категории
