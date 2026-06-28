@@ -39,6 +39,7 @@
 .result-row .art{font-family:monospace;color:var(--accent);min-width:100px}
 .result-ok{color:#22c55e}
 .result-err{color:#ef4444}
+.result-warn{color:#f59e0b;font-size:11px;margin-left:8px}
 
 .loader-overlay{display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:12px;color:var(--text-dim);font-size:12px}
 .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
@@ -323,7 +324,7 @@ function renderCreateResults(results) {
       <div class="result-row">
         <span class="art">${x(r.vendor_code)}</span>
         ${r.status === 'ok'
-          ? `<span class="result-ok">✓ Создана${r.task_id ? ' (task: ' + r.task_id + ')' : ''}</span>`
+          ? `<span class="result-ok">✓ Создана</span>${r.warning ? `<span class="result-warn">⚠ ${x(r.warning)}</span>` : ''}`
           : `<span class="result-err">✗ ${x(r.error || 'Ошибка')}</span>`}
       </div>
     `).join('')}

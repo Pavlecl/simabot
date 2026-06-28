@@ -847,8 +847,11 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 "weight_unit":             "g",
                 "attributes":              ozon_attrs,
             }
-            if wb_barcodes:
-                item["barcodes"] = wb_barcodes[:3]
+            # Штрихкоды WB (29xxx, 69xxx) — внутренние коды WB, Ozon их молча отвергает.
+            # Отправляем только штрихкоды с публичными EAN-префиксами (не 29/290).
+            public_barcodes = [b for b in wb_barcodes if b and not b.startswith("29") and len(b) in (8, 12, 13, 14)]
+            if public_barcodes:
+                item["barcodes"] = public_barcodes[:3]
 
             try:
                 async with session.post(
@@ -860,7 +863,9 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 print(f"[ozon-import] {vc} status={resp.status} resp={str(resp_data)[:300]}", flush=True)
                 if resp.status == 200:
                     task_id = resp_data.get("result", {}).get("task_id")
-                    results.append({"vendor_code": vc, "status": "ok", "task_id": task_id})
+                    wb_barcodes_internal = [b for b in wb_barcodes if b and b.startswith("29")]
+                    warn = "Штрихкоды WB (29xxx) не переносятся на Ozon — добавьте EAN вручную" if wb_barcodes_internal and not public_barcodes else None
+                    results.append({"vendor_code": vc, "status": "ok", "task_id": task_id, "warning": warn})
                 else:
                     err = resp_data.get("message") or str(resp_data)[:300]
                     results.append({"vendor_code": vc, "status": "error", "error": f"Ozon {resp.status}: {err}"})
