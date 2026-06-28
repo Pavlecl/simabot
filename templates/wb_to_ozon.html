@@ -44,12 +44,10 @@
 .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-.cat-filter-bar{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface2)}
-.cat-chip{font-size:11px;padding:3px 10px;border-radius:2px;border:1px solid var(--border);cursor:pointer;color:var(--text-dim);background:var(--surface);white-space:nowrap;transition:all .15s}
-.cat-chip:hover{border-color:var(--accent);color:var(--text)}
-.cat-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-.cat-chip.cat-all{border-color:var(--border)}
+.cat-filter-bar{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--surface2)}
 .cat-label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim);flex-shrink:0}
+.cat-select{padding:5px 10px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:12px;min-width:280px;max-width:420px;cursor:pointer}
+.cat-select:focus{border-color:var(--accent);outline:none}
 .cat-cell{font-size:11px;color:var(--text-dim);max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 
@@ -102,7 +100,10 @@
 
       <div class="cat-filter-bar" id="cat-filter-bar" style="display:none">
         <span class="cat-label">Категория:</span>
-        <span class="cat-chip cat-all active" onclick="filterCat(null, this)">Все</span>
+        <select class="cat-select" id="cat-select" onchange="filterCat(this.value || null)">
+          <option value="">Все категории</option>
+        </select>
+        <span id="cat-filtered-count" style="font-size:11px;color:var(--text-dim)"></span>
       </div>
 
       <div style="overflow-x:auto">
@@ -190,32 +191,31 @@ function renderCatFilter(data) {
   const cats = [...new Set(data.map(d => d.subject_name || '').filter(Boolean))].sort();
   if (!cats.length) return;
 
-  const bar = document.getElementById('cat-filter-bar');
-  // сбрасываем до "Все"
-  bar.innerHTML = `
-    <span class="cat-label">Категория:</span>
-    <span class="cat-chip cat-all active" onclick="filterCat(null, this)">Все <small style="opacity:.6">(${data.length})</small></span>
-  ` + cats.map(c => {
-    const cnt = data.filter(d => (d.subject_name || '') === c).length;
-    return `<span class="cat-chip" onclick="filterCat(${JSON.stringify(c)}, this)">${x(c)} <small style="opacity:.6">(${cnt})</small></span>`;
-  }).join('');
-  bar.style.display = 'flex';
+  const sel = document.getElementById('cat-select');
+  sel.innerHTML = `<option value="">Все категории (${data.length})</option>` +
+    cats.map(c => {
+      const cnt = data.filter(d => (d.subject_name || '') === c).length;
+      return `<option value="${x(c)}">${x(c)} (${cnt})</option>`;
+    }).join('');
+  document.getElementById('cat-filter-bar').style.display = 'flex';
 }
 
-function filterCat(cat, el) {
-  _activeCat = cat;
-  document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-  el.classList.add('active');
+function filterCat(cat) {
+  _activeCat = cat || null;
   applyFilter();
 }
 
 function applyFilter() {
+  let visCount = 0;
   document.querySelectorAll('[id^="row-"]').forEach(row => {
     const i = row.id.replace('row-', '');
     const item = _compareData[+i];
     const visible = _activeCat === null || (item.subject_name || '') === _activeCat;
     row.style.display = visible ? '' : 'none';
+    if (visible) visCount++;
   });
+  const countEl = document.getElementById('cat-filtered-count');
+  if (countEl) countEl.textContent = _activeCat ? `Показано: ${visCount}` : '';
   // Синхронизируем чекбокс "Все"
   const visChks = [...document.querySelectorAll('[id^="chk-"]')].filter(c => c.closest('tr').style.display !== 'none');
   const allChecked = visChks.length > 0 && visChks.every(c => c.checked);
