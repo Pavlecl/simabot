@@ -2,7 +2,7 @@
 {% block content %}
 
 <style>
-.history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.history-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap}
 .history-table{width:100%;border-collapse:collapse;font-size:12px}
 .history-table th{text-align:left;padding:8px 12px;color:var(--text-dim);font-weight:normal;text-transform:uppercase;font-size:10px;letter-spacing:.6px;border-bottom:2px solid var(--border);white-space:nowrap}
 .history-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -13,21 +13,28 @@
 .sum-val{font-weight:bold;color:var(--text)}
 .qty-badge{display:inline-block;background:rgba(255,106,0,.12);color:var(--accent);padding:2px 8px;border-radius:2px;font-size:11px}
 .del-date{color:var(--text-dim)}
-.btn-del{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:2px 6px;line-height:1;transition:color .15s}
-.btn-del:hover{color:#ef4444}
+.btn-icon{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:2px 6px;line-height:1;transition:color .15s}
+.btn-icon:hover{color:var(--accent)}
+.btn-icon.btn-del:hover{color:#ef4444}
 .empty-state{text-align:center;padding:60px 20px;color:var(--text-dim);font-size:13px}
 .stats-row{display:flex;gap:24px;margin-bottom:20px}
 .stat-card{background:var(--surface);border:1px solid var(--border);padding:14px 20px;flex:1}
 .stat-card .label{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
 .stat-card .value{font-size:22px;font-weight:bold;color:var(--text)}
 .stat-card .value span{font-size:13px;color:var(--text-dim);font-weight:normal;margin-left:4px}
+.history-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.history-filters input{background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:6px 10px}
+.history-filters input[type="date"]{color-scheme:dark}
 </style>
 
 <div class="history-header">
   <div style="font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">
     История заказов <span style="color:var(--accent)">Сима-Ленд</span>
   </div>
-  <button class="btn" onclick="loadHistory()" style="font-size:11px">↻ Обновить</button>
+  <div style="display:flex;gap:8px">
+    <button class="btn primary" onclick="openHistoryEditModal()" style="font-size:11px">+ Добавить заказ</button>
+    <button class="btn" onclick="loadHistory()" style="font-size:11px">↻ Обновить</button>
+  </div>
 </div>
 
 <div class="stats-row" id="stats-row" style="display:none">
@@ -43,6 +50,15 @@
     <div class="label">Товаров закуплено</div>
     <div class="value" id="stat-qty">—<span>шт.</span></div>
   </div>
+</div>
+
+<div class="history-filters">
+  <input type="text" id="filter-q" placeholder="Номер счёта..." oninput="debounceHistoryFilter()" style="width:180px">
+  <span style="color:var(--text-dim);font-size:11px">с</span>
+  <input type="date" id="filter-date-from" onchange="loadHistory()">
+  <span style="color:var(--text-dim);font-size:11px">по</span>
+  <input type="date" id="filter-date-to" onchange="loadHistory()">
+  <button class="btn" onclick="resetHistoryFilters()" style="font-size:11px">Сбросить</button>
 </div>
 
 <div style="background:var(--surface);border:1px solid var(--border);overflow-x:auto">
@@ -62,20 +78,79 @@
       <tbody id="history-body"></tbody>
     </table>
     <div id="empty-state" class="empty-state" style="display:none">
-      📦 История заказов пуста.<br>
-      <span style="font-size:11px;margin-top:8px;display:block">Заказы появятся после нажатия «Собрать поставку» на странице Сима.</span>
+      📦 Ничего не найдено.<br>
+      <span style="font-size:11px;margin-top:8px;display:block">Заказы появляются после нажатия «Собрать поставку» на странице Сима, либо добавьте вручную.</span>
+    </div>
+  </div>
+</div>
+
+{# Модалка добавления / редактирования заказа #}
+<div class="modal-overlay" id="history-edit-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="history-edit-title">ДОБАВИТЬ ЗАКАЗ</div>
+      <button class="modal-close" onclick="closeHistoryEditModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-group">
+        <label>Номер счёта *</label>
+        <input type="text" id="he-order-number" placeholder="например: 145398574">
+      </div>
+      <div class="field-group">
+        <label>Дата заказа</label>
+        <input type="date" id="he-order-date">
+      </div>
+      <div class="field-group">
+        <label>Сумма, ₽</label>
+        <input type="number" id="he-total-sum" step="0.01" min="0" placeholder="0.00">
+      </div>
+      <div class="field-group">
+        <label>Количество, шт.</label>
+        <input type="number" id="he-total-qty" min="0" placeholder="0">
+      </div>
+      <div class="field-group">
+        <label>Дата поставки</label>
+        <input type="text" id="he-delivery-date" placeholder="например: 30.06.26">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeHistoryEditModal()">Отмена</button>
+      <button class="btn primary" onclick="saveHistoryRecord()">Сохранить</button>
     </div>
   </div>
 </div>
 
 <script>
+let historyEditId = null;
+let historyFilterTimer = null;
+
+function debounceHistoryFilter() {
+  clearTimeout(historyFilterTimer);
+  historyFilterTimer = setTimeout(loadHistory, 300);
+}
+
+function resetHistoryFilters() {
+  document.getElementById('filter-q').value = '';
+  document.getElementById('filter-date-from').value = '';
+  document.getElementById('filter-date-to').value = '';
+  loadHistory();
+}
+
 async function loadHistory() {
   document.getElementById('loader').style.display = '';
   document.getElementById('table-wrap').style.display = 'none';
   document.getElementById('stats-row').style.display = 'none';
 
   try {
-    const r = await fetch('/api/sima/history');
+    const params = new URLSearchParams();
+    const q = document.getElementById('filter-q').value.trim();
+    const dateFrom = document.getElementById('filter-date-from').value;
+    const dateTo = document.getElementById('filter-date-to').value;
+    if (q) params.set('q', q);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+
+    const r = await fetch('/api/sima/history?' + params.toString());
     if (!r.ok) throw new Error('Ошибка загрузки');
     const data = await r.json();
 
@@ -96,8 +171,9 @@ async function loadHistory() {
           <td class="sum-val">${row.total_sum != null ? Number(row.total_sum).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ₽' : '—'}</td>
           <td>${row.total_qty != null ? `<span class="qty-badge">${row.total_qty} шт.</span>` : '—'}</td>
           <td class="del-date">${x(row.delivery_date) || '—'}</td>
-          <td style="text-align:right">
-            <button class="btn-del" onclick="deleteRecord(${row.id}, this)" title="Удалить запись">✕</button>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn-icon" onclick='openHistoryEditModal(${JSON.stringify(row)})' title="Редактировать">✎</button>
+            <button class="btn-icon btn-del" onclick="deleteRecord(${row.id}, this)" title="Удалить запись">✕</button>
           </td>
         </tr>
       `).join('');
@@ -136,6 +212,66 @@ async function deleteRecord(id, btn) {
     btn.closest('tr').remove();
   } catch(e) {
     alert('Не удалось удалить: ' + e.message);
+  }
+}
+
+function ddmmyyToIso(s) {
+  // "02.07.2026" -> "2026-07-02"
+  const m = String(s || '').match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+
+function isoToDdmmyyyy(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : '';
+}
+
+function openHistoryEditModal(row) {
+  historyEditId = row ? row.id : null;
+  document.getElementById('history-edit-title').textContent = row ? 'РЕДАКТИРОВАТЬ ЗАКАЗ' : 'ДОБАВИТЬ ЗАКАЗ';
+  document.getElementById('he-order-number').value = row ? row.sima_order_number : '';
+  document.getElementById('he-order-date').value = row ? ddmmyyToIso(row.order_date) : '';
+  document.getElementById('he-total-sum').value = row && row.total_sum != null ? row.total_sum : '';
+  document.getElementById('he-total-qty').value = row && row.total_qty != null ? row.total_qty : '';
+  document.getElementById('he-delivery-date').value = row ? row.delivery_date : '';
+  document.getElementById('history-edit-modal').classList.add('open');
+}
+
+function closeHistoryEditModal() {
+  document.getElementById('history-edit-modal').classList.remove('open');
+  historyEditId = null;
+}
+
+async function saveHistoryRecord() {
+  const orderNumber = document.getElementById('he-order-number').value.trim();
+  if (!orderNumber) {
+    alert('Укажите номер счёта');
+    return;
+  }
+  const body = {
+    sima_order_number: orderNumber,
+    order_date: isoToDdmmyyyy(document.getElementById('he-order-date').value),
+    total_sum: document.getElementById('he-total-sum').value || null,
+    total_qty: document.getElementById('he-total-qty').value || null,
+    delivery_date: document.getElementById('he-delivery-date').value.trim() || null,
+  };
+
+  try {
+    const url = historyEditId ? '/api/sima/history/' + historyEditId : '/api/sima/history';
+    const method = historyEditId ? 'PUT' : 'POST';
+    const r = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || 'Ошибка сохранения');
+    }
+    closeHistoryEditModal();
+    loadHistory();
+  } catch(e) {
+    alert('Не удалось сохранить: ' + e.message);
   }
 }
 

@@ -4215,11 +4215,32 @@ async def sima_history_page(request: Request, user: dict = Depends(require_any_r
 
 
 @app.get("/api/sima/history")
-async def api_sima_history(user: dict = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+async def api_sima_history(
+    q: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    user: dict = Depends(require_any_role),
+    db: AsyncSession = Depends(get_db),
+):
     from database import SimaOrderHistory
-    result = await db.execute(
-        select(SimaOrderHistory).order_by(SimaOrderHistory.order_date.desc())
-    )
+    filters = []
+    if q:
+        filters.append(SimaOrderHistory.sima_order_number.ilike(f"%{q}%"))
+    if date_from:
+        try:
+            filters.append(SimaOrderHistory.order_date >= datetime.strptime(date_from, "%Y-%m-%d"))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            filters.append(SimaOrderHistory.order_date < datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1))
+        except ValueError:
+            pass
+
+    query = select(SimaOrderHistory)
+    if filters:
+        query = query.where(*filters)
+    result = await db.execute(query.order_by(SimaOrderHistory.order_date.desc()))
     records = result.scalars().all()
     return [
         {
@@ -4232,6 +4253,48 @@ async def api_sima_history(user: dict = Depends(require_any_role), db: AsyncSess
         }
         for r in records
     ]
+
+
+def _parse_sima_history_body(body: dict) -> dict:
+    values = {
+        "sima_order_number": str(body.get("sima_order_number") or "").strip(),
+        "total_sum": float(body["total_sum"]) if body.get("total_sum") not in (None, "") else None,
+        "total_qty": int(body["total_qty"]) if body.get("total_qty") not in (None, "") else None,
+        "delivery_date": str(body.get("delivery_date") or "").strip() or None,
+    }
+    order_date_raw = str(body.get("order_date") or "").strip()
+    if order_date_raw:
+        values["order_date"] = datetime.strptime(order_date_raw, "%d.%m.%Y")
+    return values
+
+
+@app.post("/api/sima/history")
+async def api_sima_history_create(request: Request, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from database import SimaOrderHistory
+    body = await request.json()
+    if not str(body.get("sima_order_number") or "").strip():
+        raise HTTPException(400, "Номер счёта обязателен")
+    values = _parse_sima_history_body(body)
+    record = SimaOrderHistory(**{k: v for k, v in values.items() if v is not None or k == "sima_order_number"})
+    db.add(record)
+    await db.commit()
+    return {"ok": True, "id": record.id}
+
+
+@app.put("/api/sima/history/{record_id}")
+async def api_sima_history_update(record_id: int, request: Request, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from database import SimaOrderHistory
+    body = await request.json()
+    if not str(body.get("sima_order_number") or "").strip():
+        raise HTTPException(400, "Номер счёта обязателен")
+    values = _parse_sima_history_body(body)
+    result = await db.execute(
+        update(SimaOrderHistory).where(SimaOrderHistory.id == record_id).values(**values)
+    )
+    await db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(404, "Запись не найдена")
+    return {"ok": True}
 
 
 @app.delete("/api/sima/history/{record_id}")
