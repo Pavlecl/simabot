@@ -749,7 +749,7 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
 
                 # Специальные источники по типу атрибута
                 if "бренд" in attr_name:
-                    wb_val = wb_brand or wb_attrs.get(attr_name, "")
+                    wb_val = wb_brand or wb_attrs.get(attr_name, "") or "Нет бренда"
                 elif "тн вэд" in attr_name:
                     wb_val = wb_attrs.get("код тн вэд") or wb_attrs.get(attr_name, "")
                 elif "аннотация" in attr_name or "annotation" in attr_name:
@@ -835,7 +835,7 @@ async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str
                 "offer_id":                vc,
                 "description_category_id": desc_cat_id,
                 "type_id":                 type_id,
-                "price":                   "100",
+                "price":                   "10000",
                 "vat":                     "0",
                 "images":                  images,
                 "description":             (p.description or "")[:10000],
