@@ -2480,8 +2480,8 @@ async def check_fbo_sales_and_notify():
     stock_map = {i["item_code"]: i["total_free"] for i in _stock_cache["items"]}
     storage_map = _storage_report_cache.get("data", {})
 
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "") or os.getenv("BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "") or os.getenv("ADMIN_ID", "")
     if not bot_token or not chat_id:
         print("FBO SALES WATCH: no telegram credentials", flush=True)
         return
