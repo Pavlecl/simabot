@@ -125,10 +125,21 @@
       </div>
 
       <div class="create-bar">
-        <button class="btn primary" id="btn-create" onclick="createCards()" disabled>
-          ✦ Создать карточки на Ozon
+        <button class="btn primary" id="btn-create" onclick="downloadTemplate()" disabled>
+          ⬇ Скачать шаблон для Ozon
         </button>
         <span style="font-size:11px;color:var(--text-dim)" id="create-hint">Выберите артикулы выше</span>
+      </div>
+
+      <div class="create-bar" style="border-top:none;padding-top:0">
+        <div id="wto-drop-zone" style="border:2px dashed var(--border);border-radius:6px;padding:16px 24px;text-align:center;cursor:pointer;color:var(--text-dim);flex:1;font-size:12px;transition:border-color .2s"
+             onclick="document.getElementById('wto-file-input').click()"
+             ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+             ondragleave="this.style.borderColor='var(--border)'"
+             ondrop="handleWtoDrop(event)">
+          📂 Нажмите или перетащите заполненный .xlsx для загрузки карточек на Ozon
+        </div>
+        <input type="file" id="wto-file-input" accept=".xlsx,.xls" style="display:none" onchange="submitWtoUpload(this.files[0])">
       </div>
     </div>
 
@@ -137,10 +148,10 @@
     </div>
   </div>
 
-  <!-- Результаты создания -->
+  <!-- Результаты импорта -->
   <div id="create-results" style="display:none;margin-top:16px;background:var(--surface);border:1px solid var(--border)">
     <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:bold">
-      Результаты создания карточек
+      Результаты загрузки на Ozon
     </div>
     <div id="create-results-list"></div>
   </div>
@@ -285,51 +296,105 @@ function updateSelCount() {
   document.getElementById('create-hint').textContent = n ? `Выбрано ${n} артикулов` : 'Выберите артикулы выше';
 }
 
-async function createCards() {
+async function downloadTemplate() {
   const checked = [...document.querySelectorAll('[id^="chk-"]:checked')];
   const vcs = checked.map(c => c.dataset.vc);
   if (!vcs.length) return;
 
   const btn = document.getElementById('btn-create');
   btn.disabled = true;
-  btn.textContent = '⏳ Создаю карточки...';
+  btn.textContent = '⏳ Готовим шаблон...';
 
   try {
-    const r = await fetch('/api/wb-to-ozon/create-cards', {
+    const r = await fetch('/api/wb-to-ozon/export-template', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ozon_account_id: _ozonAccountId, vendor_codes: vcs}),
     });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ошибка'); }
-    const results = await r.json();
-    renderCreateResults(results);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wb_to_ozon_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('✓ Шаблон скачан — проверьте и загрузите обратно ниже');
   } catch(e) {
-    alert('Ошибка: ' + e.message);
+    showToast('Ошибка: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '✦ Создать карточки на Ozon';
+    btn.textContent = '⬇ Скачать шаблон для Ozon';
   }
 }
 
-function renderCreateResults(results) {
-  const ok  = results.filter(r => r.status === 'ok').length;
-  const err = results.filter(r => r.status === 'error').length;
+function handleWtoDrop(e) {
+  e.preventDefault();
+  document.getElementById('wto-drop-zone').style.borderColor = 'var(--border)';
+  const file = e.dataTransfer.files[0];
+  if (file) submitWtoUpload(file);
+}
 
-  document.getElementById('create-results').style.display = '';
+async function submitWtoUpload(file) {
+  if (!file) return;
+  const zone = document.getElementById('wto-drop-zone');
+  const origText = zone.textContent;
+  zone.textContent = '⏳ Загружаем и создаём карточки...';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('ozon_account_id', _ozonAccountId);
+
+  try {
+    const r = await fetch('/api/wb-to-ozon/import-upload', { method: 'POST', body: fd });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ошибка'); }
+    document.getElementById('create-results').style.display = '';
+    document.getElementById('create-results').scrollIntoView({behavior: 'smooth'});
+    await pollImportStatus();
+  } catch(e) {
+    showToast('Ошибка: ' + e.message, 'error');
+  } finally {
+    zone.textContent = origText;
+    document.getElementById('wto-file-input').value = '';
+  }
+}
+
+async function pollImportStatus() {
+  while (true) {
+    const s = await fetch('/api/wb-to-ozon/import-status').then(r => r.json());
+    renderImportProgress(s);
+    if (!s.running) break;
+    await new Promise(r => setTimeout(r, 2500));
+  }
+}
+
+function renderImportProgress(s) {
+  const entries = Object.entries(s.results || {});
+  const ok      = entries.filter(([,v]) => v.status === 'ok').length;
+  const err     = entries.filter(([,v]) => v.status === 'error').length;
+  const unknown = entries.filter(([,v]) => v.status === 'unknown').length;
+  const pending = entries.filter(([,v]) => v.status === 'pending').length;
+
+  const statusIcon = { ok: '✓ Создана', error: '✗', unknown: '⚠ Не подтверждено', pending: '⏳ В обработке...' };
+  const statusCls  = { ok: 'result-ok', error: 'result-err', unknown: 'result-warn', pending: '' };
+
   document.getElementById('create-results-list').innerHTML = `
     <div style="padding:8px 16px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border)">
-      ✅ Создано: <b style="color:#22c55e">${ok}</b> &nbsp; ❌ Ошибок: <b style="color:#ef4444">${err}</b>
+      ${s.running ? '⏳ Импорт выполняется...' : '✅ Импорт завершён'} &nbsp;
+      Создано: <b style="color:#22c55e">${ok}</b> &nbsp;
+      Ошибок: <b style="color:#ef4444">${err}</b>
+      ${unknown ? ` &nbsp; Не подтверждено: <b style="color:#f59e0b">${unknown}</b>` : ''}
+      ${pending ? ` &nbsp; В очереди: <b>${pending}</b>` : ''}
+      ${s.error ? `<div style="color:#ef4444;margin-top:4px">${x(s.error)}</div>` : ''}
     </div>
-    ${results.map(r => `
+    ${entries.map(([vc, v]) => `
       <div class="result-row">
-        <span class="art">${x(r.vendor_code)}</span>
-        ${r.status === 'ok'
-          ? `<span class="result-ok">✓ Создана</span>${r.warning ? `<span class="result-warn">⚠ ${x(r.warning)}</span>` : ''}`
-          : `<span class="result-err">✗ ${x(r.error || 'Ошибка')}</span>`}
+        <span class="art">${x(vc)}</span>
+        <span class="${statusCls[v.status] || ''}">${statusIcon[v.status] || v.status}</span>
+        ${v.message ? `<span class="result-warn">${x(v.message)}</span>` : ''}
       </div>
     `).join('')}
   `;
-  document.getElementById('create-results').scrollIntoView({behavior: 'smooth'});
 }
 
 function copyArt(el, art) {

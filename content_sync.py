@@ -682,10 +682,12 @@ async def _find_ozon_dict_value(
     return None
 
 
-async def _ozon_required_attrs(
-    session: aiohttp.ClientSession, headers: dict, desc_cat_id: int, type_id: int
+async def _ozon_category_attrs(
+    session: aiohttp.ClientSession, headers: dict, desc_cat_id: int, type_id: int,
+    required_only: bool = True,
 ) -> list[dict]:
-    """Обязательные атрибуты категории Ozon."""
+    """Атрибуты категории Ozon. required_only=True — только обязательные (как раньше);
+    False — полный список (нужен для составления Excel-шаблона)."""
     try:
         async with session.post(
             "https://api-seller.ozon.ru/v1/description-category/attribute",
@@ -693,183 +695,605 @@ async def _ozon_required_attrs(
             json={"description_category_id": desc_cat_id, "type_id": type_id, "language": "RU"},
         ) as resp:
             data = await resp.json(content_type=None)
-        return [a for a in data.get("result", []) if a.get("is_required")]
+        attrs = data.get("result", [])
+        return [a for a in attrs if a.get("is_required")] if required_only else attrs
     except Exception as e:
         print(f"[attrs] {e}", flush=True)
     return []
 
 
-async def create_ozon_cards_from_wb(ozon_account_id: int, vendor_codes: list[str]) -> list[dict]:
-    """Создаёт новые карточки на Ozon из WB-кэша."""
-    from database import WbProductCache
+# ─────────────────────────────────────────────────
+# WB → OZON: Excel-шаблон для проверки перед созданием карточек
+# ─────────────────────────────────────────────────
 
-    headers = await _ozon_headers_for_account(ozon_account_id)
+@dataclass
+class WbOzonAttrDraft:
+    id: int
+    name: str
+    attribute_type: str   # "None" | "Option" | "Tree"
+    val_type: str          # "String" | "Integer" | "Float" ...
+    is_required: bool
+    value_text: str
+
+
+@dataclass
+class WbOzonDraft:
+    vendor_code: str
+    nm_id: Optional[int]
+    name: str
+    description: str
+    category_name: str
+    description_category_id: int
+    type_id: int
+    price: str
+    old_price: str
+    currency_code: str
+    vat: str
+    depth: int
+    width: int
+    height: int
+    weight: int
+    barcode: str
+    extra_barcodes: list[str]
+    images: list[str]
+    primary_image: str
+    attributes: list[WbOzonAttrDraft]
+    issues: list[str]
+
+
+async def _build_wb_ozon_draft(
+    session: aiohttp.ClientSession, headers: dict, p, vc: str,
+    cat_attrs_cache: dict[tuple[int, int], list[dict]],
+) -> WbOzonDraft:
+    """Строит черновик карточки Ozon из записи WbProductCache (или её отсутствия).
+    Никогда не пропускает товар — при любой проблеме добавляет заметку в issues
+    и продолжает с тем, что удалось определить."""
+    import re as _re
+    issues: list[str] = []
     PROXY = "https://simacontrol.ru/api/img-proxy?url="
 
+    if p is None:
+        issues.append("не найден в кеше WB — обновите синхронизацию WB перед экспортом")
+
+    images_raw = _json.loads(p.images_json or "[]") if p else []
+    images = [f"{PROXY}{u}" for u in images_raw[:10] if u]
+    if not images:
+        issues.append("нет фото")
+
+    cat_query = (getattr(p, "subject_name", None) or p.name or vc) if p else vc
+    desc_cat_id, type_id = await _ozon_search_category(session, headers, cat_query)
+    category_name = ""
+    if not desc_cat_id:
+        issues.append("категория не определена — заполните ID категории и типа вручную")
+    else:
+        for dc, ti, nm in _ozon_cat_pairs:
+            if dc == desc_cat_id and ti == type_id:
+                category_name = nm
+                break
+
+    cache_key = (desc_cat_id, type_id)
+    if desc_cat_id and cache_key not in cat_attrs_cache:
+        cat_attrs_cache[cache_key] = await _ozon_category_attrs(session, headers, desc_cat_id, type_id, required_only=False)
+    cat_attrs = cat_attrs_cache.get(cache_key, [])
+
+    wb_chars = _json.loads(p.attributes_json or "[]") if p else []
+    wb_attrs = {a["name"].lower(): str(a.get("value", "")) for a in wb_chars}
+    wb_brand = (getattr(p, "brand", None) or "") if p else ""
+    wb_desc  = (p.description or "") if p else ""
+
+    attr_drafts: list[WbOzonAttrDraft] = []
+    for attr in cat_attrs:
+        attr_id     = attr["id"]
+        attr_name   = attr.get("name", "")
+        attr_name_l = attr_name.lower()
+        dict_type   = attr.get("attribute_type", "None")
+        val_type    = attr.get("type", "String")
+        is_req      = bool(attr.get("is_required"))
+
+        if "бренд" in attr_name_l:
+            wb_val = wb_brand or wb_attrs.get(attr_name_l, "") or "Нет бренда"
+        elif "тн вэд" in attr_name_l:
+            wb_val = wb_attrs.get("код тн вэд") or wb_attrs.get(attr_name_l, "")
+        elif "аннотация" in attr_name_l or "annotation" in attr_name_l:
+            wb_val = wb_desc[:200].strip()
+        else:
+            wb_val = wb_attrs.get(attr_name_l, "")
+
+        if dict_type in ("Option", "Tree"):
+            value_text = wb_val
+        elif val_type in ("Integer", "Float"):
+            nums = _re.findall(r'\d+(?:\.\d+)?', wb_val)
+            value_text = nums[0] if nums else ""
+        else:
+            value_text = wb_val or ((p.name if p else vc) or vc)
+
+        if is_req and not value_text:
+            issues.append(f"обязательный атрибут «{attr_name}» не заполнен")
+
+        attr_drafts.append(WbOzonAttrDraft(
+            id=attr_id, name=attr_name, attribute_type=dict_type,
+            val_type=val_type, is_required=is_req, value_text=value_text,
+        ))
+
+    # Аннотация (id=4191) — не всегда входит в атрибуты категории как обязательная,
+    # но важна для контента, добавляем принудительно если ещё не пришла из cat_attrs.
+    if not any(a.id == 4191 for a in attr_drafts):
+        attr_drafts.append(WbOzonAttrDraft(
+            id=4191, name="Аннотация", attribute_type="None", val_type="String",
+            is_required=False, value_text=wb_desc[:4000].strip(),
+        ))
+
+    wb_dims = _json.loads(getattr(p, "dimensions_json", None) or "{}") if p else {}
+
+    # WB dimensions_json хранит значения в СМ → конвертируем в мм (×10) для Ozon API
+    def _from_dims(key: str) -> Optional[int]:
+        v = wb_dims.get(key)
+        if v and int(v) > 0:
+            return max(10, int(v) * 10)
+        return None
+
+    def _from_attrs_cm(keys: list[str]) -> Optional[int]:
+        for k in keys:
+            v = wb_attrs.get(k, "")
+            nums = _re.findall(r'\d+(?:\.\d+)?', v)
+            if nums:
+                return max(10, int(float(nums[0]) * 10))
+        return None
+
+    depth_val  = _from_dims("length") or _from_attrs_cm(["глубина предмета", "длина предмета", "толщина предмета"])
+    width_val  = _from_dims("width")  or _from_attrs_cm(["ширина предмета", "ширина"])
+    height_val = _from_dims("height") or _from_attrs_cm(["высота предмета", "высота"])
+    dims_defaulted = not (depth_val and width_val and height_val)
+    depth, width, height = depth_val or 50, width_val or 50, height_val or 50
+
+    wb_weight_brutto = wb_dims.get("weightBrutto") or 0
+    weight_defaulted = False
+    if float(wb_weight_brutto) > 0:
+        weight = max(1, int(float(wb_weight_brutto) * 1000))
+    else:
+        def _weight_to_g(keys: list[str]) -> Optional[int]:
+            for k in keys:
+                v = wb_attrs.get(k, "")
+                nums = _re.findall(r'\d+(?:\.\d+)?', v)
+                if nums:
+                    w = float(nums[0])
+                    return max(1, int(w * 1000 if w < 100 else w))
+            return None
+        weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
+        if weight is None:
+            weight, weight_defaulted = 500, True
+
+    if dims_defaulted:
+        issues.append("размеры не определены — установлены 50×50×50 мм по умолчанию, проверьте")
+    if weight_defaulted:
+        issues.append("вес не определён — установлено 500 г по умолчанию, проверьте")
+
+    wb_barcodes = _json.loads(getattr(p, "barcodes_json", None) or "[]") if p else []
+    public_barcodes = [b for b in wb_barcodes if b and not b.startswith("29") and len(b) in (8, 12, 13, 14)]
+    barcode = public_barcodes[0] if public_barcodes else ""
+    extra_barcodes = public_barcodes[1:]
+    if not barcode and wb_barcodes:
+        issues.append("штрихкоды WB не публичные (внутренние 29xxx) — не перенесены, при необходимости добавьте EAN вручную")
+
+    issues.append("цена не определена — установлено 10000 ₽ по умолчанию, проверьте")
+
+    return WbOzonDraft(
+        vendor_code=vc,
+        nm_id=getattr(p, "nm_id", None) if p else None,
+        name=((p.name if p else vc) or vc),
+        description=(p.description or "") if p else "",
+        category_name=category_name,
+        description_category_id=desc_cat_id,
+        type_id=type_id,
+        price="10000",
+        old_price="",
+        currency_code="RUB",
+        vat="0",
+        depth=depth, width=width, height=height,
+        weight=weight,
+        barcode=barcode,
+        extra_barcodes=extra_barcodes,
+        images=images,
+        primary_image="",
+        attributes=attr_drafts,
+        issues=issues,
+    )
+
+
+# Колонки видимого листа: (заголовок, ключ поля, вид)
+# вид: "base" (строка), "base_int" (число), "base_images" (список ссылок через ;), "reference" (справочно, не уходит в Ozon)
+_WTO_BASE_COLS: list[tuple[str, str, str]] = [
+    ("Артикул",                  "offer_id",                 "base"),
+    ("Проблема",                 "issues",                   "reference"),
+    ("Название",                 "name",                      "base"),
+    ("ID категории Ozon*",       "description_category_id",  "base_int"),
+    ("ID типа Ozon*",            "type_id",                   "base_int"),
+    ("Категория (справка)",      "category_name",             "reference"),
+    ("Цена*",                    "price",                     "base"),
+    ("Цена до скидки",           "old_price",                 "base"),
+    ("Валюта",                   "currency_code",             "base"),
+    ("НДС*",                     "vat",                        "base"),
+    ("Глубина, мм*",             "depth",                      "base_int"),
+    ("Ширина, мм*",              "width",                      "base_int"),
+    ("Высота, мм*",              "height",                     "base_int"),
+    ("Вес, г*",                  "weight",                     "base_int"),
+    ("Штрихкод",                 "barcode",                    "base"),
+    ("Доп. штрихкоды (справка)", "extra_barcodes",             "reference"),
+    ("Фото (ссылки через ;)*",   "images",                     "base_images"),
+    ("Главное фото",             "primary_image",              "base"),
+    ("Описание",                 "description",                "base"),
+    ("WB nm_id (справка)",       "nm_id",                       "reference"),
+]
+
+
+async def build_wb_to_ozon_template(ozon_account_id: int, vendor_codes: list[str]) -> bytes:
+    """Строит Excel-шаблон для ручной проверки перед созданием карточек на Ozon.
+    Каждый выбранный товар получает строку (даже если что-то не удалось определить —
+    это отражается в колонке «Проблема», а не тихим пропуском строки)."""
+    from database import WbProductCache
+    import io as _io
+    import openpyxl
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    headers = await _ozon_headers_for_account(ozon_account_id)
+
     async with AsyncSessionLocal() as db:
-        r = await db.execute(
-            select(WbProductCache).where(WbProductCache.vendor_code.in_(vendor_codes))
-        )
+        r = await db.execute(select(WbProductCache).where(WbProductCache.vendor_code.in_(vendor_codes)))
         cache = {p.vendor_code: p for p in r.scalars().all()}
 
-    results = []
+    cat_attrs_cache: dict[tuple[int, int], list[dict]] = {}
     async with aiohttp.ClientSession() as session:
-        for vc in vendor_codes:
-            p = cache.get(vc)
-            if not p:
-                results.append({"vendor_code": vc, "status": "error", "error": "Не найден в кеше WB"})
+        sem = asyncio.Semaphore(6)
+
+        async def _one(vc: str) -> WbOzonDraft:
+            async with sem:
+                return await _build_wb_ozon_draft(session, headers, cache.get(vc), vc, cat_attrs_cache)
+
+        drafts: list[WbOzonDraft] = list(await asyncio.gather(*[_one(vc) for vc in vendor_codes]))
+
+    # Объединение атрибутных колонок по всем черновикам (по id, порядок первого появления)
+    attr_order: list[int] = []
+    attr_meta: dict[int, dict] = {}
+    for d in drafts:
+        for a in d.attributes:
+            if a.id not in attr_meta:
+                attr_order.append(a.id)
+                attr_meta[a.id] = {"name": a.name, "attribute_type": a.attribute_type,
+                                    "val_type": a.val_type, "is_required": a.is_required}
+            elif a.is_required:
+                attr_meta[a.id]["is_required"] = True
+
+    attr_headers = [f"{attr_meta[aid]['name']}{'*' if attr_meta[aid]['is_required'] else ''}" for aid in attr_order]
+    header_row = [h for h, _, _ in _WTO_BASE_COLS] + attr_headers
+
+    wb_book = openpyxl.Workbook()
+    ws = wb_book.active
+    ws.title = "Карточки"
+    ws.append(header_row)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    ws.freeze_panes = "C2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(header_row))}1"
+
+    for d in drafts:
+        row = [
+            d.vendor_code, "; ".join(d.issues), d.name,
+            d.description_category_id or "", d.type_id or "", d.category_name,
+            d.price, d.old_price, d.currency_code, d.vat,
+            d.depth, d.width, d.height, d.weight,
+            d.barcode, "; ".join(d.extra_barcodes),
+            "; ".join(d.images), d.primary_image, d.description, d.nm_id or "",
+        ]
+        attr_by_id = {a.id: a.value_text for a in d.attributes}
+        for aid in attr_order:
+            row.append(attr_by_id.get(aid, ""))
+        ws.append(row)
+
+    base_widths = [16, 34, 30, 12, 10, 22, 9, 12, 8, 7, 10, 10, 10, 9, 16, 18, 42, 20, 30, 12]
+    for i, w in enumerate(base_widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for i in range(len(_WTO_BASE_COLS) + 1, len(header_row) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 24
+
+    # Скрытый служебный лист — связывает колонку с полем Ozon (самодостаточность файла для импорта)
+    meta_ws = wb_book.create_sheet("_meta")
+    meta_ws.append(["col_index", "col_header", "field_kind", "field_key", "attribute_type", "val_type", "is_required"])
+    for i, (h, key, kind) in enumerate(_WTO_BASE_COLS, start=1):
+        meta_ws.append([i, h, kind, key, "", "", ""])
+    for j, aid in enumerate(attr_order):
+        i = len(_WTO_BASE_COLS) + 1 + j
+        m = attr_meta[aid]
+        meta_ws.append([i, header_row[i - 1], "attribute", aid, m["attribute_type"], m["val_type"], m["is_required"]])
+    meta_ws.sheet_state = "hidden"
+
+    buf = _io.BytesIO()
+    wb_book.save(buf)
+    return buf.getvalue()
+
+
+def parse_wb_to_ozon_workbook(file_bytes: bytes) -> list[dict]:
+    """Читает заполненный пользователем шаблон (без сетевых вызовов).
+    Возвращает список строк: {vendor_code, base:{...}, attributes:[...], pre_errors:[...]}.
+    pre_errors — проблемы, обнаруженные локально (пустые обязательные поля и т.п.) —
+    такие строки не уходят в Ozon и сразу репортятся как ошибка."""
+    import io as _io
+    import openpyxl
+
+    wb_book = openpyxl.load_workbook(_io.BytesIO(file_bytes), read_only=True, data_only=True)
+    if "_meta" not in wb_book.sheetnames:
+        raise ValueError("Файл повреждён или структура шаблона изменена (нет служебного листа _meta) — используйте оригинальный скачанный файл")
+    if "Карточки" not in wb_book.sheetnames:
+        raise ValueError("Не найден лист «Карточки» — используйте оригинальный скачанный файл")
+
+    meta_rows = list(wb_book["_meta"].iter_rows(min_row=2, values_only=True))
+    if not meta_rows:
+        raise ValueError("Пустой служебный лист _meta")
+
+    meta = []
+    for row in meta_rows:
+        col_index, col_header, field_kind, field_key, attribute_type, val_type, is_required = row
+        meta.append({
+            "col_index": int(col_index), "col_header": col_header, "field_kind": field_kind,
+            "field_key": field_key, "attribute_type": attribute_type or "",
+            "val_type": val_type or "", "is_required": bool(is_required),
+        })
+    meta.sort(key=lambda m: m["col_index"])
+
+    main_ws = wb_book["Карточки"]
+    header_row = next(main_ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    for m in meta:
+        idx = m["col_index"] - 1
+        actual = header_row[idx] if idx < len(header_row) else None
+        if actual != m["col_header"]:
+            raise ValueError(
+                "Не изменяйте структуру столбцов шаблона (не добавляйте/не удаляйте/не переставляйте колонки) — "
+                f"заполняйте только ячейки. Ожидался столбец «{m['col_header']}» на позиции {m['col_index']}, найден «{actual}»."
+            )
+
+    rows: list[dict] = []
+    for data_row in main_ws.iter_rows(min_row=2, values_only=True):
+        if data_row is None or all(v in (None, "") for v in data_row):
+            continue
+
+        base: dict = {}
+        attributes: list[dict] = []
+        pre_errors: list[str] = []
+        vendor_code = ""
+
+        for m in meta:
+            idx = m["col_index"] - 1
+            raw = data_row[idx] if idx < len(data_row) else None
+            text = "" if raw is None else str(raw).strip()
+
+            if m["field_key"] == "offer_id":
+                vendor_code = text
+
+            if m["field_kind"] == "reference":
                 continue
-
-            images_raw = _json.loads(p.images_json or "[]")
-            images = [f"{PROXY}{u}" for u in images_raw[:10] if u]
-            if not images:
-                results.append({"vendor_code": vc, "status": "error", "error": "Нет фотографий"})
-                continue
-
-            # Определяем категорию: сначала по subjectName WB, иначе по названию
-            cat_query = getattr(p, "subject_name", None) or p.name or vc
-            desc_cat_id, type_id = await _ozon_search_category(session, headers, cat_query)
-            if not desc_cat_id:
-                results.append({"vendor_code": vc, "status": "error", "error": "Не удалось определить категорию Ozon"})
-                continue
-
-            # Заполняем атрибуты
-            import re as _re
-            req_attrs  = await _ozon_required_attrs(session, headers, desc_cat_id, type_id)
-            wb_chars   = _json.loads(p.attributes_json or "[]")
-            wb_attrs   = {a["name"].lower(): str(a.get("value", "")) for a in wb_chars}
-            wb_brand   = getattr(p, "brand", None) or ""
-            wb_desc    = p.description or ""
-            ozon_attrs = []
-            for attr in req_attrs:
-                attr_id   = attr["id"]
-                attr_name = attr.get("name", "").lower()
-                dict_type = attr.get("attribute_type", "None")  # "None", "Option", "Tree"
-                val_type  = attr.get("type", "String")          # "String", "Integer", "Float"
-
-                # Специальные источники по типу атрибута
-                if "бренд" in attr_name:
-                    wb_val = wb_brand or wb_attrs.get(attr_name, "") or "Нет бренда"
-                elif "тн вэд" in attr_name:
-                    wb_val = wb_attrs.get("код тн вэд") or wb_attrs.get(attr_name, "")
-                elif "аннотация" in attr_name or "annotation" in attr_name:
-                    wb_val = wb_desc[:200].strip()
-                else:
-                    wb_val = wb_attrs.get(attr_name, "")
-
-                if dict_type in ("Option", "Tree"):
-                    # Словарный атрибут — ищем dictionary_value_id в Ozon
-                    if wb_val:
-                        dict_val_id = await _find_ozon_dict_value(
-                            session, headers, attr_id, desc_cat_id, wb_val
-                        )
-                        if dict_val_id:
-                            ozon_attrs.append({
-                                "id": attr_id, "complex_id": 0,
-                                "values": [{"dictionary_value_id": dict_val_id, "value": wb_val}],
-                            })
-                    # Если не нашли — пропускаем (пустое поле лучше неверного)
-                    continue
-
-                if val_type in ("Integer", "Float"):
-                    nums = _re.findall(r'\d+(?:\.\d+)?', wb_val)
-                    num  = nums[0] if nums else "0"
-                    ozon_attrs.append({"id": attr_id, "complex_id": 0, "values": [{"value": num}]})
-                else:
-                    val = wb_val or (p.name or vc)
-                    ozon_attrs.append({"id": attr_id, "complex_id": 0, "values": [{"value": str(val)[:500]}]})
-
-            # Размеры: берём из WB dimensions_json (мм) → Ozon (мм), 1:1
-            # Fallback: ищем в характеристиках в см, умножаем на 10
-            wb_dims = _json.loads(getattr(p, "dimensions_json", None) or "{}")
-
-            # WB dimensions_json хранит значения в СМ → конвертируем в мм (×10) для Ozon API
-            def _from_dims(key: str) -> Optional[int]:
-                v = wb_dims.get(key)
-                if v and int(v) > 0:
-                    return max(10, int(v) * 10)
-                return None
-
-            def _from_attrs_cm(keys: list[str]) -> Optional[int]:
-                for k in keys:
-                    v = wb_attrs.get(k, "")
-                    nums = _re.findall(r'\d+(?:\.\d+)?', v)
-                    if nums:
-                        mm = int(float(nums[0]) * 10)
-                        return max(10, mm)
-                return None
-
-            depth  = (_from_dims("length") or _from_attrs_cm(["глубина предмета", "длина предмета", "толщина предмета"]) or 50)
-            width  = (_from_dims("width")  or _from_attrs_cm(["ширина предмета", "ширина"]) or 50)
-            height = (_from_dims("height") or _from_attrs_cm(["высота предмета", "высота"]) or 50)
-
-            # Вес: сначала из dimensions.weightBrutto (кг → г, только если > 0), иначе из характеристик
-            wb_weight_brutto = wb_dims.get("weightBrutto") or 0
-            if float(wb_weight_brutto) > 0:
-                weight = max(1, int(float(wb_weight_brutto) * 1000))
-            else:
-                def _weight_to_g(keys: list[str], default_g: int = 500) -> int:
-                    for k in keys:
-                        v = wb_attrs.get(k, "")
-                        nums = _re.findall(r'\d+(?:\.\d+)?', v)
-                        if nums:
-                            w = float(nums[0])
-                            return max(1, int(w * 1000 if w < 100 else w))
-                    return default_g
-                weight = _weight_to_g(["вес", "вес брутто", "вес нетто", "масса"])
-
-            wb_barcodes = _json.loads(getattr(p, "barcodes_json", None) or "[]")
-
-            # Добавляем аннотацию (id=4191) — не обязательный атрибут, но важный для контента
-            wb_annotation = (p.description or "")[:4000].strip()
-            if wb_annotation:
-                # Убираем дубликат, если аннотация уже добавлена как required
-                if not any(a["id"] == 4191 for a in ozon_attrs):
-                    ozon_attrs.append({
-                        "id": 4191, "complex_id": 0,
-                        "values": [{"value": wb_annotation}],
+            if m["field_kind"] == "attribute":
+                if text:
+                    attributes.append({
+                        "id": int(m["field_key"]), "value_text": text,
+                        "attribute_type": m["attribute_type"], "val_type": m["val_type"],
+                        "is_required": m["is_required"],
                     })
+                elif m["is_required"]:
+                    pre_errors.append(f"обязательный атрибут «{m['col_header'].rstrip('*')}» не заполнен")
+                continue
+            if m["field_kind"] == "base_int":
+                try:
+                    base[m["field_key"]] = int(float(text)) if text else 0
+                except ValueError:
+                    pre_errors.append(f"«{m['col_header']}»: не число ({text!r})")
+                    base[m["field_key"]] = 0
+                continue
+            if m["field_kind"] == "base_images":
+                base[m["field_key"]] = [u.strip() for u in text.split(";") if u.strip()]
+                continue
+            base[m["field_key"]] = text
+
+        if not vendor_code:
+            continue
+
+        if not base.get("name"):
+            pre_errors.append("не заполнено название")
+        if not base.get("description_category_id"):
+            pre_errors.append("не заполнен ID категории")
+        if not base.get("type_id"):
+            pre_errors.append("не заполнен ID типа")
+        if not base.get("price"):
+            pre_errors.append("не заполнена цена")
+        if not base.get("images"):
+            pre_errors.append("нет ни одного фото")
+        for dim_key, dim_name in [("depth", "глубина"), ("width", "ширина"), ("height", "высота"), ("weight", "вес")]:
+            if not base.get(dim_key):
+                pre_errors.append(f"не заполнен(а) {dim_name}")
+
+        rows.append({"vendor_code": vendor_code, "base": base, "attributes": attributes, "pre_errors": pre_errors})
+
+    return rows
+
+
+# Статус фонового импорта — глобальный, по конвенции _sync_status/_ozon_sync_status в web_app.py.
+# Читается через module-level атрибут (content_sync._wb_to_ozon_import_status), не через `from ... import`,
+# чтобы переприсваивание внутри submit_wb_to_ozon_import было видно снаружи модуля.
+_wb_to_ozon_import_status: dict = {"running": False, "total": 0, "results": {}, "error": ""}
+
+
+async def _poll_ozon_import_task(session: aiohttp.ClientSession, headers: dict, task_id: int) -> dict:
+    """POST /v1/product/import/info — статус батча импорта по task_id.
+    Схема ответа подтверждена по исходникам github.com/diphantxm/ozon-api-client (ozon/products.go):
+    {"result": {"items": [{"offer_id","product_id","status": "pending"|"imported"|"failed",
+    "errors": [{"code","description","attribute_name",...}]}], "total": int}}.
+    Терпима к неожиданной форме ответа — при сбое просто вернёт {} и попытка повторится
+    на следующей итерации поллинга."""
+    try:
+        async with session.post(
+            "https://api-seller.ozon.ru/v1/product/import/info",
+            headers=headers,
+            json={"task_id": task_id},
+        ) as resp:
+            data = await resp.json(content_type=None)
+        print(f"[wto-import] poll task_id={task_id} status={resp.status} resp={str(data)[:500]}", flush=True)
+        items = data.get("result", {}).get("items", []) or data.get("items", [])
+        out = {}
+        for it in items:
+            offer_id = it.get("offer_id")
+            status   = it.get("status")
+            errors   = it.get("errors") or []
+            error_text = "; ".join(e.get("description") or e.get("message") or e.get("code", "") for e in errors)
+            out[offer_id] = {"status": status, "error_text": error_text}
+        return out
+    except Exception as e:
+        print(f"[wto-import] poll error task_id={task_id}: {e}", flush=True)
+        return {}
+
+
+async def submit_wb_to_ozon_import(ozon_account_id: int, rows: list[dict]) -> None:
+    """Резолвит словарные атрибуты, шлёт карточки батчами (≤100) в Ozon, поллит статус
+    и обновляет _wb_to_ozon_import_status для живого прогресса в UI."""
+    global _wb_to_ozon_import_status
+    results: dict[str, dict] = {}
+    for row in rows:
+        if row["pre_errors"]:
+            results[row["vendor_code"]] = {"status": "error", "message": "; ".join(row["pre_errors"])}
+        else:
+            results[row["vendor_code"]] = {"status": "pending", "message": ""}
+    _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
+
+    try:
+        headers = await _ozon_headers_for_account(ozon_account_id)
+    except Exception as e:
+        _wb_to_ozon_import_status = {"running": False, "total": len(rows), "results": results, "error": str(e)}
+        return
+
+    valid_rows = [r for r in rows if not r["pre_errors"]]
+    if not valid_rows:
+        _wb_to_ozon_import_status = {"running": False, "total": len(rows), "results": results, "error": ""}
+        return
+
+    dict_cache: dict[tuple, Optional[int]] = {}
+    pending_tasks: list[dict] = []  # [{"task_id": int, "vendor_codes": [...]}]
+
+    async with aiohttp.ClientSession() as session:
+
+        async def _resolve_dict(attr_id: int, desc_cat_id: int, text: str) -> Optional[int]:
+            key = (attr_id, desc_cat_id, text.lower())
+            if key not in dict_cache:
+                dict_cache[key] = await _find_ozon_dict_value(session, headers, attr_id, desc_cat_id, text)
+            return dict_cache[key]
+
+        items_to_send: list[tuple[str, dict]] = []
+        for row in valid_rows:
+            base = row["base"]
+            desc_cat_id = base.get("description_category_id", 0)
+            ozon_attrs = []
+            notes = []
+            for a in row["attributes"]:
+                if a["attribute_type"] in ("Option", "Tree"):
+                    dict_val_id = await _resolve_dict(a["id"], desc_cat_id, a["value_text"])
+                    if dict_val_id:
+                        ozon_attrs.append({"id": a["id"], "complex_id": 0,
+                                            "values": [{"dictionary_value_id": dict_val_id, "value": a["value_text"]}]})
+                    else:
+                        notes.append(f"атрибут «{a['id']}»: значение «{a['value_text']}» не найдено в справочнике Ozon, не отправлено")
+                elif a["val_type"] in ("Integer", "Float"):
+                    ozon_attrs.append({"id": a["id"], "complex_id": 0, "values": [{"value": a["value_text"]}]})
+                else:
+                    ozon_attrs.append({"id": a["id"], "complex_id": 0, "values": [{"value": a["value_text"][:500]}]})
 
             item = {
-                "name":                    (p.name or vc)[:500],
-                "offer_id":                vc,
+                "offer_id":                row["vendor_code"],
+                "name":                    (base.get("name") or row["vendor_code"])[:500],
+                "description":             (base.get("description") or "")[:10000],
                 "description_category_id": desc_cat_id,
-                "type_id":                 type_id,
-                "price":                   "10000",
-                "vat":                     "0",
-                "images":                  images,
-                "description":             (p.description or "")[:10000],
-                "depth":                   depth,
-                "width":                   width,
-                "height":                  height,
+                "type_id":                 base.get("type_id", 0),
+                "price":                   str(base.get("price") or "0"),
+                "currency_code":           base.get("currency_code") or "RUB",
+                "vat":                     str(base.get("vat") or "0"),
+                "images":                  base.get("images") or [],
+                "depth":                   base.get("depth", 0),
+                "width":                   base.get("width", 0),
+                "height":                  base.get("height", 0),
                 "dimension_unit":          "mm",
-                "weight":                  weight,
+                "weight":                  base.get("weight", 0),
                 "weight_unit":             "g",
                 "attributes":              ozon_attrs,
             }
-            # Штрихкоды WB (29xxx, 69xxx) — внутренние коды WB, Ozon их молча отвергает.
-            # Отправляем только штрихкоды с публичными EAN-префиксами (не 29/290).
-            public_barcodes = [b for b in wb_barcodes if b and not b.startswith("29") and len(b) in (8, 12, 13, 14)]
-            if public_barcodes:
-                item["barcodes"] = public_barcodes[:3]
+            if base.get("old_price"):
+                item["old_price"] = str(base["old_price"])
+            if base.get("primary_image"):
+                item["primary_image"] = base["primary_image"]
+            if base.get("barcode"):
+                item["barcode"] = base["barcode"]
 
+            if notes:
+                results[row["vendor_code"]]["message"] = "; ".join(notes)
+            items_to_send.append((row["vendor_code"], item))
+            _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
+
+        for i in range(0, len(items_to_send), 100):
+            chunk = items_to_send[i:i + 100]
             try:
                 async with session.post(
                     "https://api-seller.ozon.ru/v3/product/import",
-                    headers=headers,
-                    json={"items": [item]},
+                    headers=headers, json={"items": [it for _, it in chunk]},
                 ) as resp:
                     resp_data = await resp.json(content_type=None)
-                print(f"[ozon-import] {vc} status={resp.status} resp={str(resp_data)[:300]}", flush=True)
-                if resp.status == 200:
-                    task_id = resp_data.get("result", {}).get("task_id")
-                    wb_barcodes_internal = [b for b in wb_barcodes if b and b.startswith("29")]
-                    warn = "Штрихкоды WB (29xxx) не переносятся на Ozon — добавьте EAN вручную" if wb_barcodes_internal and not public_barcodes else None
-                    results.append({"vendor_code": vc, "status": "ok", "task_id": task_id, "warning": warn})
-                else:
-                    err = resp_data.get("message") or str(resp_data)[:300]
-                    results.append({"vendor_code": vc, "status": "error", "error": f"Ozon {resp.status}: {err}"})
-            except Exception as e:
-                results.append({"vendor_code": vc, "status": "error", "error": str(e)})
+                print(f"[wto-import] submit chunk_start={i} status={resp.status} resp={str(resp_data)[:400]}", flush=True)
 
-    return results
+                if resp.status == 429 or "item_limit_exceeded" in str(resp_data).lower():
+                    retry_after = resp.headers.get("Item-Retry-After", "")
+                    msg = "лимит Ozon исчерпан, попробуйте позже" + (f" (через {retry_after} мин)" if retry_after else "")
+                    for vc, _ in items_to_send[i:]:
+                        results[vc] = {"status": "error", "message": msg}
+                    _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
+                    break
+
+                if resp.status != 200:
+                    err = resp_data.get("message") or str(resp_data)[:300]
+                    for vc, _ in chunk:
+                        results[vc] = {"status": "error", "message": f"Ozon {resp.status}: {err}"}
+                    _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
+                    continue
+
+                task_id = resp_data.get("result", {}).get("task_id")
+                if task_id:
+                    pending_tasks.append({"task_id": task_id, "vendor_codes": [vc for vc, _ in chunk]})
+                else:
+                    for vc, _ in chunk:
+                        results[vc] = {"status": "error", "message": "Ozon не вернул task_id"}
+            except Exception as e:
+                for vc, _ in chunk:
+                    results[vc] = {"status": "error", "message": str(e)}
+                _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
+
+        deadline = asyncio.get_event_loop().time() + 120
+        while pending_tasks and asyncio.get_event_loop().time() < deadline:
+            still_pending = []
+            for task in pending_tasks:
+                statuses = await _poll_ozon_import_task(session, headers, task["task_id"])
+                remaining = []
+                for vc in task["vendor_codes"]:
+                    st = statuses.get(vc)
+                    if not st or st["status"] == "pending":
+                        remaining.append(vc)
+                        continue
+                    if st["status"] == "imported":
+                        prev_msg = results.get(vc, {}).get("message", "")
+                        results[vc] = {"status": "ok", "message": prev_msg}
+                    else:
+                        results[vc] = {"status": "error", "message": st["error_text"] or "Ozon отклонил карточку"}
+                if remaining:
+                    still_pending.append({"task_id": task["task_id"], "vendor_codes": remaining})
+            pending_tasks = still_pending
+            _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
+            if pending_tasks:
+                await asyncio.sleep(4)
+
+        for task in pending_tasks:
+            for vc in task["vendor_codes"]:
+                results[vc] = {"status": "unknown", "message": "Ozon не подтвердил статус за 2 мин — проверьте в кабинете Ozon"}
+
+    _wb_to_ozon_import_status = {"running": False, "total": len(rows), "results": results, "error": ""}

@@ -4031,16 +4031,52 @@ async def api_wb_to_ozon_compare(request: Request, user: dict = Depends(require_
     return result
 
 
-@app.post("/api/wb-to-ozon/create-cards")
-async def api_wb_to_ozon_create(request: Request, user: dict = Depends(require_any_role)):
-    from content_sync import create_ozon_cards_from_wb
+@app.post("/api/wb-to-ozon/export-template")
+async def api_wb_to_ozon_export_template(request: Request, user: dict = Depends(require_any_role)):
+    from content_sync import build_wb_to_ozon_template
+    from fastapi.responses import StreamingResponse
+    import io as _io
     body = await request.json()
     ozon_account_id = int(body["ozon_account_id"])
     vendor_codes    = list(body["vendor_codes"])
     if not vendor_codes:
         raise HTTPException(status_code=400, detail="Не выбраны артикулы")
-    result = await create_ozon_cards_from_wb(ozon_account_id, vendor_codes)
-    return result
+    xlsx_bytes = await build_wb_to_ozon_template(ozon_account_id, vendor_codes)
+    return StreamingResponse(
+        _io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=wb_to_ozon_{datetime.now():%Y%m%d_%H%M}.xlsx"},
+    )
+
+
+@app.post("/api/wb-to-ozon/import-upload")
+async def api_wb_to_ozon_import_upload(
+    file: UploadFile = File(...),
+    ozon_account_id: int = Form(...),
+    user: dict = Depends(require_any_role),
+):
+    import content_sync
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Нужен файл .xlsx")
+    content = await file.read()
+    try:
+        rows = content_sync.parse_wb_to_ozon_workbook(content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ошибка чтения файла: {e}")
+    if not rows:
+        raise HTTPException(status_code=400, detail="В файле нет заполненных строк")
+    if content_sync._wb_to_ozon_import_status.get("running"):
+        raise HTTPException(status_code=409, detail="Импорт уже выполняется, дождитесь завершения")
+    asyncio.create_task(content_sync.submit_wb_to_ozon_import(ozon_account_id, rows))
+    return {"started": True, "total": len(rows)}
+
+
+@app.get("/api/wb-to-ozon/import-status")
+async def api_wb_to_ozon_import_status(user: dict = Depends(require_any_role)):
+    import content_sync
+    return content_sync._wb_to_ozon_import_status
 
 
 # ── Заказы Сима ──────────────────────────────────────────────────────────────
