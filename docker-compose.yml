@@ -34,6 +34,10 @@ services:
         condition: service_healthy
     # 📚 УРОК: depends_on с condition гарантирует, что бот стартует
     # только когда PostgreSQL готов принимать подключения (healthcheck).
+    networks:
+      - default
+      - quicknode_net
+    # quicknode_net нужна, чтобы достучаться до quicknode-tg-proxy (SOCKS5 → Telegram)
 
   # --- Веб-интерфейс FastAPI ---
   web:
@@ -48,6 +52,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - quicknode_net
 
 volumes:
   pgdata:
+
+networks:
+  default:
+  quicknode_net:
+    external: true
+    name: quicknode_default

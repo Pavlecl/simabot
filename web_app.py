@@ -2519,7 +2519,7 @@ async def check_fbo_sales_and_notify():
                 # Отправляем в Telegram
                 try:
                     from aiohttp_socks import ProxyConnector
-                    proxy_url = os.getenv("PROXY_URL", "socks5://72.56.17.252:1080")
+                    proxy_url = os.getenv("PROXY_URL", "socks5://quicknode-tg-proxy:1080")
                     connector = ProxyConnector.from_url(proxy_url)
                     async with aiohttp.ClientSession(connector=connector) as tg_session:
                         await tg_session.post(
@@ -2796,7 +2796,7 @@ async def api_fbo_test_notify(user: dict = Depends(require_any_role)):
 
     try:
         from aiohttp_socks import ProxyConnector
-        proxy_url = os.getenv("PROXY_URL", "socks5://72.56.17.252:1080")
+        proxy_url = os.getenv("PROXY_URL", "socks5://quicknode-tg-proxy:1080")
         connector = ProxyConnector.from_url(proxy_url)
         async with aiohttp.ClientSession(connector=connector) as tg_session:
             resp = await tg_session.post(
