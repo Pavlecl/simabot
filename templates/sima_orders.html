@@ -138,8 +138,8 @@
     </div>
     <div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Дата поставки</div>
-      <input type="text" id="supply-date" placeholder="Например: 25.05"
-        style="padding:6px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:120px">
+      <input type="date" id="supply-date"
+        style="padding:6px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:150px;color-scheme:dark">
     </div>
     <button class="btn primary" id="btn-assemble" onclick="assembleOrders()">
       📦 Собрать поставку
@@ -301,9 +301,24 @@ async function checkCart(file) {
 }
 
 // ── Шаг 3: Собрать поставку ──────────────────────────────────────────────────
+function isoToDisplayDate(iso) {
+  const [y, m, d] = iso.split('-');
+  return `${parseInt(d, 10)}.${m}.${y.slice(2)}`;
+}
+
+(function initSupplyDate() {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const yyyy = tomorrow.getFullYear();
+  const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+  const dd = String(tomorrow.getDate()).padStart(2, '0');
+  document.getElementById('supply-date').value = `${yyyy}-${mm}-${dd}`;
+})();
+
 async function assembleOrders() {
   const simaNum   = document.getElementById('sima-num').value.trim();
-  const supplyDate = document.getElementById('supply-date').value.trim();
+  const supplyDateIso = document.getElementById('supply-date').value.trim();
+  const supplyDate = supplyDateIso ? isoToDisplayDate(supplyDateIso) : '';
   if (!simaNum || !supplyDate) {
     alert('Укажите номер заказа и дату поставки');
     return;
