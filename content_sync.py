@@ -804,6 +804,11 @@ async def _build_wb_ozon_draft(
         elif val_type in ("Integer", "Float"):
             nums = _re.findall(r'\d+(?:\.\d+)?', wb_val)
             value_text = nums[0] if nums else ""
+        elif val_type == "URL":
+            # У WB нет источника ссылок (PDF-документы, видео и т.п.) — подставлять сюда
+            # название товара нельзя, Ozon отклонит как невалидный URL. Берём WB-значение,
+            # только если оно само похоже на ссылку, иначе оставляем пустым.
+            value_text = wb_val if wb_val.startswith(("http://", "https://")) else ""
         else:
             value_text = wb_val or ((p.name if p else vc) or vc)
 
