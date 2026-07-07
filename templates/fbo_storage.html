@@ -200,6 +200,13 @@
   transform: translateX(16px);
   background: #fff;
 }
+.artikul-copy {
+  cursor: pointer;
+  border-bottom: 1px dashed var(--bs-secondary, #6c757d);
+  transition: color .15s;
+}
+.artikul-copy:hover { color: var(--bs-primary, #0d6efd); }
+.artikul-copy.copied { color: #198754 !important; border-color: #198754; }
 </style>
 
 <script>
@@ -367,7 +374,9 @@ function renderTable() {
       <td style="padding:8px 6px 8px 12px;">
         <input type="checkbox" ${checked} onchange="toggleItem('${esc(item.offer_id)}', this.checked)">
       </td>
-      <td style="font-family:monospace;font-size:12px;">${esc(item.offer_id)}</td>
+      <td style="font-family:monospace;font-size:12px;">
+        <span class="artikul-copy" onclick="event.stopPropagation();copyArtikul(this,'${esc(item.offer_id)}')" title="Нажмите для копирования">${esc(item.offer_id)}</span>
+      </td>
       <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
           title="${esc(item.name)}">${esc(item.name)}</td>
       <td style="text-align:center;font-weight:600;">${item.fbo}</td>
@@ -586,6 +595,14 @@ function fmtDate(iso) {
 }
 function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function copyArtikul(el, code) {
+  navigator.clipboard.writeText(code).then(() => {
+    el.classList.add('copied');
+    const orig = el.textContent;
+    el.textContent = '✓ ' + code;
+    setTimeout(() => { el.classList.remove('copied'); el.textContent = orig; }, 1200);
+  });
 }
 function toast(msg, type='success') {
   const el = document.createElement('div');
