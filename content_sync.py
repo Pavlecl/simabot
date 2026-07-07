@@ -1295,8 +1295,10 @@ async def submit_wb_to_ozon_import(ozon_account_id: int, rows: list[dict]) -> No
                         remaining.append(vc)
                         continue
                     if st["status"] == "imported":
-                        prev_msg = results.get(vc, {}).get("message", "")
-                        results[vc] = {"status": "ok", "message": prev_msg}
+                        # Ozon иногда помечает товар "imported", но прикладывает предупреждение
+                        # (например по конкретному атрибуту) — не отменяет успех, но стоит показать.
+                        notes = [n for n in (results.get(vc, {}).get("message", ""), st["error_text"]) if n]
+                        results[vc] = {"status": "ok", "message": "; ".join(notes)}
                     else:
                         results[vc] = {"status": "error", "message": st["error_text"] or "Ozon отклонил карточку"}
                 if remaining:
