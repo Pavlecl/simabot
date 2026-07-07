@@ -804,13 +804,22 @@ async def _build_wb_ozon_draft(
         elif val_type in ("Integer", "Float"):
             nums = _re.findall(r'\d+(?:\.\d+)?', wb_val)
             value_text = nums[0] if nums else ""
-        elif val_type == "URL":
-            # У WB нет источника ссылок (PDF-документы, видео и т.п.) — подставлять сюда
-            # название товара нельзя, Ozon отклонит как невалидный URL. Берём WB-значение,
-            # только если оно само похоже на ссылку, иначе оставляем пустым.
+        elif val_type == "URL" or "ссылка" in attr_name_l or "видео" in attr_name_l:
+            # У WB нет источника ссылок (PDF-документы, видео и т.п.) — название товара сюда
+            # подставлять нельзя, Ozon отклонит как невалидный URL (это касается и полей,
+            # у которых Ozon формально указывает val_type="String", но по смыслу это ссылка,
+            # например "Озон.Видеообложка: ссылка"). Берём WB-значение, только если оно само
+            # похоже на ссылку, иначе оставляем пустым.
             value_text = wb_val if wb_val.startswith(("http://", "https://")) else ""
+        elif wb_val:
+            value_text = wb_val
+        elif is_req:
+            # Только для ОБЯЗАТЕЛЬНЫХ полей подставляем название товара как крайний случай —
+            # для необязательных атрибутов лучше оставить пусто, чем угадывать неподходящим
+            # текстом (так и раньше делалось для необязательных, теперь явно и системно).
+            value_text = (p.name if p else vc) or vc
         else:
-            value_text = wb_val or ((p.name if p else vc) or vc)
+            value_text = ""
 
         if is_req and not value_text:
             issues.append(f"обязательный атрибут «{attr_name}» не заполнен")
