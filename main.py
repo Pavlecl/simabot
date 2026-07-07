@@ -653,7 +653,7 @@ async def cmd_fbo_watch(message: types.Message):
 
             chunk.append(
                 f"{name}\n"
-                f"Артикул: {item.offer_id}\n"
+                f"Артикул: <code>{item.offer_id}</code>\n"
                 f"{status} | Продано: {sold} шт\n"
                 f"До платного: {days_str}"
             )
@@ -677,7 +677,7 @@ async def cmd_fbo_test_notify(message: types.Message):
     test_msg = (
         "📦 Продажа FBO\n"
         "<b>Тестовый товар — Гель для душа виски</b>\n"
-        "Артикул: 4782373\n"
+        "Артикул: <code>4782373</code>\n"
         "Продано: 1 шт → остаток: 40\n"
         "До платного: 9 дн."
     )

@@ -2522,7 +2522,7 @@ async def _update_fbo_sold_out_digest(session: AsyncSession, bot_token: str, cha
     if count > len(shown):
         lines.append(f"<i>(показаны последние {len(shown)})</i>")
     for idx, it in enumerate(shown, start=count - len(shown) + 1):
-        lines.append(f"{idx}. {it['name']}\nАртикул: {it['offer_id']} | до платного было: {it['days_str']}")
+        lines.append(f"{idx}. {it['name']}\nАртикул: <code>{it['offer_id']}</code> | до платного было: {it['days_str']}")
     lines.append("👉 Проверьте акции и включите FBS для этих позиций.")
     text = "\n\n".join(lines)
 
@@ -2576,7 +2576,7 @@ async def check_fbo_sales_and_notify():
                         msg = (
                             f"📦 Продажа FBO\n"
                             f"<b>{name}</b>\n"
-                            f"Артикул: {offer_id}\n"
+                            f"Артикул: <code>{offer_id}</code>\n"
                             f"Продано: {sold} шт → остаток: {current_fbo}\n"
                             f"До платного: {days_str}"
                         )
@@ -2840,7 +2840,7 @@ async def api_fbo_test_notify(user: dict = Depends(require_any_role)):
     msg = (
         f"📦 Продажа FBO (ТЕСТ)\n"
         f"<b>{watch['item_name'] or offer_id}</b>\n"
-        f"Артикул: {offer_id}\n"
+        f"Артикул: <code>{offer_id}</code>\n"
         f"Продано: 1 шт → остаток: {max(0, watch['fbo_snapshot'] - 1)}\n"
         f"До платного: {days_str}"
     )
