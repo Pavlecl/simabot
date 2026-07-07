@@ -34,7 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
-                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, FboStorageReport, FboSalesWatch, init_db)
+                      FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, FboStorageReport, FboSalesWatch,
+                      FboDailyDigest, init_db)
 
 from content_sync import get_matched_products, apply_wb_to_ozon, get_active_wb_key, get_all_wb_accounts_db
 
@@ -2470,8 +2471,76 @@ async def load_fbo_sales_watch_from_db():
         print(f"FBO SALES WATCH load error: {e}", flush=True)
 
 
+async def _tg_send_or_edit(bot_token: str, chat_id: str, proxy_url: str, text: str, message_id: Optional[int]) -> Optional[int]:
+    """Отправляет новое сообщение или редактирует существующее (если message_id задан и правка прошла).
+    Возвращает id итогового сообщения, либо None при ошибке."""
+    from aiohttp_socks import ProxyConnector
+    connector = ProxyConnector.from_url(proxy_url)
+    async with aiohttp.ClientSession(connector=connector) as tg_session:
+        if message_id:
+            try:
+                async with tg_session.post(
+                    f"https://api.telegram.org/bot{bot_token}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"},
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as r:
+                    data = await r.json(content_type=None)
+                if data.get("ok"):
+                    return message_id
+            except Exception as e:
+                print(f"FBO DIGEST edit error: {e}", flush=True)
+        try:
+            async with tg_session.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as r:
+                data = await r.json(content_type=None)
+            if data.get("ok"):
+                return data["result"]["message_id"]
+            print(f"FBO DIGEST send failed: {data}", flush=True)
+        except Exception as e:
+            print(f"FBO DIGEST send error: {e}", flush=True)
+    return None
+
+
+async def _update_fbo_sold_out_digest(session: AsyncSession, bot_token: str, chat_id: str, proxy_url: str,
+                                       offer_id: str, name: str, days_str: str):
+    """Добавляет полностью распроданную позицию в накопительный список за сегодня
+    и обновляет (редактирует) единое Telegram-сообщение с этим списком.
+    Список привязан к дате (Europe/Moscow) — на следующие сутки начинается новое сообщение."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    row = await session.get(FboDailyDigest, today)
+    items = json.loads(row.items_json) if row else []
+    items.append({"offer_id": offer_id, "name": name, "days_str": days_str})
+
+    date_display = datetime.now().strftime("%d.%m.%Y")
+    count = len(items)
+    SHOWN_LIMIT = 40
+    shown = items[-SHOWN_LIMIT:]
+    lines = [f"✅ <b>Распродано за {date_display} — {count} шт.</b>"]
+    if count > len(shown):
+        lines.append(f"<i>(показаны последние {len(shown)})</i>")
+    for idx, it in enumerate(shown, start=count - len(shown) + 1):
+        lines.append(f"{idx}. {it['name']}\nАртикул: {it['offer_id']} | до платного было: {it['days_str']}")
+    lines.append("👉 Проверьте акции и включите FBS для этих позиций.")
+    text = "\n\n".join(lines)
+
+    message_id = await _tg_send_or_edit(bot_token, chat_id, proxy_url, text, row.message_id if row else None)
+
+    values = {"items_json": json.dumps(items, ensure_ascii=False), "message_id": message_id}
+    await session.execute(
+        pg_insert(FboDailyDigest).values(date=today, **values)
+        .on_conflict_do_update(index_elements=["date"], set_=values)
+    )
+    await session.commit()
+
+
 async def check_fbo_sales_and_notify():
-    """Проверяет остатки отслеживаемых позиций и отправляет уведомления в Telegram."""
+    """Проверяет остатки отслеживаемых позиций.
+    Полностью распроданные (остаток 0) копятся в единый дневной дайджест (Telegram-сообщение
+    редактируется при каждой новой распродаже, на следующие сутки — новое сообщение).
+    Частичные продажи отправляются как раньше — отдельным сообщением на каждую продажу."""
     if not _fbo_sales_watch_cache:
         return
     if not _stock_cache["items"]:
@@ -2485,6 +2554,7 @@ async def check_fbo_sales_and_notify():
     if not bot_token or not chat_id:
         print("FBO SALES WATCH: no telegram credentials", flush=True)
         return
+    proxy_url = os.getenv("PROXY_URL", "socks5://quicknode-tg-proxy:1080")
 
     updates = {}
     async with AsyncSessionLocal() as session:
@@ -2498,36 +2568,20 @@ async def check_fbo_sales_and_notify():
                 days_str = f"{days_left} дн." if days_left is not None else "—"
                 name = watch["item_name"] or offer_id
 
-                if current_fbo == 0:
-                    msg = (
-                        f"✅ FBO распродан!\n"
-                        f"<b>{name}</b>\n"
-                        f"Артикул: {offer_id}\n"
-                        f"Продано: {sold} шт → остаток: 0\n"
-                        f"До платного: {days_str}\n"
-                        f"👉 Выйдите из акций и включите FBS!"
-                    )
-                else:
-                    msg = (
-                        f"📦 Продажа FBO\n"
-                        f"<b>{name}</b>\n"
-                        f"Артикул: {offer_id}\n"
-                        f"Продано: {sold} шт → остаток: {current_fbo}\n"
-                        f"До платного: {days_str}"
-                    )
-
-                # Отправляем в Telegram
                 try:
-                    from aiohttp_socks import ProxyConnector
-                    proxy_url = os.getenv("PROXY_URL", "socks5://quicknode-tg-proxy:1080")
-                    connector = ProxyConnector.from_url(proxy_url)
-                    async with aiohttp.ClientSession(connector=connector) as tg_session:
-                        await tg_session.post(
-                            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                            json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                            timeout=aiohttp.ClientTimeout(total=15)
+                    if current_fbo == 0:
+                        await _update_fbo_sold_out_digest(session, bot_token, chat_id, proxy_url, offer_id, name, days_str)
+                        print(f"FBO SALES WATCH: digest updated for {offer_id} sold={sold}", flush=True)
+                    else:
+                        msg = (
+                            f"📦 Продажа FBO\n"
+                            f"<b>{name}</b>\n"
+                            f"Артикул: {offer_id}\n"
+                            f"Продано: {sold} шт → остаток: {current_fbo}\n"
+                            f"До платного: {days_str}"
                         )
-                    print(f"FBO SALES WATCH: notified {offer_id} sold={sold} left={current_fbo}", flush=True)
+                        await _tg_send_or_edit(bot_token, chat_id, proxy_url, msg, None)
+                        print(f"FBO SALES WATCH: notified {offer_id} sold={sold} left={current_fbo}", flush=True)
                 except Exception as e:
                     print(f"FBO SALES WATCH telegram error: {e}", flush=True)
 

@@ -412,6 +412,16 @@ class FboSalesWatch(Base):
     added_at     = Column(DateTime, default=datetime.now)
 
 
+class FboDailyDigest(Base):
+    """Накопительный список полностью распроданных FBO-позиций за текущие сутки.
+    Одна запись на дату — Telegram-сообщение с этим id редактируется при каждом новом распроданном товаре."""
+    __tablename__ = "fbo_daily_digest"
+
+    date       = Column(String, primary_key=True)   # "YYYY-MM-DD" (Europe/Moscow)
+    message_id = Column(Integer, nullable=True)
+    items_json = Column(Text, nullable=False, default="[]")
+
+
 class SimaOrderHistory(Base):
     """История заказов Сима-Ленд."""
     __tablename__ = "sima_order_history"
