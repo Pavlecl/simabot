@@ -1105,6 +1105,22 @@ def parse_wb_to_ozon_workbook(file_bytes: bytes) -> list[dict]:
             if m["field_kind"] == "base_images":
                 base[m["field_key"]] = [u.strip() for u in text.split(";") if u.strip()]
                 continue
+            if m["field_key"] == "vat":
+                vat_text = text or "0"
+                try:
+                    vat_num = float(vat_text.replace(",", "."))
+                except ValueError:
+                    pre_errors.append(f"«{m['col_header']}»: не число ({text!r})")
+                    base["vat"] = "0"
+                    continue
+                # Ozon ожидает долю (0.2 = 20%), а не проценты — если ввели "20", переводим в 0.2
+                if vat_num > 1:
+                    vat_num = round(vat_num / 100, 2)
+                if not (0 <= vat_num <= 1):
+                    pre_errors.append(f"«{m['col_header']}»: ставка НДС должна быть в диапазоне 0–100% (введено {text!r})")
+                    vat_num = 0
+                base["vat"] = str(vat_num)
+                continue
             base[m["field_key"]] = text
 
         if not vendor_code:
