@@ -201,9 +201,11 @@ async function runCompare() {
   }
 }
 
-// Кеш "vendor_code -> нужен ли Честный знак" — проверяем только выбранные
-// (отмеченные чекбоксом) товары, а не весь список сравнения (там могут быть
-// десятки тысяч позиций), и не повторяем запрос для уже проверенных.
+// Кеш "vendor_code -> нужен ли Честный знак". Проверяем не весь список сравнения
+// (там могут быть десятки тысяч позиций) — либо видимые строки при активном
+// фильтре по категории (список уже небольшой), либо явно отмеченные чекбоксом.
+// Общий предохранитель по размеру — на случай очень крупной категории.
+const MARKING_CHECK_LIMIT = 300;
 let _markingCache = {};
 let _markingTimer = null;
 
@@ -212,10 +214,21 @@ function scheduleMarkingCheck() {
   _markingTimer = setTimeout(runMarkingCheck, 400);
 }
 
+function getMarkingTargetRows() {
+  if (_activeCat !== null) {
+    return [...document.querySelectorAll('[id^="row-"]')].filter(row => row.style.display !== 'none');
+  }
+  return [...document.querySelectorAll('[id^="chk-"]:checked')].map(c => c.closest('tr'));
+}
+
 async function runMarkingCheck() {
-  const checkedEls = [...document.querySelectorAll('[id^="chk-"]:checked')];
+  const targets = getMarkingTargetRows()
+    .map(row => ({i: row.id.replace('row-', ''), vc: document.getElementById('chk-' + row.id.replace('row-', ''))?.dataset.vc}))
+    .filter(t => t.vc);
+  if (!targets.length || targets.length > MARKING_CHECK_LIMIT) return;
+
   const todoVcs = [...new Set(
-    checkedEls.map(c => c.dataset.vc).filter(vc => !(vc in _markingCache))
+    targets.map(t => t.vc).filter(vc => !(vc in _markingCache))
   )];
 
   if (todoVcs.length) {
@@ -234,9 +247,8 @@ async function runMarkingCheck() {
     todoVcs.forEach(vc => { if (!(vc in _markingCache)) _markingCache[vc] = false; });
   }
 
-  checkedEls.forEach(c => {
-    if (!_markingCache[c.dataset.vc]) return;
-    const i = c.id.replace('chk-', '');
+  targets.forEach(({i, vc}) => {
+    if (!_markingCache[vc]) return;
     const cell = document.getElementById('mark-' + i);
     if (cell && !cell.innerHTML) {
       cell.innerHTML = ' <span class="marking-badge" title="Категория требует обязательную маркировку «Честный знак» — решите сами, включать ли товар">⚠ Честный знак</span>';
@@ -278,6 +290,7 @@ function applyFilter() {
   const allChecked = visChks.length > 0 && visChks.every(c => c.checked);
   document.getElementById('check-all').checked = allChecked;
   updateSelCount();
+  scheduleMarkingCheck();
 }
 
 function renderResults(data) {
