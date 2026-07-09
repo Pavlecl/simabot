@@ -864,7 +864,10 @@ async def _build_wb_ozon_draft(
             value_text = ""
 
         if is_req and not value_text:
-            issues.append(f"обязательный атрибут «{attr_name}» не заполнен")
+            if _is_marking_attr(attr_name):
+                issues.append(f"⚠ Нужен Честный знак! Заполните «{attr_name}» (true/false) перед загрузкой")
+            else:
+                issues.append(f"обязательный атрибут «{attr_name}» не заполнен")
 
         attr_drafts.append(WbOzonAttrDraft(
             id=attr_id, name=attr_name, attribute_type=dict_type,

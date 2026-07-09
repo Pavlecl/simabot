@@ -192,7 +192,6 @@ async function runCompare() {
       renderResults(_compareData);
       renderCatFilter(_compareData);
       document.getElementById('results-body').style.display = '';
-      checkMarking(_compareData);
     }
   } catch(e) {
     alert('Ошибка: ' + e.message);
@@ -202,23 +201,47 @@ async function runCompare() {
   }
 }
 
-async function checkMarking(data) {
-  try {
-    const r = await fetch('/api/wb-to-ozon/check-marking', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ozon_account_id: _ozonAccountId, vendor_codes: data.map(d => d.vendor_code)}),
-    });
-    if (!r.ok) return;
-    const flags = await r.json();
-    data.forEach((item, i) => {
-      if (!flags[item.vendor_code]) return;
-      const cell = document.getElementById('mark-' + i);
-      if (cell) cell.innerHTML = ' <span class="marking-badge" title="Категория требует обязательную маркировку «Честный знак» — решите сами, включать ли товар">⚠ Честный знак</span>';
-    });
-  } catch(e) {
-    // фоновая подсказка, не критично для основного сценария
+// Кеш "vendor_code -> нужен ли Честный знак" — проверяем только выбранные
+// (отмеченные чекбоксом) товары, а не весь список сравнения (там могут быть
+// десятки тысяч позиций), и не повторяем запрос для уже проверенных.
+let _markingCache = {};
+let _markingTimer = null;
+
+function scheduleMarkingCheck() {
+  clearTimeout(_markingTimer);
+  _markingTimer = setTimeout(runMarkingCheck, 400);
+}
+
+async function runMarkingCheck() {
+  const checkedEls = [...document.querySelectorAll('[id^="chk-"]:checked')];
+  const todoVcs = [...new Set(
+    checkedEls.map(c => c.dataset.vc).filter(vc => !(vc in _markingCache))
+  )];
+
+  if (todoVcs.length) {
+    try {
+      const r = await fetch('/api/wb-to-ozon/check-marking', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ozon_account_id: _ozonAccountId, vendor_codes: todoVcs}),
+      });
+      if (r.ok) {
+        Object.assign(_markingCache, await r.json());
+      }
+    } catch(e) {
+      // фоновая подсказка, не критично для основного сценария
+    }
+    todoVcs.forEach(vc => { if (!(vc in _markingCache)) _markingCache[vc] = false; });
   }
+
+  checkedEls.forEach(c => {
+    if (!_markingCache[c.dataset.vc]) return;
+    const i = c.id.replace('chk-', '');
+    const cell = document.getElementById('mark-' + i);
+    if (cell && !cell.innerHTML) {
+      cell.innerHTML = ' <span class="marking-badge" title="Категория требует обязательную маркировку «Честный знак» — решите сами, включать ли товар">⚠ Честный знак</span>';
+    }
+  });
 }
 
 function renderCatFilter(data) {
@@ -308,6 +331,7 @@ function onCheckChange() {
   const visChks = [...document.querySelectorAll('[id^="chk-"]')].filter(c => c.closest('tr').style.display !== 'none');
   document.getElementById('check-all').checked = visChks.length > 0 && visChks.every(c => c.checked);
   updateSelCount();
+  scheduleMarkingCheck();
 }
 
 function updateSelCount() {
