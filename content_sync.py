@@ -386,6 +386,25 @@ def _to_ozon_boolean(text: str) -> Optional[str]:
     return None
 
 
+# Атрибуты обязательной маркировки («Честный знак») — WB не даёт для них аналога,
+# это юридически значимое решение, которое продавец должен принять сам.
+_MARKING_KEYWORDS = ("маркиров", "честный знак")
+
+
+def _is_marking_attr(attr_name: str) -> bool:
+    low = (attr_name or "").lower()
+    return any(k in low for k in _MARKING_KEYWORDS)
+
+
+def _classify_error_messages(messages: list[str]) -> str:
+    """'marking', если ВСЕ сообщения об ошибке касаются обязательной маркировки
+    («Честный знак») — тогда это не баг, а решение, которое должен принять продавец;
+    иначе — обычная 'error'."""
+    if messages and all(_is_marking_attr(m) for m in messages):
+        return "marking"
+    return "error"
+
+
 # ─────────────────────────────────────────────────
 # Работа с WbAccount в БД
 # ─────────────────────────────────────────────────
@@ -1052,6 +1071,44 @@ async def build_wb_to_ozon_template(ozon_account_id: int, vendor_codes: list[str
     return buf.getvalue()
 
 
+async def check_marking_required(ozon_account_id: int, vendor_codes: list[str]) -> dict[str, bool]:
+    """Для каждого vendor_code определяет ДО скачивания шаблона, есть ли в его
+    категории Ozon обязательный атрибут маркировки («Честный знак») — чтобы
+    продавец мог сразу увидеть предупреждение и сам решить, включать ли товар
+    в перенос, а не узнавать об этом только после заполнения всего шаблона."""
+    from database import WbProductCache
+
+    headers = await _ozon_headers_for_account(ozon_account_id)
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(WbProductCache).where(WbProductCache.vendor_code.in_(vendor_codes)))
+        cache = {p.vendor_code: p for p in r.scalars().all()}
+
+    cat_marking_cache: dict[tuple[int, int], bool] = {}
+    result: dict[str, bool] = {}
+
+    async with aiohttp.ClientSession() as session:
+        sem = asyncio.Semaphore(6)
+
+        async def _one(vc: str) -> None:
+            async with sem:
+                p = cache.get(vc)
+                cat_query = (getattr(p, "subject_name", None) or (p.name if p else None) or vc) if p else vc
+                desc_cat_id, type_id = await _ozon_search_category(session, headers, cat_query)
+                if not desc_cat_id:
+                    result[vc] = False
+                    return
+                key = (desc_cat_id, type_id)
+                if key not in cat_marking_cache:
+                    req_attrs = await _ozon_category_attrs(session, headers, desc_cat_id, type_id, required_only=True)
+                    cat_marking_cache[key] = any(_is_marking_attr(a.get("name", "")) for a in req_attrs)
+                result[vc] = cat_marking_cache[key]
+
+        await asyncio.gather(*[_one(vc) for vc in vendor_codes])
+
+    return result
+
+
 def parse_wb_to_ozon_workbook(file_bytes: bytes) -> list[dict]:
     """Читает заполненный пользователем шаблон (без сетевых вызовов).
     Возвращает список строк: {vendor_code, base:{...}, attributes:[...], pre_errors:[...]}.
@@ -1119,7 +1176,13 @@ def parse_wb_to_ozon_workbook(file_bytes: bytes) -> list[dict]:
                         "is_required": m["is_required"],
                     })
                 elif m["is_required"]:
-                    pre_errors.append(f"обязательный атрибут «{m['col_header'].rstrip('*')}» не заполнен")
+                    col_clean = m["col_header"].rstrip("*")
+                    if _is_marking_attr(col_clean):
+                        pre_errors.append(
+                            f"⚠ Нужен Честный знак! Заполните «{col_clean}» (true/false) в XLS и загрузите заново"
+                        )
+                    else:
+                        pre_errors.append(f"обязательный атрибут «{col_clean}» не заполнен")
                 continue
             if m["field_kind"] == "base_int":
                 try:
@@ -1216,7 +1279,10 @@ async def submit_wb_to_ozon_import(ozon_account_id: int, rows: list[dict]) -> No
     results: dict[str, dict] = {}
     for row in rows:
         if row["pre_errors"]:
-            results[row["vendor_code"]] = {"status": "error", "message": "; ".join(row["pre_errors"])}
+            results[row["vendor_code"]] = {
+                "status": _classify_error_messages(row["pre_errors"]),
+                "message": "; ".join(row["pre_errors"]),
+            }
         else:
             results[row["vendor_code"]] = {"status": "pending", "message": ""}
     _wb_to_ozon_import_status = {"running": True, "total": len(rows), "results": dict(results), "error": ""}
@@ -1351,7 +1417,9 @@ async def submit_wb_to_ozon_import(ozon_account_id: int, rows: list[dict]) -> No
                         notes = [n for n in (results.get(vc, {}).get("message", ""), st["error_text"]) if n]
                         results[vc] = {"status": "ok", "message": "; ".join(notes)}
                     else:
-                        results[vc] = {"status": "error", "message": st["error_text"] or "Ozon отклонил карточку"}
+                        err_text = st["error_text"] or "Ozon отклонил карточку"
+                        err_parts = [p.strip() for p in err_text.split(";") if p.strip()]
+                        results[vc] = {"status": _classify_error_messages(err_parts), "message": err_text}
                 if remaining:
                     still_pending.append({"task_id": task["task_id"], "vendor_codes": remaining})
             pending_tasks = still_pending

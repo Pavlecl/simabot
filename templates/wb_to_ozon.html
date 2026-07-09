@@ -40,6 +40,8 @@
 .result-ok{color:#22c55e}
 .result-err{color:#ef4444}
 .result-warn{color:#f59e0b;font-size:11px;margin-left:8px}
+.result-marking{color:#f59e0b;font-weight:bold}
+.marking-badge{display:inline-block;margin-left:6px;padding:1px 6px;font-size:10px;font-weight:bold;background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.4);border-radius:3px;white-space:nowrap}
 
 .loader-overlay{display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:12px;color:var(--text-dim);font-size:12px}
 .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
@@ -190,12 +192,32 @@ async function runCompare() {
       renderResults(_compareData);
       renderCatFilter(_compareData);
       document.getElementById('results-body').style.display = '';
+      checkMarking(_compareData);
     }
   } catch(e) {
     alert('Ошибка: ' + e.message);
   } finally {
     document.getElementById('compare-loader').style.display = 'none';
     document.getElementById('btn-compare').disabled = false;
+  }
+}
+
+async function checkMarking(data) {
+  try {
+    const r = await fetch('/api/wb-to-ozon/check-marking', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: _ozonAccountId, vendor_codes: data.map(d => d.vendor_code)}),
+    });
+    if (!r.ok) return;
+    const flags = await r.json();
+    data.forEach((item, i) => {
+      if (!flags[item.vendor_code]) return;
+      const cell = document.getElementById('mark-' + i);
+      if (cell) cell.innerHTML = ' <span class="marking-badge" title="Категория требует обязательную маркировку «Честный знак» — решите сами, включать ли товар">⚠ Честный знак</span>';
+    });
+  } catch(e) {
+    // фоновая подсказка, не критично для основного сценария
   }
 }
 
@@ -252,7 +274,7 @@ function renderResults(data) {
         <span class="art-chip" onclick="event.stopPropagation();copyArt(this,'${x(item.vendor_code)}')">${x(item.vendor_code)}</span>
       </td>
       <td><span class="item-name" title="${x(item.name)}">${x(item.name) || '—'}</span></td>
-      <td class="cat-cell" title="${x(item.subject_name)}">${x(item.subject_name) || '—'}</td>
+      <td class="cat-cell" title="${x(item.subject_name)}">${x(item.subject_name) || '—'}<span id="mark-${i}"></span></td>
       <td class="orders-num ${!item.orders_week ? 'zero' : ''}">${item.orders_week ?? '—'}</td>
       <td class="orders-num orders-month ${!item.orders_month ? 'zero' : ''}">${item.orders_month ?? '—'}</td>
     </tr>
@@ -372,17 +394,19 @@ function renderImportProgress(s) {
   const entries = Object.entries(s.results || {});
   const ok      = entries.filter(([,v]) => v.status === 'ok').length;
   const err     = entries.filter(([,v]) => v.status === 'error').length;
+  const marking = entries.filter(([,v]) => v.status === 'marking').length;
   const unknown = entries.filter(([,v]) => v.status === 'unknown').length;
   const pending = entries.filter(([,v]) => v.status === 'pending').length;
 
-  const statusIcon = { ok: '✓ Создана', error: '✗', unknown: '⚠ Не подтверждено', pending: '⏳ В обработке...' };
-  const statusCls  = { ok: 'result-ok', error: 'result-err', unknown: 'result-warn', pending: '' };
+  const statusIcon = { ok: '✓ Создана', error: '✗', unknown: '⚠ Не подтверждено', pending: '⏳ В обработке...', marking: '⚠ Нужен Честный знак!' };
+  const statusCls  = { ok: 'result-ok', error: 'result-err', unknown: 'result-warn', pending: '', marking: 'result-marking' };
 
   document.getElementById('create-results-list').innerHTML = `
     <div style="padding:8px 16px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border)">
       ${s.running ? '⏳ Импорт выполняется...' : '✅ Импорт завершён'} &nbsp;
       Создано: <b style="color:#22c55e">${ok}</b> &nbsp;
       Ошибок: <b style="color:#ef4444">${err}</b>
+      ${marking ? ` &nbsp; Нужен Честный знак: <b style="color:#f59e0b">${marking}</b>` : ''}
       ${unknown ? ` &nbsp; Не подтверждено: <b style="color:#f59e0b">${unknown}</b>` : ''}
       ${pending ? ` &nbsp; В очереди: <b>${pending}</b>` : ''}
       ${s.error ? `<div style="color:#ef4444;margin-top:4px">${x(s.error)}</div>` : ''}
