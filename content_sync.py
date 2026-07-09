@@ -370,6 +370,22 @@ async def _validate_wb_images(urls: list[str]) -> list[str]:
     return [u for u in urls if u]
 
 
+_BOOL_TRUE_VALUES  = {"true", "да", "yes", "1", "есть", "имеется", "истина"}
+_BOOL_FALSE_VALUES = {"false", "нет", "no", "0", "отсутствует", "ложь"}
+
+
+def _to_ozon_boolean(text: str) -> Optional[str]:
+    """Приводит произвольный текст WB к строгому true/false, которого ждёт Ozon
+    для атрибутов типа Boolean. Если распознать не удалось — возвращает None
+    (лучше не отправлять атрибут вовсе, чем отправить непонятный Ozon текст)."""
+    t = (text or "").strip().lower()
+    if t in _BOOL_TRUE_VALUES:
+        return "true"
+    if t in _BOOL_FALSE_VALUES:
+        return "false"
+    return None
+
+
 # ─────────────────────────────────────────────────
 # Работа с WbAccount в БД
 # ─────────────────────────────────────────────────
@@ -643,7 +659,12 @@ async def _find_ozon_dict_value(
 ) -> Optional[int]:
     """Ищет dictionary_value_id в словаре атрибута Ozon по строке.
     Сначала пробует эндпоинт поиска, иначе перебирает первые страницы."""
-    # Пробуем search-эндпоинт (если существует)
+    # Пробуем search-эндпоинт (если существует). Он ищет нечётко (по подстроке/похожести),
+    # поэтому первый результат может оказаться близким, но НЕ тем же значением
+    # (например, "Красный" вместо "Красный металлик") — это и приводило к
+    # error_attribute_values_out_of_range на стороне Ozon. Принимаем результат
+    # только при точном совпадении текста, иначе идём в постраничный fallback.
+    search_lower = search_val.lower().strip()
     try:
         async with session.post(
             "https://api-seller.ozon.ru/v3/category/attribute/values/search",
@@ -653,13 +674,13 @@ async def _find_ozon_dict_value(
             if resp.status == 200:
                 data = await resp.json(content_type=None)
                 results = data.get("result", [])
-                if results:
-                    return results[0]["id"]
+                for r in results:
+                    if r.get("value", "").lower().strip() == search_lower:
+                        return r["id"]
     except Exception:
         pass
 
     # Fallback: перебираем словарь постранично (max 5 страниц по 1000)
-    search_lower = search_val.lower().strip()
     last_id = 0
     for _ in range(5):
         try:
@@ -801,6 +822,8 @@ async def _build_wb_ozon_draft(
 
         if dict_type in ("Option", "Tree"):
             value_text = wb_val
+        elif val_type == "Boolean":
+            value_text = _to_ozon_boolean(wb_val) or ""
         elif val_type in ("Integer", "Float"):
             nums = _re.findall(r'\d+(?:\.\d+)?', wb_val)
             value_text = nums[0] if nums else ""
@@ -913,6 +936,9 @@ async def _build_wb_ozon_draft(
         issues=issues,
     )
 
+
+# Ставки НДС, которые принимает Ozon (доля от цены)
+_OZON_VALID_VAT_RATES: set[float] = {0.0, 0.05, 0.07, 0.1, 0.2}
 
 # Колонки видимого листа: (заголовок, ключ поля, вид)
 # вид: "base" (строка), "base_int" (число), "base_images" (список ссылок через ;), "reference" (справочно, не уходит в Ozon)
@@ -1116,8 +1142,11 @@ def parse_wb_to_ozon_workbook(file_bytes: bytes) -> list[dict]:
                 # Ozon ожидает долю (0.2 = 20%), а не проценты — если ввели "20", переводим в 0.2
                 if vat_num > 1:
                     vat_num = round(vat_num / 100, 2)
-                if not (0 <= vat_num <= 1):
-                    pre_errors.append(f"«{m['col_header']}»: ставка НДС должна быть в диапазоне 0–100% (введено {text!r})")
+                if not any(abs(vat_num - r) < 0.001 for r in _OZON_VALID_VAT_RATES):
+                    pre_errors.append(
+                        f"«{m['col_header']}»: ставка НДС {text!r} не поддерживается Ozon — "
+                        f"допустимые значения: 0, 5, 7, 10, 20 (%)"
+                    )
                     vat_num = 0
                 base["vat"] = str(vat_num)
                 continue
@@ -1228,6 +1257,12 @@ async def submit_wb_to_ozon_import(ozon_account_id: int, rows: list[dict]) -> No
                                             "values": [{"dictionary_value_id": dict_val_id, "value": a["value_text"]}]})
                     else:
                         notes.append(f"атрибут «{a['id']}»: значение «{a['value_text']}» не найдено в справочнике Ozon, не отправлено")
+                elif a["val_type"] == "Boolean":
+                    bool_val = _to_ozon_boolean(a["value_text"])
+                    if bool_val:
+                        ozon_attrs.append({"id": a["id"], "complex_id": 0, "values": [{"value": bool_val}]})
+                    else:
+                        notes.append(f"атрибут «{a['id']}»: значение «{a['value_text']}» не распознано как true/false, не отправлено")
                 elif a["val_type"] in ("Integer", "Float"):
                     ozon_attrs.append({"id": a["id"], "complex_id": 0, "values": [{"value": a["value_text"]}]})
                 else:
