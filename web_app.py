@@ -4169,7 +4169,7 @@ async def api_sima_check_cart(request: Request, file: UploadFile = File(...)):
         if "артикул" in row_content and ("количество" in row_content or "кол-во" in row_content):
             header_row_index = i
             break
-        if sima_file_order_number is None:
+        if sima_file_order_number is None and "заказ" in row_content:
             for v in row:
                 if isinstance(v, (int, float)) and not pd.isna(v) and v > 0:
                     sima_file_order_number = str(int(v))
