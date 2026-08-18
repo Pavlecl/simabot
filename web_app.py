@@ -3260,12 +3260,17 @@ async def api_stock_manage_import_google(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка чтения Google Sheets: {e}")
 
+    # Канонический регистр offer_id берём из products (как в Ozon), чтобы не плодить
+    # дубли из-за расхождения регистра в Google Sheets (Ozon матчит offer_id по регистру)
+    products_r = await db.execute(select(Product.offer_id))
+    canonical_by_lower = {oid.lower(): oid for (oid,) in products_r.fetchall()}
+
     added = 0
     skipped = 0
     for row in rows[2:]:
         if not row or not row[0].strip():
             continue
-        offer_id = row[0].strip()
+        offer_id = canonical_by_lower.get(row[0].strip().lower(), row[0].strip())
         stmt = pg_insert(StockItem).values(
             offer_id=offer_id,
             name="",
@@ -3402,11 +3407,15 @@ async def api_stock_manage_import(
     content = await file.read()
     wb = openpyxl.load_workbook(sio.BytesIO(content))
     ws = wb.active
+
+    products_r = await db.execute(select(Product.offer_id))
+    canonical_by_lower = {oid.lower(): oid for (oid,) in products_r.fetchall()}
+
     added = 0
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or not row[0]:
             continue
-        offer_id = str(row[0]).strip()
+        offer_id = canonical_by_lower.get(str(row[0]).strip().lower(), str(row[0]).strip())
         name = str(row[1]).strip() if row[1] else ""
         enabled = str(row[2]).strip().lower() in ("да", "yes", "+", "1", "true") if len(row) > 2 and row[2] else False
         stmt = pg_insert(StockItem).values(
