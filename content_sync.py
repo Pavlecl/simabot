@@ -805,7 +805,16 @@ async def _build_wb_ozon_draft(
     if not images:
         issues.append("нет фото")
 
-    cat_query = (getattr(p, "subject_name", None) or p.name or vc) if p else vc
+    # Категория WB (subject_name) задаёт общее направление поиска (её первое слово
+    # становится "главным" токеном), а полное название товара добавляет уточняющие
+    # слова — без него все товары одной широкой категории WB (например, все «Клей»:
+    # канцелярский, строительный, автомобильный) получали одну и ту же, по сути
+    # случайную категорию Ozon, потому что subject_name сам по себе неразличим между
+    # похожими подкатегориями Ozon.
+    cat_query = " ".join(filter(None, [
+        getattr(p, "subject_name", None) if p else None,
+        p.name if p else None,
+    ])) or vc
     desc_cat_id, type_id = await _ozon_search_category(session, headers, cat_query)
     category_name = ""
     if not desc_cat_id:
