@@ -41,7 +41,6 @@
 .result-err{color:#ef4444}
 .result-warn{color:#f59e0b;font-size:11px;margin-left:8px}
 .result-marking{color:#f59e0b;font-weight:bold}
-.marking-badge{display:inline-block;margin-left:6px;padding:1px 6px;font-size:10px;font-weight:bold;background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.4);border-radius:3px;white-space:nowrap}
 
 .loader-overlay{display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:12px;color:var(--text-dim);font-size:12px}
 .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
@@ -107,6 +106,12 @@
           <option value="">Все категории</option>
         </select>
         <span id="cat-filtered-count" style="font-size:11px;color:var(--text-dim)"></span>
+        <span class="cat-label" style="margin-left:auto">Сортировка:</span>
+        <select class="cat-select" id="sort-select" style="min-width:170px" onchange="applySort(this.value)">
+          <option value="">По категориям</option>
+          <option value="vc-asc">Артикул А→Я</option>
+          <option value="vc-desc">Артикул Я→А</option>
+        </select>
       </div>
 
       <div style="overflow-x:auto">
@@ -161,6 +166,7 @@
 
 <script>
 let _compareData = [];
+let _originalData = []; // порядок «как есть» с сервера — для сброса сортировки
 let _ozonAccountId = null;
 let _activeCat = null;
 
@@ -169,6 +175,8 @@ async function runCompare() {
   const ozonId = document.getElementById('ozon-account').value;
   _ozonAccountId = ozonId;
   _activeCat = null;
+  const sortSel = document.getElementById('sort-select');
+  if (sortSel) sortSel.value = '';
 
   document.getElementById('results-section').style.display = '';
   document.getElementById('compare-loader').style.display = 'flex';
@@ -185,6 +193,7 @@ async function runCompare() {
     });
     if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Ошибка'); }
     _compareData = await r.json();
+    _originalData = [..._compareData];
 
     if (!_compareData.length) {
       document.getElementById('empty-state').style.display = '';
@@ -201,64 +210,8 @@ async function runCompare() {
   }
 }
 
-// Кеш "vendor_code -> нужен ли Честный знак". Проверяем не весь список сравнения
-// (там могут быть десятки тысяч позиций) — либо видимые строки при активном
-// фильтре по категории (список уже небольшой), либо явно отмеченные чекбоксом.
-// Общий предохранитель по размеру — на случай очень крупной категории.
-const MARKING_CHECK_LIMIT = 300;
-let _markingCache = {};
-let _markingTimer = null;
-
-function scheduleMarkingCheck() {
-  clearTimeout(_markingTimer);
-  _markingTimer = setTimeout(runMarkingCheck, 400);
-}
-
-function getMarkingTargetRows() {
-  if (_activeCat !== null) {
-    return [...document.querySelectorAll('[id^="row-"]')].filter(row => row.style.display !== 'none');
-  }
-  return [...document.querySelectorAll('[id^="chk-"]:checked')].map(c => c.closest('tr'));
-}
-
-async function runMarkingCheck() {
-  const targets = getMarkingTargetRows()
-    .map(row => ({i: row.id.replace('row-', ''), vc: document.getElementById('chk-' + row.id.replace('row-', ''))?.dataset.vc}))
-    .filter(t => t.vc);
-  if (!targets.length || targets.length > MARKING_CHECK_LIMIT) return;
-
-  const todoVcs = [...new Set(
-    targets.map(t => t.vc).filter(vc => !(vc in _markingCache))
-  )];
-
-  if (todoVcs.length) {
-    try {
-      const r = await fetch('/api/wb-to-ozon/check-marking', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ozon_account_id: _ozonAccountId, vendor_codes: todoVcs}),
-      });
-      if (r.ok) {
-        Object.assign(_markingCache, await r.json());
-      }
-    } catch(e) {
-      // фоновая подсказка, не критично для основного сценария
-    }
-    todoVcs.forEach(vc => { if (!(vc in _markingCache)) _markingCache[vc] = false; });
-  }
-
-  targets.forEach(({i, vc}) => {
-    if (!_markingCache[vc]) return;
-    const cell = document.getElementById('mark-' + i);
-    if (cell && !cell.innerHTML) {
-      cell.innerHTML = ' <span class="marking-badge" title="Категория требует обязательную маркировку «Честный знак» — решите сами, включать ли товар">⚠ Честный знак</span>';
-    }
-  });
-}
-
 function renderCatFilter(data) {
   const cats = [...new Set(data.map(d => d.subject_name || '').filter(Boolean))].sort();
-  if (!cats.length) return;
 
   const sel = document.getElementById('cat-select');
   sel.innerHTML = `<option value="">Все категории (${data.length})</option>` +
@@ -266,11 +219,33 @@ function renderCatFilter(data) {
       const cnt = data.filter(d => (d.subject_name || '') === c).length;
       return `<option value="${x(c)}">${x(c)} (${cnt})</option>`;
     }).join('');
+  // Показываем панель всегда (сортировка доступна независимо от наличия категорий)
   document.getElementById('cat-filter-bar').style.display = 'flex';
 }
 
 function filterCat(cat) {
   _activeCat = cat || null;
+  applyFilter();
+}
+
+function currentSelectedVcs() {
+  return new Set([...document.querySelectorAll('[id^="chk-"]:checked')].map(c => c.dataset.vc));
+}
+
+function applySort(mode) {
+  const selected = currentSelectedVcs();
+
+  if (mode === 'vc-asc' || mode === 'vc-desc') {
+    _compareData = [..._compareData].sort((a, b) => {
+      const cmp = String(a.vendor_code || '').localeCompare(String(b.vendor_code || ''), 'ru', {numeric: true, sensitivity: 'base'});
+      return mode === 'vc-desc' ? -cmp : cmp;
+    });
+  } else {
+    _compareData = [..._originalData];
+  }
+
+  renderResults(_compareData);
+  document.querySelectorAll('[id^="chk-"]').forEach(c => { c.checked = selected.has(c.dataset.vc); });
   applyFilter();
 }
 
@@ -290,7 +265,6 @@ function applyFilter() {
   const allChecked = visChks.length > 0 && visChks.every(c => c.checked);
   document.getElementById('check-all').checked = allChecked;
   updateSelCount();
-  scheduleMarkingCheck();
 }
 
 function renderResults(data) {
@@ -310,7 +284,7 @@ function renderResults(data) {
         <span class="art-chip" onclick="event.stopPropagation();copyArt(this,'${x(item.vendor_code)}')">${x(item.vendor_code)}</span>
       </td>
       <td><span class="item-name" title="${x(item.name)}">${x(item.name) || '—'}</span></td>
-      <td class="cat-cell" title="${x(item.subject_name)}">${x(item.subject_name) || '—'}<span id="mark-${i}"></span></td>
+      <td class="cat-cell" title="${x(item.subject_name)}">${x(item.subject_name) || '—'}</td>
       <td class="orders-num ${!item.orders_week ? 'zero' : ''}">${item.orders_week ?? '—'}</td>
       <td class="orders-num orders-month ${!item.orders_month ? 'zero' : ''}">${item.orders_month ?? '—'}</td>
     </tr>
@@ -344,7 +318,6 @@ function onCheckChange() {
   const visChks = [...document.querySelectorAll('[id^="chk-"]')].filter(c => c.closest('tr').style.display !== 'none');
   document.getElementById('check-all').checked = visChks.length > 0 && visChks.every(c => c.checked);
   updateSelCount();
-  scheduleMarkingCheck();
 }
 
 function updateSelCount() {

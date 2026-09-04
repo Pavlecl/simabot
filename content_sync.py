@@ -644,7 +644,12 @@ async def _ozon_search_category(session: aiohttp.ClientSession, headers: dict, n
                     else:
                         break
                 if common >= 4:
-                    raw += common
+                    # Полное совпадение слова ("клей"="клей") весит вдвое больше, чем просто
+                    # общий префикс ("клей" в начале "клейкая") — иначе короткие слова вроде
+                    # "клей" одинаково хорошо "матчатся" и с "клей канцелярский", и с "клейкая
+                    # лента", и решает уже не смысл, а побочный тайбрейкер по длине названия
+                    # категории (баг: "Клей" силикатный уезжал в категорию "клейкая лента").
+                    raw += common * (2 if token == cat_word else 1)
                     matched_cat_words += 1
                     if token == first_token:
                         first_token_matched = True
@@ -863,11 +868,23 @@ async def _build_wb_ozon_draft(
         else:
             value_text = ""
 
+        if is_req and not value_text and val_type == "Boolean" and _is_marking_attr(attr_name):
+            # Ozon требует явный true/false в этом поле практически для ЛЮБОЙ категории —
+            # это стандартный вопрос анкеты карточки, а не признак того, что товар реально
+            # подлежит обязательной цифровой маркировке «Честный знак» (проверено на живых
+            # категориях: клей, скотч, мебель, обувь — везде is_required=True одинаково).
+            # WB это поле не отдаёт вовсе. Для подавляющего большинства товаров ответ «нет»,
+            # поэтому подставляем false, а не блокируем перенос предупреждением на каждой
+            # карточке — вместо этого мягкая заметка на случай, если товар всё же маркируется.
+            value_text = "false"
+            issues.append(
+                f"ℹ «{attr_name}»: заполнено «false» по умолчанию (не подлежит маркировке). "
+                f"Если товар входит в перечень обязательной маркировки «Честный знак» — "
+                f"измените на true перед загрузкой"
+            )
+
         if is_req and not value_text:
-            if _is_marking_attr(attr_name):
-                issues.append(f"⚠ Нужен Честный знак! Заполните «{attr_name}» (true/false) перед загрузкой")
-            else:
-                issues.append(f"обязательный атрибут «{attr_name}» не заполнен")
+            issues.append(f"обязательный атрибут «{attr_name}» не заполнен")
 
         attr_drafts.append(WbOzonAttrDraft(
             id=attr_id, name=attr_name, attribute_type=dict_type,
@@ -1072,44 +1089,6 @@ async def build_wb_to_ozon_template(ozon_account_id: int, vendor_codes: list[str
     buf = _io.BytesIO()
     wb_book.save(buf)
     return buf.getvalue()
-
-
-async def check_marking_required(ozon_account_id: int, vendor_codes: list[str]) -> dict[str, bool]:
-    """Для каждого vendor_code определяет ДО скачивания шаблона, есть ли в его
-    категории Ozon обязательный атрибут маркировки («Честный знак») — чтобы
-    продавец мог сразу увидеть предупреждение и сам решить, включать ли товар
-    в перенос, а не узнавать об этом только после заполнения всего шаблона."""
-    from database import WbProductCache
-
-    headers = await _ozon_headers_for_account(ozon_account_id)
-
-    async with AsyncSessionLocal() as db:
-        r = await db.execute(select(WbProductCache).where(WbProductCache.vendor_code.in_(vendor_codes)))
-        cache = {p.vendor_code: p for p in r.scalars().all()}
-
-    cat_marking_cache: dict[tuple[int, int], bool] = {}
-    result: dict[str, bool] = {}
-
-    async with aiohttp.ClientSession() as session:
-        sem = asyncio.Semaphore(6)
-
-        async def _one(vc: str) -> None:
-            async with sem:
-                p = cache.get(vc)
-                cat_query = (getattr(p, "subject_name", None) or (p.name if p else None) or vc) if p else vc
-                desc_cat_id, type_id = await _ozon_search_category(session, headers, cat_query)
-                if not desc_cat_id:
-                    result[vc] = False
-                    return
-                key = (desc_cat_id, type_id)
-                if key not in cat_marking_cache:
-                    req_attrs = await _ozon_category_attrs(session, headers, desc_cat_id, type_id, required_only=True)
-                    cat_marking_cache[key] = any(_is_marking_attr(a.get("name", "")) for a in req_attrs)
-                result[vc] = cat_marking_cache[key]
-
-        await asyncio.gather(*[_one(vc) for vc in vendor_codes])
-
-    return result
 
 
 def parse_wb_to_ozon_workbook(file_bytes: bytes) -> list[dict]:

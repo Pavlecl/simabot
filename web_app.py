@@ -4040,17 +4040,6 @@ async def api_wb_to_ozon_compare(request: Request, user: dict = Depends(require_
     return result
 
 
-@app.post("/api/wb-to-ozon/check-marking")
-async def api_wb_to_ozon_check_marking(request: Request, user: dict = Depends(require_any_role)):
-    from content_sync import check_marking_required
-    body = await request.json()
-    ozon_account_id = int(body["ozon_account_id"])
-    vendor_codes    = list(body["vendor_codes"])
-    if not vendor_codes:
-        return {}
-    return await check_marking_required(ozon_account_id, vendor_codes)
-
-
 @app.post("/api/wb-to-ozon/export-template")
 async def api_wb_to_ozon_export_template(request: Request, user: dict = Depends(require_any_role)):
     from content_sync import build_wb_to_ozon_template
