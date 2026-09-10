@@ -86,7 +86,7 @@ function renderLastCycle(lc) {
       <span class="${delta < 0 ? '' : 'muted'}">(${delta > 0 ? '+' : ''}${nf(delta)})</span></div>
     <div style="margin-top:4px">записано изменений: <b>${lc.written}</b>
       (вкл ${lc.turned_on}, обнул ${lc.turned_off}, изм ${lc.changed}) · план ${lc.planned}</div>
-    <div style="margin-top:4px">вычтено по заказам: ${lc.orders_subtracted} из ${lc.orders_total}</div>
+    <div style="margin-top:4px">вычтено заказов WB: <b>${lc.orders_subtracted}</b> · заказов Ozon (в резерве Ozon): ${lc.orders_total}</div>
     ${notes}${errs}`;
 }
 
@@ -325,6 +325,13 @@ async function loadSettings() {
   $('sb-set-interval').value = cfg.cycle_minutes ?? 14;
   $('sb-set-tgmode').value = cfg.tg_report_mode || 'onchange';
 
+  $('sb-set-wbsub').checked = cfg.subtract_wb_orders !== false;
+  let wbAccs = [];
+  try { wbAccs = await api('/api/wb-accounts'); } catch (e) {}
+  if (!Array.isArray(wbAccs)) wbAccs = [];
+  $('sb-set-wbacc').innerHTML = '<option value="">— активный кабинет WB —</option>' +
+    wbAccs.map(a => `<option value="${a.id}" ${a.id === cfg.wb_account_id ? 'selected' : ''}>${esc(a.name)}${a.is_active ? ' (активный)' : ''}</option>`).join('');
+
   await loadWarehouses(cfg.ozon_account_id, cfg.warehouse_id);
 }
 
@@ -351,6 +358,13 @@ $('sb-set-save').addEventListener('click', async () => {
     sima_stock_id: $('sb-set-stockid').value,
     cycle_minutes: $('sb-set-interval').value,
     tg_report_mode: $('sb-set-tgmode').value,
+  });
+});
+
+$('sb-set-save2').addEventListener('click', async () => {
+  await saveConfig({
+    subtract_wb_orders: $('sb-set-wbsub').checked,
+    wb_account_id: $('sb-set-wbacc').value || null,
   });
 });
 

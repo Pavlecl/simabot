@@ -4752,6 +4752,7 @@ def _sb_cfg_dict(cfg: BroadcastConfig, acc_name: Optional[str] = None) -> dict:
         "safety_divisor": cfg.safety_divisor, "sima_stock_id": cfg.sima_stock_id,
         "cycle_minutes": cfg.cycle_minutes, "tg_report_mode": cfg.tg_report_mode,
         "enabled": cfg.enabled, "dry_run": cfg.dry_run,
+        "subtract_wb_orders": cfg.subtract_wb_orders, "wb_account_id": cfg.wb_account_id,
         "last_item_count": cfg.last_item_count,
         "last_run_at": cfg.last_run_at.isoformat() if cfg.last_run_at else None,
     }
@@ -4840,9 +4841,11 @@ async def api_sb_config_save(request: Request, user: dict = Depends(require_admi
         cfg.safety_divisor = float(str(body["safety_divisor"]).replace(",", "."))
     if body.get("tg_report_mode") in ("always", "onchange", "never"):
         cfg.tg_report_mode = body["tg_report_mode"]
-    for k in ("enabled", "dry_run"):
+    for k in ("enabled", "dry_run", "subtract_wb_orders"):
         if k in body:
             setattr(cfg, k, bool(body[k]))
+    if "wb_account_id" in body:
+        cfg.wb_account_id = int(body["wb_account_id"]) if body["wb_account_id"] else None
     cfg.updated_at = datetime.now()
     await db.commit()
     return {"ok": True, "config": _sb_cfg_dict(cfg)}

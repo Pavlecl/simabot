@@ -26,12 +26,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (
-    AsyncSessionLocal, OzonAccount,
+    AsyncSessionLocal, OzonAccount, WbAccount,
     BroadcastAlert, BroadcastConfig, BroadcastCycle, BroadcastDisable,
     BroadcastFasovka, BroadcastItem, BroadcastRejected, BroadcastState,
 )
 
 from . import calc, notify
+from .wb import WbClient
 from .ozon import OzonClient, OzonError
 from .sima import SimaClient
 
@@ -143,14 +144,35 @@ async def run_cycle(trigger: str = "auto") -> dict:
             sima = SimaClient(stock_id=cfg.sima_stock_id or 115)
             found, failed = await sima.fetch_many(offer_ids)
 
-            # ---- 5. заказы Ozon
-            STATUS["phase"] = "заказы Ozon"
+            # ---- 5. заказы
+            # Ozon держит свои заказы в резерве (present - reserved) — НЕ вычитаем,
+            # иначе двойной счёт. Считаем только для показа в плане/отчёте.
+            STATUS["phase"] = "заказы"
             oz = OzonClient(headers, cfg.warehouse_id)
             try:
-                orders_by_oid = {str(k): int(v) for k, v in (await oz.awaiting_demand()).items()}
+                ozon_orders = {str(k): int(v) for k, v in (await oz.awaiting_demand()).items()}
             except OzonError as e:
-                orders_by_oid = {}
-                summary["errors"].append(f"заказы: {e}")
+                ozon_orders = {}
+                summary["errors"].append(f"заказы Ozon: {e}")
+
+            # Заказы WB баланс Симы не уменьшают (общий склад Ozon+WB) —
+            # вычитаем из транслируемого числа, чтобы не продать то, чего
+            # у Симы по факту уже нет.
+            wb_orders: dict[str, int] = {}
+            if cfg.subtract_wb_orders:
+                wb_acc = None
+                if cfg.wb_account_id:
+                    wb_acc = await db.get(WbAccount, cfg.wb_account_id)
+                if wb_acc is None:
+                    wb_acc = (await db.execute(
+                        select(WbAccount).where(WbAccount.is_active == True))).scalars().first()  # noqa: E712
+                if wb_acc:
+                    wbc = WbClient(wb_acc.api_key)
+                    wb_orders = await wbc.pending_demand()
+                    if wbc.errors:
+                        summary["errors"].append("заказы WB: не прочитаны")
+                else:
+                    summary["notes"].append("вычет заказов WB включён, но кабинет WB не найден")
 
             # ---- 6. живой FBS + каталог
             STATUS["phase"] = "остатки Ozon"
@@ -193,17 +215,18 @@ async def run_cycle(trigger: str = "auto") -> dict:
                         and item.api_real_min > 1):
                     no_fas.append(oid)  # фасовка взята из API — стоит подтвердить вручную
 
+                wb_ord = wb_orders.get(oid, 0)
+                oz_ord = ozon_orders.get(oid, 0)
                 if forced:
                     r = calc.CalcResult(
                         0, "ОтклОстаток", disabled[oid], None,
                         item.price if item else None, rm)
-                    n_ord = 0
                 else:
-                    n_ord = orders_by_oid.get(oid, 0)
+                    # subtract=wb_ord: заказы WB. Заказы Ozon НЕ вычитаем.
                     r = calc.compute(
                         item, rm, budget=cfg.budget_limit,
                         cutoff=cfg.cutoff_balance, divisor=cfg.safety_divisor,
-                        orders=n_ord)
+                        orders=wb_ord)
 
                 was = live.get(oid, prev_amount.get(oid, 0))
                 plan.append({
@@ -212,8 +235,9 @@ async def run_cycle(trigger: str = "auto") -> dict:
                     "branch": r.branch, "reason": r.reason,
                     "balance": r.balance, "price": r.price,
                     "real_min": r.real_min, "real_min_src": rm_src,
-                    "orders": n_ord,
-                    "calc_qty": r.qty + n_ord,
+                    "orders": wb_ord,          # что вычли (WB)
+                    "wb_orders": wb_ord, "ozon_orders": oz_ord,
+                    "calc_qty": r.qty + wb_ord,
                     "enough": bool(item and item.enough),
                 })
 
@@ -301,8 +325,9 @@ async def run_cycle(trigger: str = "auto") -> dict:
                 "planned": len(plan), "written": len(changed) if not cfg.dry_run else 0,
                 "turned_on": turned_on, "turned_off": turned_off, "changed": changed_n,
                 "total_before": total_before, "total_after": total_after,
-                "orders_total": sum(orders_by_oid.values()),
-                "orders_subtracted": sum(p["orders"] for p in plan),
+                "orders_total": sum(ozon_orders.values()),          # заказы Ozon (в резерве)
+                "wb_orders_total": sum(wb_orders.values()),
+                "orders_subtracted": sum(p["orders"] for p in plan),  # вычтено (заказы WB)
                 "seconds": round(time.time() - t0, 1),
             })
 
@@ -397,7 +422,8 @@ async def _maybe_report(cfg: BroadcastConfig, s: dict) -> None:
         f"записано: {s.get('written', 0)} "
         f"(вкл {s.get('turned_on', 0)}, обнул {s.get('turned_off', 0)}, изм {s.get('changed', 0)})",
         f"артикулов в плане: {s.get('planned', 0)}",
-        f"вычтено по заказам: {s.get('orders_subtracted', 0)}",
+        f"вычтено заказов WB: {s.get('orders_subtracted', 0)}"
+        f" · заказов Ozon (резерв Ozon): {s.get('orders_total', 0)}",
     ]
     if s.get("errors"):
         lines += ["", "ОШИБКИ:"] + [f"• {e}" for e in s["errors"][:5]]

@@ -183,6 +183,18 @@ async def init_db():
     """Создает таблицы в PostgreSQL при запуске"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all не добавляет колонки в уже существующие таблицы —
+        # догоняем схему точечными ALTER (идемпотентно).
+        from sqlalchemy import text
+        for stmt in _COLUMN_MIGRATIONS:
+            await conn.execute(text(stmt))
+
+
+# Идемпотентные ALTER для колонок, добавленных после создания таблицы.
+_COLUMN_MIGRATIONS = [
+    "ALTER TABLE broadcast_config ADD COLUMN IF NOT EXISTS subtract_wb_orders BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE broadcast_config ADD COLUMN IF NOT EXISTS wb_account_id INTEGER",
+]
 
 
 # --- ФУНКЦИИ БОТА (АДАПТИРОВАННЫЕ ПОД POSTGRES) ---
@@ -457,6 +469,12 @@ class BroadcastConfig(Base):
 
     cycle_minutes = Column(Integer, default=14)          # период авто-цикла
     tg_report_mode = Column(String, default="onchange")  # always | onchange | never
+
+    # Заказы Ozon сам держит в резерве (present - reserved), поэтому их НЕ
+    # вычитаем — иначе двойной счёт. Заказы WB баланс Симы не уменьшают
+    # (общий склад Ozon+WB), поэтому их вычитаем из транслируемого числа.
+    subtract_wb_orders = Column(Boolean, default=True)
+    wb_account_id = Column(Integer, nullable=True)       # wb_accounts.id; NULL -> активный
 
     enabled = Column(Boolean, default=False)             # мастер-переключатель авто-цикла
     dry_run = Column(Boolean, default=True)              # считать, но в Ozon не писать

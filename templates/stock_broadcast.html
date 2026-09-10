@@ -116,7 +116,7 @@
         <thead><tr>
           <th>Артикул</th><th>Название</th><th>Вкл</th>
           <th class="num">Сима</th><th class="num">real_min</th>
-          <th class="num">расчёт</th><th class="num">заказы</th>
+          <th class="num">расчёт</th><th class="num">WB зак.</th>
           <th class="num">FBS сейчас</th>
           <th>ветка / причина</th><th></th>
         </tr></thead>
@@ -205,6 +205,20 @@
       </div>
       <button class="btn primary" id="sb-set-save" style="margin-top:12px">Сохранить настройки</button>
     </div>
+
+    <div class="sb-box" style="max-width:560px;margin-top:12px">
+      <h3>Заказы</h3>
+      <div class="muted" style="font-size:11px;margin-bottom:10px">
+        Заказы Ozon вычитать не нужно — Ozon сам держит их в резерве.
+        Заказы WB баланс Симы не уменьшают (общий склад), поэтому их вычитаем
+        из транслируемого числа.
+      </div>
+      <label class="sb-switch"><input type="checkbox" id="sb-set-wbsub"> Вычитать невыполненные заказы WB</label>
+      <label style="display:block;margin-top:10px">Кабинет WB
+        <select id="sb-set-wbacc" style="width:100%;margin-top:4px"></select>
+      </label>
+      <button class="btn primary" id="sb-set-save2" style="margin-top:12px">Сохранить</button>
+    </div>
   </div>
 
   <!-- ================= ЖУРНАЛ ================= -->
@@ -228,7 +242,7 @@
         <table class="sb-t">
           <thead><tr>
             <th>Артикул</th><th class="num">Сима</th><th class="num">real_min</th>
-            <th class="num">расчёт</th><th class="num">заказы</th><th class="num">→ FBS</th>
+            <th class="num">расчёт</th><th class="num">WB зак.</th><th class="num">→ FBS</th>
             <th class="num">было</th><th>ветка / причина</th>
           </tr></thead>
           <tbody id="sb-cd-body"></tbody>
