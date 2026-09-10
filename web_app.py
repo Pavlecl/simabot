@@ -4914,13 +4914,50 @@ async def api_sb_items_add(request: Request, user: dict = Depends(require_admin)
     raw = body.get("offer_ids") or []
     if isinstance(raw, str):
         raw = raw.replace(",", " ").replace(";", " ").replace("\n", " ").split()
+    values = [str(x).strip() for x in raw if str(x).strip()]
+
     prods = {oid.lower(): oid for (oid,) in (await db.execute(select(Product.offer_id))).all()}
+
+    resolved: list[str] = []          # финальные offer_id
+    unmatched: list[str] = []         # не нашли ни как offer_id, ни как SKU
+    sku_candidates: list[str] = []
+    for v in values:
+        if v.lower() in prods:
+            resolved.append(prods[v.lower()])
+        elif v.isdigit() and int(v) > 2147483647:
+            sku_candidates.append(v)   # похоже на Ozon SKU — попробуем разрешить
+        else:
+            resolved.append(v)         # оставим как есть (проверится сверкой с каталогом)
+
+    # Разрешаем SKU -> offer_id через кабинет из настроек трансляции.
+    sku_map = {}
+    if sku_candidates:
+        cfg = await sb_cycle.get_or_create_config(db)
+        acc = await db.get(OzonAccount, cfg.ozon_account_id) if cfg.ozon_account_id else None
+        if acc:
+            hdr = {"Client-Id": acc.client_id, "Api-Key": acc.api_key,
+                   "Content-Type": "application/json"}
+            async with aiohttp.ClientSession() as s:
+                for i in range(0, len(sku_candidates), 100):
+                    batch = [int(x) for x in sku_candidates[i:i + 100]]
+                    try:
+                        async with s.post("https://api-seller.ozon.ru/v3/product/info/list",
+                                          headers=hdr, json={"sku": batch}) as r:
+                            d = await r.json(content_type=None)
+                        for it in d.get("items", []) or d.get("result", {}).get("items", []):
+                            for k in ("sku", "fbs_sku", "fbo_sku"):
+                                if it.get(k):
+                                    sku_map[str(it[k])] = it.get("offer_id")
+                    except Exception:  # noqa: BLE001
+                        pass
+    for v in sku_candidates:
+        if sku_map.get(v):
+            resolved.append(sku_map[v])
+        else:
+            unmatched.append(v)
+
     added = 0
-    for x in raw:
-        oid = str(x).strip()
-        if not oid:
-            continue
-        oid = prods.get(oid.lower(), oid)
+    for oid in resolved:
         res = await db.execute(pg_insert(BroadcastItem).values(
             offer_id=oid, name="", enabled=True, source=body.get("source", "manual"),
         ).on_conflict_do_update(index_elements=["offer_id"], set_={"enabled": True}))
@@ -4931,7 +4968,19 @@ async def api_sb_items_add(request: Request, user: dict = Depends(require_admin)
                      .where(BroadcastItem.offer_id == Product.offer_id)
                      .values(name=Product.name))
     await db.commit()
-    return {"ok": True, "added": added}
+
+    # Сколько из добавленных нет в каталоге товаров — вероятно, ошибка ввода.
+    not_in_catalog = [
+        oid for oid in resolved
+        if oid.lower() not in prods
+    ]
+    return {
+        "ok": True, "added": added,
+        "resolved_from_sku": len([v for v in sku_candidates if sku_map.get(v)]),
+        "unmatched": unmatched,
+        "not_in_catalog": not_in_catalog[:50],
+        "not_in_catalog_count": len(not_in_catalog),
+    }
 
 
 @app.patch("/api/stock-broadcast/items/{offer_id}")
@@ -4953,6 +5002,20 @@ async def api_sb_item_delete(offer_id: str, user: dict = Depends(require_admin),
     await db.execute(delete(BroadcastItem).where(BroadcastItem.offer_id == offer_id))
     await db.commit()
     return {"ok": True}
+
+
+@app.post("/api/stock-broadcast/items/prune-unknown")
+async def api_sb_items_prune(user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    """Удаляет из списка артикулы, которых нет в каталоге товаров Ozon
+    (обычно попали туда по ошибке — например, вставили SKU вместо артикула)."""
+    catalog = {oid for (oid,) in (await db.execute(select(Product.offer_id))).all()}
+    rows = (await db.execute(select(BroadcastItem.offer_id))).scalars().all()
+    dead = [o for o in rows if o not in catalog]
+    if dead:
+        await db.execute(delete(BroadcastItem).where(BroadcastItem.offer_id.in_(dead)))
+        await db.commit()
+    return {"ok": True, "removed": len(dead), "examples": dead[:20]}
 
 
 @app.post("/api/stock-broadcast/items/import")

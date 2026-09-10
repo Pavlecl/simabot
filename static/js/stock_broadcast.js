@@ -206,6 +206,21 @@ $('sb-add-btn').addEventListener('click', async () => {
     });
     showToast(`Добавлено: ${d.added}`);
     $('sb-add-text').value = '';
+    let html = '';
+    if (d.resolved_from_sku) html += `<div class="muted" style="font-size:11px">↳ ${d.resolved_from_sku} значений распознаны как Ozon SKU и заменены на артикул</div>`;
+    if ((d.unmatched || []).length) html += `<div class="sb-alert" style="margin-top:6px">${d.unmatched.length} значений не удалось разобрать (не артикул и не SKU): ${d.unmatched.slice(0, 8).join(', ')}</div>`;
+    if (d.not_in_catalog_count) html += `<div class="sb-warn" style="margin-top:6px">⚠️ ${d.not_in_catalog_count} артикул(ов) добавлено, но их нет в каталоге товаров Ozon: ${(d.not_in_catalog || []).slice(0, 8).join(', ')}. Проверьте ввод или уберите кнопкой справа.</div>`;
+    $('sb-add-result').innerHTML = html;
+    loadItems();
+  } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+});
+
+$('sb-prune-btn').addEventListener('click', async () => {
+  if (!confirm('Убрать из списка все артикулы, которых нет в каталоге товаров Ozon?')) return;
+  try {
+    const d = await api('/api/stock-broadcast/items/prune-unknown', {method: 'POST'});
+    showToast(`Убрано: ${d.removed}`);
+    $('sb-add-result').innerHTML = '';
     loadItems();
   } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 });

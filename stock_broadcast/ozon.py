@@ -60,12 +60,12 @@ class OzonClient:
         last_id = ""
         async with aiohttp.ClientSession() as s:
             while True:
-                payload = {"filter": {"visibility": "ALL"}, "limit": 1000}
-                if last_id:
-                    payload["last_id"] = last_id
-                st, text = await self._post(s, "/v1/product/list", payload)
+                st, text = await self._post(s, "/v3/product/list", {
+                    "filter": {"visibility": "ALL"},
+                    "last_id": last_id, "limit": 1000,
+                })
                 if st != 200:
-                    raise OzonError(f"/v1/product/list HTTP {st}: {text[:200]}")
+                    raise OzonError(f"/v3/product/list HTTP {st}: {text[:200]}")
                 res = (json.loads(text) or {}).get("result", {})
                 items = res.get("items", [])
                 for it in items:

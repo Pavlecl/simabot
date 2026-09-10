@@ -73,7 +73,8 @@ class SimaClient:
         self.failed_batches: list[str] = []
 
     async def _fetch(self, session, url: str, timeout: int = 60) -> str | None:
-        """None = 404."""
+        """None = 404. Бросает SimaError(422) отдельно — вызывающий её изолирует
+        бисекцией: один sid «out of range» иначе валит всю пачку из 100."""
         last = None
         for i, wait in enumerate([0] + RETRY_WAITS):
             if wait:
@@ -85,6 +86,8 @@ class SimaClient:
                 ) as r:
                     if r.status == 404:
                         return None
+                    if r.status == 422:
+                        raise SimaError("Сима HTTP 422 (sid вне диапазона)")
                     if r.status in (429, 500, 502, 503, 504):
                         last = f"Сима HTTP {r.status}"
                         continue
@@ -96,6 +99,41 @@ class SimaClient:
                 continue
         raise SimaError(last or "неизвестная ошибка")
 
+    async def _fetch_batch(self, session, part: list[str], out: dict, failed: set,
+                           depth: int = 0) -> None:
+        """Тянет одну пачку sid. При 422 («sid вне диапазона») делит пополам,
+        чтобы валидные sid всё равно обработались, а невалидные ушли в failed
+        поштучно."""
+        url = (f"{SIMA_BASE}/item/?sid={','.join(part)}"
+               f"&expand=stocks,barcodes&fields={FIELDS}&per-page={max(len(part), 1)}")
+        try:
+            body = await self._fetch(session, url)
+        except SimaError as e:
+            if "422" in str(e) and len(part) > 1 and depth < 8:
+                mid = len(part) // 2
+                await self._fetch_batch(session, part[:mid], out, failed, depth + 1)
+                await asyncio.sleep(self.pause_ms / 1000)
+                await self._fetch_batch(session, part[mid:], out, failed, depth + 1)
+                return
+            self.errors += 1
+            failed.update(part)
+            self.failed_batches.append(
+                f"{part[0]}…{part[-1]} ({len(part)} шт): {e}")
+            return
+        if body is None:
+            failed.update(part)
+            return
+        try:
+            items = (json.loads(body) or {}).get("items") or []
+        except ValueError:
+            self.errors += 1
+            failed.update(part)
+            self.failed_batches.append(f"{part[0]}…{part[-1]}: не-JSON")
+            return
+        for raw in items:
+            it = _parse(raw, self.stock_id)
+            out[it.sid] = it
+
     async def fetch_many(self, sids) -> tuple[dict[str, SimaItem], set[str]]:
         """Пачками по bulk_size. -> (найденное, sid_из_упавших_пачек).
 
@@ -106,35 +144,24 @@ class SimaClient:
         """
         out: dict[str, SimaItem] = {}
         failed: set[str] = set()
-        sids = sorted({str(s) for s in sids})
-        total = (len(sids) + self.bulk_size - 1) // self.bulk_size or 1
+        # Sima принимает sid как int32: максимум 2147483647 (проверено, дальше
+        # 422 «sid is out of range»). Значения вне диапазона — обычно перепутали
+        # с Ozon SKU. Отсеиваем сразу в failed, чтобы по ним не тронуть остаток.
+        clean, bad = [], []
+        for s in {str(x).strip() for x in sids}:
+            if s.isdigit() and 0 < int(s) <= 2147483647:
+                clean.append(s)
+            else:
+                bad.append(s)
+        if bad:
+            failed.update(bad)
+            self.failed_batches.append(
+                f"{len(bad)} значений не похожи на артикул Симы "
+                f"(возможно, это Ozon SKU): {', '.join(sorted(bad)[:5])}")
+        clean.sort()
         async with aiohttp.ClientSession() as session:
-            for n, i in enumerate(range(0, len(sids), self.bulk_size), 1):
-                part = sids[i:i + self.bulk_size]
-                url = (f"{SIMA_BASE}/item/?sid={','.join(part)}"
-                       f"&expand=stocks,barcodes&fields={FIELDS}"
-                       f"&per-page={self.bulk_size}")
-                try:
-                    body = await self._fetch(session, url)
-                except SimaError as e:
-                    self.errors += 1
-                    failed.update(part)
-                    self.failed_batches.append(
-                        f"пачка {n}/{total} ({part[0]}…{part[-1]}): {e}")
-                    continue
-                if body is None:
-                    failed.update(part)
-                    continue
-                try:
-                    items = (json.loads(body) or {}).get("items") or []
-                except ValueError:
-                    self.errors += 1
-                    failed.update(part)
-                    self.failed_batches.append(f"пачка {n}/{total}: не-JSON")
-                    continue
-                for raw in items:
-                    it = _parse(raw, self.stock_id)
-                    out[it.sid] = it
+            for i in range(0, len(clean), self.bulk_size):
+                await self._fetch_batch(session, clean[i:i + self.bulk_size], out, failed)
                 await asyncio.sleep(self.pause_ms / 1000)
         return out, failed
 
