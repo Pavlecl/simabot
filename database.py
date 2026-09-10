@@ -433,3 +433,131 @@ class SimaOrderHistory(Base):
     total_qty         = Column(Integer, nullable=True)
     delivery_date     = Column(String, nullable=True)
     created_at        = Column(DateTime, default=datetime.now)
+
+# =====================================================================
+# ТРАНСЛЯЦИЯ ОСТАТКОВ СИМА-ЛЕНД -> OZON FBS
+# =====================================================================
+# Порт логики из проекта sima-stocks-handoff (был WB), упрощённый под Ozon:
+# единица остатка — offer_id (== артикул Сима-Ленд), один склад,
+# курируемый список артикулов. Управление — из веб-интерфейса, не из
+# Google-таблиц.
+
+class BroadcastConfig(Base):
+    """Настройки трансляции. Единственная строка, id=1."""
+    __tablename__ = "broadcast_config"
+
+    id = Column(Integer, primary_key=True, default=1)
+    ozon_account_id = Column(Integer, nullable=True)     # какой кабинет (ozon_accounts.id)
+    warehouse_id = Column(BigInteger, nullable=True)     # целевой FBS-склad Ozon
+
+    budget_limit = Column(Integer, default=50000)        # ветка «Достаточно»
+    cutoff_balance = Column(Integer, default=20)         # сырой balance ниже -> 0
+    safety_divisor = Column(Float, default=1.5)          # делитель ветки с числом
+    sima_stock_id = Column(Integer, default=115)         # склад Симы
+
+    cycle_minutes = Column(Integer, default=14)          # период авто-цикла
+    tg_report_mode = Column(String, default="onchange")  # always | onchange | never
+
+    enabled = Column(Boolean, default=False)             # мастер-переключатель авто-цикла
+    dry_run = Column(Boolean, default=True)              # считать, но в Ozon не писать
+
+    last_item_count = Column(Integer, default=0)         # для guard «список стёрли»
+    last_run_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class BroadcastItem(Base):
+    """Курируемый список артикулов — область трансляции.
+    Пусто -> ничего не транслируем (в отличие от handoff, где пусто = весь кабинет)."""
+    __tablename__ = "broadcast_items"
+
+    offer_id = Column(String, primary_key=True)
+    name = Column(String, nullable=True)
+    enabled = Column(Boolean, default=True)
+    source = Column(String, nullable=True)              # manual | import_xlsx | import_text
+    added_at = Column(DateTime, default=datetime.now)
+
+
+class BroadcastDisable(Base):
+    """ОтклОстаток — принудительно транслируем 0 (не «пропустить», а именно 0)."""
+    __tablename__ = "broadcast_disable"
+
+    offer_id = Column(String, primary_key=True)
+    reason = Column(String, nullable=True)
+    added_by = Column(String, nullable=True)
+    added_at = Column(DateTime, default=datetime.now)
+
+
+class BroadcastFasovka(Base):
+    """Ручное переопределение фасовки. По умолчанию real_min берётся из API Симы;
+    здесь можно задать своё значение или совсем отключить фасовку (real_min := 1)."""
+    __tablename__ = "broadcast_fasovka"
+
+    offer_id = Column(String, primary_key=True)
+    real_min = Column(Integer, nullable=True)           # NULL -> из API Симы
+    disabled = Column(Boolean, default=False)           # ОтклФас: считать штучным
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class BroadcastState(Base):
+    """Что записали в прошлый раз — база дельты. Плюс «причина нуля» для UI."""
+    __tablename__ = "broadcast_state"
+
+    offer_id = Column(String, primary_key=True)
+    last_amount = Column(Integer, default=0)
+    last_branch = Column(String, nullable=True)         # Достаточно | число | ОтклОстаток | нет в Симе | нет стока
+    last_reason = Column(String, nullable=True)
+    sima_balance = Column(Integer, nullable=True)
+    calc_qty = Column(Integer, nullable=True)           # расчёт до вычета заказов
+    real_min = Column(Integer, nullable=True)
+    real_min_src = Column(String, nullable=True)        # API Симы | ручное | ОтклФас | нет данных
+    orders = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class BroadcastRejected(Base):
+    """offer_id, которые Ozon отказался принимать. Повторяем отдельной пачкой
+    каждый цикл — вернутся сами, как только Ozon начнёт их принимать."""
+    __tablename__ = "broadcast_rejected"
+
+    offer_id = Column(String, primary_key=True)
+    code = Column(String, nullable=True)
+    message = Column(String, nullable=True)
+    hits = Column(Integer, default=1)
+    first_seen = Column(DateTime, default=datetime.now)
+    last_seen = Column(DateTime, default=datetime.now)
+
+
+class BroadcastCycle(Base):
+    """Журнал циклов + слепок плана. Держим последние 50."""
+    __tablename__ = "broadcast_cycles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    started_at = Column(DateTime, default=datetime.now)
+    finished_at = Column(DateTime, nullable=True)
+    seconds = Column(Float, nullable=True)
+    dry_run = Column(Boolean, default=False)
+    trigger = Column(String, nullable=True)             # auto | manual
+
+    total_before = Column(BigInteger, default=0)
+    total_after = Column(BigInteger, default=0)
+    written = Column(Integer, default=0)
+    turned_on = Column(Integer, default=0)
+    turned_off = Column(Integer, default=0)
+    changed = Column(Integer, default=0)
+    planned = Column(Integer, default=0)
+
+    orders_total = Column(Integer, default=0)
+    orders_subtracted = Column(Integer, default=0)
+
+    errors_json = Column(Text, default="[]")
+    notes_json = Column(Text, default="[]")
+    plan_json = Column(Text, default="[]")
+
+
+class BroadcastAlert(Base):
+    """Дедупликация алертов: один тип — не чаще раза в час."""
+    __tablename__ = "broadcast_alerts"
+
+    key = Column(String, primary_key=True)
+    last_sent = Column(DateTime, nullable=True)

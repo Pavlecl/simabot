@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .sb-wrap { display:flex; flex-direction:column; gap:12px; }
+  .sb-tabs { display:flex; border:1px solid var(--border); overflow:hidden; flex-wrap:wrap; }
+  .sb-tab {
+    background:var(--surface); color:var(--text-dim); border:none; border-right:1px solid var(--border);
+    padding:8px 16px; font-size:11px; letter-spacing:1px; text-transform:uppercase; cursor:pointer;
+    font-family:var(--mono);
+  }
+  .sb-tab:last-child { border-right:none; }
+  .sb-tab.active { background:var(--surface2); color:var(--accent); }
+  .sb-panel { display:none; }
+  .sb-panel.active { display:block; }
+
+  /* карточки метрик — общий компонент проекта (.stat-card из app.css) */
+  .sb-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+
+  .sb-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .sb-box { background:var(--surface); border:1px solid var(--border); padding:14px 16px; }
+  .sb-box h3 { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--text-dim); margin:0 0 10px; }
+
+  .sb-switch { display:inline-flex; align-items:center; gap:8px; font-size:12px; cursor:pointer; user-select:none; }
+  .sb-switch input { width:16px; height:16px; cursor:pointer; }
+
+  .sb-warn { background:rgba(245,166,35,.1); border:1px solid var(--yellow); color:var(--yellow); padding:8px 12px; font-size:12px; }
+  .sb-alert { background:rgba(245,54,92,.08); border:1px solid var(--red); color:var(--red); padding:8px 12px; font-size:12px; }
+
+  .sb-wrap input[type=text], .sb-wrap input[type=number], .sb-wrap select, .sb-wrap textarea {
+    background:var(--surface2); border:1px solid var(--border); color:var(--text); font-size:12px;
+    padding:5px 8px; font-family:var(--mono);
+  }
+  .sb-wrap textarea { width:100%; min-height:70px; }
+
+  table.sb-t { width:100%; border-collapse:collapse; font-size:12px; background:var(--surface); }
+  table.sb-t th { position:sticky; top:0; background:var(--surface2); color:var(--text-dim); font-size:9px;
+    letter-spacing:1px; text-transform:uppercase; padding:8px; text-align:left; border-bottom:1px solid var(--border); }
+  table.sb-t td { padding:6px 8px; border-bottom:1px solid var(--border); }
+  table.sb-t tr:hover td { background:var(--surface2); }
+  .sb-tbl-wrap { border:1px solid var(--border); max-height:60vh; overflow:auto; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .muted { color:var(--text-dim); }
+  .tag { font-size:10px; padding:1px 6px; border:1px solid var(--border); color:var(--text-dim); }
+  .tag.on { color:var(--green); border-color:rgba(45,206,137,.4); }
+  .tag.off { color:var(--red); border-color:rgba(245,54,92,.4); }
+  .tag.zero { color:var(--yellow); border-color:rgba(245,166,35,.4); }
+  .link-btn { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:12px; padding:2px 4px; }
+  .link-btn:hover { color:var(--red); }
+</style>
+
+<div class="sb-wrap">
+  <div class="sb-tabs">
+    <button class="sb-tab active" data-tab="overview">Обзор</button>
+    <button class="sb-tab" data-tab="items">Артикулы</button>
+    <button class="sb-tab" data-tab="disable">Отключение остатка</button>
+    <button class="sb-tab" data-tab="fasovka">Фасовка</button>
+    <button class="sb-tab" data-tab="settings">Настройки</button>
+    <button class="sb-tab" data-tab="journal">Журнал</button>
+  </div>
+
+  <!-- ================= ОБЗОР ================= -->
+  <div class="sb-panel active" id="p-overview">
+    <div id="sb-conflict-warn"></div>
+    <div id="sb-status-alert"></div>
+
+    <div class="sb-box">
+      <div class="sb-row" style="justify-content:space-between">
+        <div class="sb-row">
+          <label class="sb-switch"><input type="checkbox" id="sb-enabled"> Авто-цикл включён</label>
+          <label class="sb-switch"><input type="checkbox" id="sb-dryrun"> DRY-RUN (в Ozon не писать)</label>
+        </div>
+        <div class="sb-row">
+          <span class="muted" id="sb-target-badge">—</span>
+          <button class="btn" id="sb-run-btn">▶ Прогнать сейчас</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;font-size:11px" id="sb-status-line">—</div>
+    </div>
+
+    <div class="sb-cards" id="sb-cards"></div>
+
+    <div class="sb-box">
+      <h3>Последний цикл</h3>
+      <div id="sb-last-cycle"><div class="muted">циклов ещё не было</div></div>
+    </div>
+  </div>
+
+  <!-- ================= АРТИКУЛЫ ================= -->
+  <div class="sb-panel" id="p-items">
+    <div class="sb-box">
+      <h3>Добавить артикулы</h3>
+      <textarea id="sb-add-text" placeholder="offer_id через пробел / запятую / с новой строки"></textarea>
+      <div class="sb-row" style="margin-top:8px">
+        <button class="btn primary" id="sb-add-btn">Добавить в трансляцию</button>
+        <label class="btn" style="cursor:pointer">↑ Загрузить .xlsx
+          <input type="file" id="sb-import-input" accept=".xlsx" style="display:none">
+        </label>
+        <span class="muted" style="font-size:11px">Столбцы: A артикул, B название, C «Да/-»</span>
+      </div>
+    </div>
+
+    <div class="sb-row">
+      <input type="text" id="sb-search" placeholder="Поиск артикул / название" style="width:220px">
+      <select id="sb-filter">
+        <option value="">Все</option>
+        <option value="enabled">Только включённые</option>
+        <option value="disabled">Только выключенные</option>
+      </select>
+      <span class="muted" id="sb-items-count"></span>
+    </div>
+
+    <div class="sb-tbl-wrap">
+      <table class="sb-t">
+        <thead><tr>
+          <th>Артикул</th><th>Название</th><th>Вкл</th>
+          <th class="num">Сима</th><th class="num">real_min</th>
+          <th class="num">расчёт</th><th class="num">заказы</th>
+          <th class="num">FBS сейчас</th>
+          <th>ветка / причина</th><th></th>
+        </tr></thead>
+        <tbody id="sb-items-body"><tr><td colspan="10" class="muted" style="padding:20px">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="sb-items-pager" class="sb-row"></div>
+  </div>
+
+  <!-- ================= ОТКЛЮЧЕНИЕ ОСТАТКА ================= -->
+  <div class="sb-panel" id="p-disable">
+    <div class="sb-box">
+      <h3>Отключить остаток (принудительно транслируем 0)</h3>
+      <div class="sb-row">
+        <input type="text" id="sb-dis-ids" placeholder="offer_id через пробел" style="width:260px">
+        <input type="text" id="sb-dis-reason" placeholder="Причина (необязательно)" style="width:220px">
+        <button class="btn primary" id="sb-dis-add">Добавить</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:6px">
+        Артикул из этого списка получает остаток 0 на каждом цикле, независимо от данных Симы.
+      </div>
+    </div>
+    <div class="sb-tbl-wrap">
+      <table class="sb-t">
+        <thead><tr><th>Артикул</th><th>Причина</th><th>Кто</th><th>Когда</th><th></th></tr></thead>
+        <tbody id="sb-dis-body"><tr><td colspan="5" class="muted" style="padding:20px">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ================= ФАСОВКА ================= -->
+  <div class="sb-panel" id="p-fasovka">
+    <div class="sb-box">
+      <h3>Ручная фасовка</h3>
+      <div class="muted" style="font-size:11px;margin-bottom:8px">
+        По умолчанию real_min берётся из API Симы (min_qty / qty_multiplier). Здесь можно
+        задать своё значение или отключить фасовку совсем (считать штучным).
+      </div>
+      <div class="sb-row">
+        <input type="text" id="sb-fas-id" placeholder="offer_id" style="width:160px">
+        <input type="number" id="sb-fas-rm" placeholder="real_min" min="1" style="width:100px">
+        <label class="sb-switch"><input type="checkbox" id="sb-fas-off"> отключить фасовку</label>
+        <button class="btn primary" id="sb-fas-add">Сохранить</button>
+      </div>
+    </div>
+    <div class="sb-tbl-wrap">
+      <table class="sb-t">
+        <thead><tr>
+          <th>Артикул</th><th class="num">ручной real_min</th><th>ОтклФас</th>
+          <th class="num">сейчас применяется</th><th>источник</th><th></th>
+        </tr></thead>
+        <tbody id="sb-fas-body"><tr><td colspan="6" class="muted" style="padding:20px">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ================= НАСТРОЙКИ ================= -->
+  <div class="sb-panel" id="p-settings">
+    <div class="sb-box" style="max-width:560px">
+      <h3>Кабинет и склад</h3>
+      <div class="sb-row" style="flex-direction:column;align-items:stretch;gap:10px">
+        <label>Кабинет Ozon
+          <select id="sb-set-account" style="width:100%;margin-top:4px"></select>
+        </label>
+        <label>Целевой FBS-склад
+          <select id="sb-set-warehouse" style="width:100%;margin-top:4px"></select>
+        </label>
+      </div>
+    </div>
+
+    <div class="sb-box" style="max-width:560px;margin-top:12px">
+      <h3>Формула</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label>Бюджет (ветка «Достаточно»)<input type="number" id="sb-set-budget" style="width:100%"></label>
+        <label>Порог отсечки (balance &lt;)<input type="number" id="sb-set-cutoff" style="width:100%"></label>
+        <label>Делитель (ветка с числом)<input type="number" step="0.1" id="sb-set-divisor" style="width:100%"></label>
+        <label>Склад Симы (stock_id)<input type="number" id="sb-set-stockid" style="width:100%"></label>
+        <label>Интервал авто-цикла, мин<input type="number" id="sb-set-interval" style="width:100%"></label>
+        <label>Telegram-отчёт
+          <select id="sb-set-tgmode" style="width:100%">
+            <option value="onchange">при изменениях</option>
+            <option value="always">каждый цикл</option>
+            <option value="never">никогда</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn primary" id="sb-set-save" style="margin-top:12px">Сохранить настройки</button>
+    </div>
+  </div>
+
+  <!-- ================= ЖУРНАЛ ================= -->
+  <div class="sb-panel" id="p-journal">
+    <div class="sb-row">
+      <button class="btn" id="sb-journal-refresh">⟳ Обновить</button>
+      <span class="muted" id="sb-rejected-line"></span>
+    </div>
+    <div class="sb-tbl-wrap">
+      <table class="sb-t">
+        <thead><tr>
+          <th>#</th><th>Время</th><th>Триггер</th><th class="num">план</th>
+          <th class="num">записано</th><th>было → стало</th><th>заметки / ошибки</th><th></th>
+        </tr></thead>
+        <tbody id="sb-journal-body"><tr><td colspan="8" class="muted" style="padding:20px">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sb-box" id="sb-cycle-detail" style="display:none">
+      <h3>План цикла <span id="sb-cd-id"></span></h3>
+      <div class="sb-tbl-wrap" style="max-height:50vh">
+        <table class="sb-t">
+          <thead><tr>
+            <th>Артикул</th><th class="num">Сима</th><th class="num">real_min</th>
+            <th class="num">расчёт</th><th class="num">заказы</th><th class="num">→ FBS</th>
+            <th class="num">было</th><th>ветка / причина</th>
+          </tr></thead>
+          <tbody id="sb-cd-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/stock_broadcast.js?v=1"></script>
+{% endblock %}

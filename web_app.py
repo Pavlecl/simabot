@@ -35,7 +35,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database import (AsyncSessionLocal, User, Order, VirtualOrder, Product, PriceHistory, CostHistory, SalesHistory,
                       FboWatchlist, StockItem, OzonAccount, WbAccount, WbProductCache, FboStorageReport, FboSalesWatch,
-                      FboDailyDigest, init_db)
+                      FboDailyDigest, init_db,
+                      BroadcastConfig, BroadcastItem, BroadcastDisable, BroadcastFasovka, BroadcastState,
+                      BroadcastRejected, BroadcastCycle)
+
+from stock_broadcast import cycle as sb_cycle
 
 from content_sync import get_matched_products, apply_wb_to_ozon, get_active_wb_key, get_all_wb_accounts_db
 
@@ -4427,6 +4431,7 @@ async def lifespan(app: FastAPI):
                 print(f"FBO SALES WATCH loop error: {e}", flush=True)
 
     asyncio.create_task(fbo_sales_watch_loop())
+    asyncio.create_task(sb_cycle.loop_forever())
     yield
 
 app.router.lifespan_context = lifespan
@@ -4727,6 +4732,387 @@ async def api_active_accounts(request: Request):
         wb = r.scalar_one_or_none()
         if wb: wb_name = wb.name
     return {"ozon": ozon_name, "wb": wb_name}
+
+# =====================================================================
+# ТРАНСЛЯЦИЯ ОСТАТКОВ СИМА-ЛЕНД -> OZON FBS
+# =====================================================================
+# Порт логики из проекта sima-stocks-handoff. Раздел управления: что
+# отключить от трансляции, фасовка, параметры формулы, запуск/пауза.
+# Сам цикл — stock_broadcast/cycle.py, крутится фоном в lifespan.
+
+def _sb_can_view(user: dict) -> bool:
+    return user["role"] == "admin" or "stock-broadcast" in (user.get("permissions") or [])
+
+
+def _sb_cfg_dict(cfg: BroadcastConfig, acc_name: Optional[str] = None) -> dict:
+    return {
+        "ozon_account_id": cfg.ozon_account_id, "account_name": acc_name,
+        "warehouse_id": cfg.warehouse_id,
+        "budget_limit": cfg.budget_limit, "cutoff_balance": cfg.cutoff_balance,
+        "safety_divisor": cfg.safety_divisor, "sima_stock_id": cfg.sima_stock_id,
+        "cycle_minutes": cfg.cycle_minutes, "tg_report_mode": cfg.tg_report_mode,
+        "enabled": cfg.enabled, "dry_run": cfg.dry_run,
+        "last_item_count": cfg.last_item_count,
+        "last_run_at": cfg.last_run_at.isoformat() if cfg.last_run_at else None,
+    }
+
+
+def _sb_cycle_dict(c: BroadcastCycle, with_plan: bool = False) -> dict:
+    d = {
+        "id": c.id,
+        "started_at": c.started_at.isoformat() if c.started_at else None,
+        "finished_at": c.finished_at.isoformat() if c.finished_at else None,
+        "seconds": c.seconds, "dry_run": c.dry_run, "trigger": c.trigger,
+        "total_before": c.total_before, "total_after": c.total_after,
+        "written": c.written, "turned_on": c.turned_on, "turned_off": c.turned_off,
+        "changed": c.changed, "planned": c.planned,
+        "orders_total": c.orders_total, "orders_subtracted": c.orders_subtracted,
+        "errors": json.loads(c.errors_json or "[]"),
+        "notes": json.loads(c.notes_json or "[]"),
+    }
+    if with_plan:
+        d["plan"] = json.loads(c.plan_json or "[]")
+    return d
+
+
+def _sb_state_dict(s: Optional[BroadcastState]) -> Optional[dict]:
+    if not s:
+        return None
+    return {
+        "last_amount": s.last_amount, "branch": s.last_branch, "reason": s.last_reason,
+        "sima_balance": s.sima_balance, "calc_qty": s.calc_qty,
+        "real_min": s.real_min, "real_min_src": s.real_min_src, "orders": s.orders,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+@app.get("/stock-broadcast", response_class=HTMLResponse)
+async def stock_broadcast_page(request: Request, user: dict = Depends(require_any_role)):
+    if not _sb_can_view(user):
+        return RedirectResponse("/queue", status_code=302)
+    return templates.TemplateResponse("stock_broadcast.html", {
+        "request": request, "user": user, "active_tab": "stock-broadcast"})
+
+
+@app.get("/api/stock-broadcast/overview")
+async def api_sb_overview(user: dict = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    cfg = await sb_cycle.get_or_create_config(db)
+    total = (await db.execute(select(func.count(BroadcastItem.offer_id)))).scalar()
+    enabled = (await db.execute(
+        select(func.count(BroadcastItem.offer_id)).where(BroadcastItem.enabled == True))).scalar()  # noqa: E712
+    disabled = (await db.execute(select(func.count(BroadcastDisable.offer_id)))).scalar()
+    fasovka = (await db.execute(select(func.count(BroadcastFasovka.offer_id)))).scalar()
+    rejected = (await db.execute(select(func.count(BroadcastRejected.offer_id)))).scalar()
+    conflict = (await db.execute(
+        select(func.count()).select_from(BroadcastItem).join(
+            StockItem, StockItem.offer_id == BroadcastItem.offer_id
+        ).where(BroadcastItem.enabled == True, StockItem.enabled == True)  # noqa: E712
+    )).scalar()
+    last = (await db.execute(
+        select(BroadcastCycle).order_by(BroadcastCycle.id.desc()).limit(1))).scalars().first()
+    acc_name = None
+    if cfg.ozon_account_id:
+        a = await db.get(OzonAccount, cfg.ozon_account_id)
+        acc_name = a.name if a else None
+    return {
+        "config": _sb_cfg_dict(cfg, acc_name),
+        "status": sb_cycle.STATUS,
+        "counts": {
+            "items_total": total, "items_enabled": enabled, "disabled": disabled,
+            "fasovka": fasovka, "rejected": rejected, "stock_items_conflict": conflict,
+        },
+        "last_cycle": _sb_cycle_dict(last) if last else None,
+    }
+
+
+@app.post("/api/stock-broadcast/config")
+async def api_sb_config_save(request: Request, user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    cfg = await sb_cycle.get_or_create_config(db)
+    for k in ("ozon_account_id", "warehouse_id", "budget_limit", "cutoff_balance",
+              "sima_stock_id", "cycle_minutes"):
+        if body.get(k) not in (None, ""):
+            setattr(cfg, k, int(body[k]))
+    if body.get("safety_divisor"):
+        cfg.safety_divisor = float(str(body["safety_divisor"]).replace(",", "."))
+    if body.get("tg_report_mode") in ("always", "onchange", "never"):
+        cfg.tg_report_mode = body["tg_report_mode"]
+    for k in ("enabled", "dry_run"):
+        if k in body:
+            setattr(cfg, k, bool(body[k]))
+    cfg.updated_at = datetime.now()
+    await db.commit()
+    return {"ok": True, "config": _sb_cfg_dict(cfg)}
+
+
+@app.post("/api/stock-broadcast/run")
+async def api_sb_run(user: dict = Depends(require_admin)):
+    asyncio.create_task(sb_cycle.run_cycle("manual"))
+    return {"ok": True}
+
+
+@app.get("/api/stock-broadcast/warehouses")
+async def api_sb_warehouses(account_id: int, user: dict = Depends(require_admin),
+                            db: AsyncSession = Depends(get_db)):
+    a = await db.get(OzonAccount, account_id)
+    if not a:
+        raise HTTPException(404)
+    headers = {"Client-Id": a.client_id, "Api-Key": a.api_key, "Content-Type": "application/json"}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://api-seller.ozon.ru/v2/warehouse/list",
+                              headers=headers, json={}) as r:
+                data = await r.json(content_type=None)
+        return {"ok": True, "warehouses": [
+            {"id": w["warehouse_id"], "name": w["name"]}
+            for w in data.get("warehouses", [])]}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e), "warehouses": []}
+
+
+# ------------------------------------------------------------ артикулы
+@app.get("/api/stock-broadcast/items")
+async def api_sb_items(search: str = "", page: int = 1, per_page: int = 200,
+                       only: str = "", user: dict = Depends(require_any_role),
+                       db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    q = select(BroadcastItem)
+    cq = select(func.count(BroadcastItem.offer_id))
+    if search:
+        like = f"%{search}%"
+        cond = or_(BroadcastItem.offer_id.ilike(like), BroadcastItem.name.ilike(like))
+        q, cq = q.where(cond), cq.where(cond)
+    if only == "enabled":
+        q, cq = q.where(BroadcastItem.enabled == True), cq.where(BroadcastItem.enabled == True)  # noqa: E712
+    elif only == "disabled":
+        q, cq = q.where(BroadcastItem.enabled == False), cq.where(BroadcastItem.enabled == False)  # noqa: E712
+    total = (await db.execute(cq)).scalar()
+    rows = (await db.execute(q.order_by(BroadcastItem.offer_id)
+            .limit(per_page).offset((page - 1) * per_page))).scalars().all()
+    oids = [r.offer_id for r in rows]
+    states, dis = {}, set()
+    if oids:
+        states = {s.offer_id: s for s in (await db.execute(
+            select(BroadcastState).where(BroadcastState.offer_id.in_(oids)))).scalars().all()}
+        dis = {d for (d,) in (await db.execute(
+            select(BroadcastDisable.offer_id).where(BroadcastDisable.offer_id.in_(oids)))).all()}
+    return {"total": total, "items": [{
+        "offer_id": r.offer_id, "name": r.name, "enabled": r.enabled,
+        "source": r.source, "in_disable_list": r.offer_id in dis,
+        "state": _sb_state_dict(states.get(r.offer_id)),
+    } for r in rows]}
+
+
+@app.post("/api/stock-broadcast/items")
+async def api_sb_items_add(request: Request, user: dict = Depends(require_admin),
+                           db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    raw = body.get("offer_ids") or []
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").replace(";", " ").replace("\n", " ").split()
+    prods = {oid.lower(): oid for (oid,) in (await db.execute(select(Product.offer_id))).all()}
+    added = 0
+    for x in raw:
+        oid = str(x).strip()
+        if not oid:
+            continue
+        oid = prods.get(oid.lower(), oid)
+        res = await db.execute(pg_insert(BroadcastItem).values(
+            offer_id=oid, name="", enabled=True, source=body.get("source", "manual"),
+        ).on_conflict_do_update(index_elements=["offer_id"], set_={"enabled": True}))
+        if res.rowcount:
+            added += 1
+    await db.commit()
+    await db.execute(update(BroadcastItem)
+                     .where(BroadcastItem.offer_id == Product.offer_id)
+                     .values(name=Product.name))
+    await db.commit()
+    return {"ok": True, "added": added}
+
+
+@app.patch("/api/stock-broadcast/items/{offer_id}")
+async def api_sb_item_patch(offer_id: str, request: Request,
+                            user: dict = Depends(require_admin),
+                            db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    if "enabled" in body:
+        await db.execute(update(BroadcastItem)
+                         .where(BroadcastItem.offer_id == offer_id)
+                         .values(enabled=bool(body["enabled"])))
+        await db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/stock-broadcast/items/{offer_id}")
+async def api_sb_item_delete(offer_id: str, user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(BroadcastItem).where(BroadcastItem.offer_id == offer_id))
+    await db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/stock-broadcast/items/import")
+async def api_sb_items_import(request: Request, user: dict = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    import openpyxl
+    import io as _io
+    form = await request.form()
+    file = form.get("file")
+    if not file:
+        raise HTTPException(400, "файл не найден")
+    ws = openpyxl.load_workbook(_io.BytesIO(await file.read())).active
+    prods = {oid.lower(): oid for (oid,) in (await db.execute(select(Product.offer_id))).all()}
+    enabled_n = 0
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or not row[0]:
+            continue
+        oid = prods.get(str(row[0]).strip().lower(), str(row[0]).strip())
+        name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+        enabled = True
+        if len(row) > 2 and row[2] is not None:
+            enabled = str(row[2]).strip().lower() in ("да", "yes", "+", "1", "true")
+        await db.execute(pg_insert(BroadcastItem).values(
+            offer_id=oid, name=name, enabled=enabled, source="import_xlsx",
+        ).on_conflict_do_update(index_elements=["offer_id"], set_={"enabled": enabled}))
+        if enabled:
+            enabled_n += 1
+    await db.commit()
+    return {"ok": True, "enabled": enabled_n}
+
+
+# ------------------------------------------------------------ ОтклОстаток
+@app.get("/api/stock-broadcast/disable")
+async def api_sb_disable_list(user: dict = Depends(require_any_role),
+                              db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    rows = (await db.execute(
+        select(BroadcastDisable).order_by(BroadcastDisable.added_at.desc()))).scalars().all()
+    return {"items": [{
+        "offer_id": r.offer_id, "reason": r.reason, "added_by": r.added_by,
+        "added_at": r.added_at.isoformat() if r.added_at else None,
+    } for r in rows]}
+
+
+@app.post("/api/stock-broadcast/disable")
+async def api_sb_disable_add(request: Request, user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    raw = body.get("offer_ids") or ([body["offer_id"]] if body.get("offer_id") else [])
+    if isinstance(raw, str):
+        raw = raw.replace(",", " ").replace(";", " ").replace("\n", " ").split()
+    reason = body.get("reason", "")
+    for x in raw:
+        oid = str(x).strip()
+        if not oid:
+            continue
+        await db.execute(pg_insert(BroadcastDisable).values(
+            offer_id=oid, reason=reason, added_by=user["username"], added_at=datetime.now(),
+        ).on_conflict_do_update(index_elements=["offer_id"], set_={"reason": reason}))
+    await db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/stock-broadcast/disable/{offer_id}")
+async def api_sb_disable_del(offer_id: str, user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(BroadcastDisable).where(BroadcastDisable.offer_id == offer_id))
+    await db.commit()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------ фасовка
+@app.get("/api/stock-broadcast/fasovka")
+async def api_sb_fasovka_list(user: dict = Depends(require_any_role),
+                              db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    rows = (await db.execute(select(BroadcastFasovka))).scalars().all()
+    oids = [r.offer_id for r in rows]
+    st = {}
+    if oids:
+        st = {s.offer_id: s for s in (await db.execute(
+            select(BroadcastState).where(BroadcastState.offer_id.in_(oids)))).scalars().all()}
+    return {"items": [{
+        "offer_id": r.offer_id, "real_min": r.real_min, "disabled": r.disabled,
+        "current_real_min": st[r.offer_id].real_min if r.offer_id in st else None,
+        "current_src": st[r.offer_id].real_min_src if r.offer_id in st else None,
+    } for r in rows]}
+
+
+@app.post("/api/stock-broadcast/fasovka")
+async def api_sb_fasovka_set(request: Request, user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    body = await request.json()
+    oid = str(body.get("offer_id", "")).strip()
+    if not oid:
+        raise HTTPException(400, "offer_id пуст")
+    rm = body.get("real_min")
+    rm = int(rm) if str(rm).strip() not in ("", "None", "0") else None
+    disabled = bool(body.get("disabled", False))
+    now = datetime.now()
+    await db.execute(pg_insert(BroadcastFasovka).values(
+        offer_id=oid, real_min=rm, disabled=disabled, updated_at=now,
+    ).on_conflict_do_update(index_elements=["offer_id"],
+                            set_={"real_min": rm, "disabled": disabled, "updated_at": now}))
+    await db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/stock-broadcast/fasovka/{offer_id}")
+async def api_sb_fasovka_del(offer_id: str, user: dict = Depends(require_admin),
+                             db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(BroadcastFasovka).where(BroadcastFasovka.offer_id == offer_id))
+    await db.commit()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------ журнал
+@app.get("/api/stock-broadcast/cycles")
+async def api_sb_cycles(user: dict = Depends(require_any_role),
+                        db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    rows = (await db.execute(
+        select(BroadcastCycle).order_by(BroadcastCycle.id.desc()).limit(50))).scalars().all()
+    return {"cycles": [_sb_cycle_dict(c) for c in rows]}
+
+
+@app.get("/api/stock-broadcast/cycles/{cycle_id}")
+async def api_sb_cycle_one(cycle_id: int, user: dict = Depends(require_any_role),
+                           db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    c = await db.get(BroadcastCycle, cycle_id)
+    if not c:
+        raise HTTPException(404)
+    return _sb_cycle_dict(c, with_plan=True)
+
+
+@app.get("/api/stock-broadcast/rejected")
+async def api_sb_rejected(user: dict = Depends(require_any_role),
+                          db: AsyncSession = Depends(get_db)):
+    if not _sb_can_view(user):
+        raise HTTPException(403)
+    rows = (await db.execute(
+        select(BroadcastRejected).order_by(BroadcastRejected.last_seen.desc()))).scalars().all()
+    return {"items": [{
+        "offer_id": r.offer_id, "message": r.message, "hits": r.hits,
+        "last_seen": r.last_seen.isoformat() if r.last_seen else None,
+    } for r in rows]}
+
+
+@app.delete("/api/stock-broadcast/rejected/{offer_id}")
+async def api_sb_rejected_del(offer_id: str, user: dict = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    await db.execute(delete(BroadcastRejected).where(BroadcastRejected.offer_id == offer_id))
+    await db.commit()
+    return {"ok": True}
+
 
 if __name__ == "__main__":
     import uvicorn
