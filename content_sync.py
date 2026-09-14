@@ -1423,3 +1423,130 @@ async def submit_wb_to_ozon_import(ozon_account_id: int, rows: list[dict]) -> No
                 results[vc] = {"status": "unknown", "message": "Ozon не подтвердил статус за 2 мин — проверьте в кабинете Ozon"}
 
     _wb_to_ozon_import_status = {"running": False, "total": len(rows), "results": results, "error": ""}
+
+# =====================================================================
+# СРАВНЕНИЕ ФОТО OZON ↔ WB ПО СОДЕРЖИМОМУ
+# =====================================================================
+# URL всегда разные (разные CDN: ir.ozone.ru vs wbbasket.ru) — сравнивать
+# их строками бессмысленно, почти любая пара окажется "разной". Сравниваем
+# сами изображения через average hash (ahash): 8×8 grayscale, 64-битный
+# отпечаток, Hamming-расстояние между отпечатками. 0 — визуально то же
+# фото, >=10 из 64 — уверенно другое (стандартный порог для ahash).
+
+import io as _io_photodiff
+from datetime import datetime as _dt_photodiff
+
+PHOTO_DIFF_HAMMING_THRESHOLD = 10
+
+_photo_diff_status = {
+    "running": False, "done": 0, "total": 0,
+    "started_at": None, "finished_at": None, "error": "",
+}
+
+
+def get_photo_diff_status() -> dict:
+    return dict(_photo_diff_status)
+
+
+def _ahash_bytes(data: bytes) -> str:
+    """8×8 average hash. Возвращает 16-символьный hex (64 бита)."""
+    from PIL import Image
+    im = Image.open(_io_photodiff.BytesIO(data)).convert("L").resize((8, 8), Image.LANCZOS)
+    px = list(im.getdata())
+    avg = sum(px) / len(px)
+    bits = "".join("1" if p > avg else "0" for p in px)
+    return f"{int(bits, 2):016x}"
+
+
+def _hamming(a_hex: str, b_hex: str) -> int:
+    return bin(int(a_hex, 16) ^ int(b_hex, 16)).count("1")
+
+
+async def _fetch_bytes(session, url: str, timeout: int = 20) -> Optional[bytes]:
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+            if r.status != 200:
+                return None
+            return await r.read()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _compare_one(session, sem, vendor_code: str, ozon_url: str, wb_url: str) -> dict:
+    async with sem:
+        ob, wbb = await asyncio.gather(
+            _fetch_bytes(session, ozon_url), _fetch_bytes(session, wb_url))
+    row = {"vendor_code": vendor_code, "ozon_image_url": ozon_url, "wb_image_url": wb_url,
+           "ozon_hash": None, "wb_hash": None, "hamming": None, "error": None}
+    if not ob or not wbb:
+        row["error"] = "не скачалось: " + ("Ozon" if not ob else "") + ("WB" if not wbb else "")
+        return row
+    try:
+        oh, wh = _ahash_bytes(ob), _ahash_bytes(wbb)
+        row["ozon_hash"], row["wb_hash"] = oh, wh
+        row["hamming"] = _hamming(oh, wh)
+    except Exception as e:  # noqa: BLE001
+        row["error"] = f"ошибка сравнения: {e}"
+    return row
+
+
+async def run_photo_diff() -> None:
+    """Считает Hamming-расстояние между главным фото Ozon и WB для всех
+    сопоставленных товаров, кладёт в content_photo_diff. Фоновая задача —
+    на ~20 тыс. пар уходит несколько минут, гонять на каждый заход
+    на страницу нельзя."""
+    global _photo_diff_status
+    if _photo_diff_status["running"]:
+        return
+    from database import AsyncSessionLocal, Product, WbProductCache, ContentPhotoDiff
+    from sqlalchemy import select as _select
+    from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(_select(Product.offer_id, Product.image_url)
+                             .where(Product.offer_id != None, Product.image_url != None))  # noqa: E711
+        ozon = {oid: img for oid, img in r.all()}
+        r2 = await db.execute(_select(WbProductCache.vendor_code, WbProductCache.images_json))
+        wb = {}
+        for vc, ij in r2.all():
+            arr = _json.loads(ij or "[]")
+            if arr:
+                wb[vc] = arr[0]
+    pairs = [(c, ozon[c], wb[c]) for c in ozon if c in wb]
+
+    _photo_diff_status = {"running": True, "done": 0, "total": len(pairs),
+                          "started_at": _dt_photodiff.now().isoformat(),
+                          "finished_at": None, "error": ""}
+
+    sem = asyncio.Semaphore(30)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    batch: list[dict] = []
+
+    async def flush():
+        if not batch:
+            return
+        async with AsyncSessionLocal() as db:
+            for row in batch:
+                vals = {k: v for k, v in row.items() if k != "vendor_code"}
+                vals["checked_at"] = _dt_photodiff.now()
+                await db.execute(
+                    _pg_insert(ContentPhotoDiff).values(vendor_code=row["vendor_code"], **vals)
+                    .on_conflict_do_update(index_elements=["vendor_code"], set_=vals))
+            await db.commit()
+        batch.clear()
+
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            tasks = [_compare_one(session, sem, c, ou, wu) for c, ou, wu in pairs]
+            for coro in asyncio.as_completed(tasks):
+                row = await coro
+                batch.append(row)
+                _photo_diff_status["done"] += 1
+                if len(batch) >= 200:
+                    await flush()
+            await flush()
+    except Exception as e:  # noqa: BLE001
+        _photo_diff_status["error"] = str(e)
+    finally:
+        _photo_diff_status["running"] = False
+        _photo_diff_status["finished_at"] = _dt_photodiff.now().isoformat()

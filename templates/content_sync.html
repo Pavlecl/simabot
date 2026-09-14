@@ -14,6 +14,11 @@
       ↻ Синхр. Ozon
     </button>
     <span id="ozon-sync-status" style="font-size:11px;color:var(--text-dim)"></span>
+    <button class="btn" id="btn-photo-diff" onclick="refreshPhotoDiff()"
+      title="Сравнить главное фото Ozon и WB по содержимому (не по адресу — адреса всегда разные)">
+      🖼 Сравнить фото
+    </button>
+    <span id="photo-diff-status" style="font-size:11px;color:var(--text-dim)"></span>
     <span id="wb-cache-status" style="font-size:11px;color:var(--text-dim)"></span>
     <button class="btn" id="btn-load" onclick="loadProducts()">⟳ Загрузить товары</button>
     <button class="btn primary" id="btn-apply" disabled onclick="applyContent()">
@@ -53,6 +58,10 @@
     <button class="btn" style="font-size:11px;padding:3px 10px" onclick="selectAll()">Выбрать все</button>
     <button class="btn" style="font-size:11px;padding:3px 10px" onclick="deselectAll()">Снять все</button>
     <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--accent);border-color:var(--accent)" onclick="selectDiff()">⚡ Только отличия</button>
+    <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--accent);border-color:var(--accent)" onclick="selectPhotoDiff()"
+      title="Отмечает «Фото» там, где картинки Ozon и WB реально разные — по содержимому, не по адресу">
+      📷 Только разные фото
+    </button>
   </div>
 </div>
 
@@ -184,15 +193,27 @@ async function loadProducts() {
 
 
 
+// Сравниваем фото по содержимому (photo_hamming, 0..64 — Hamming-расстояние
+// average hash), а НЕ по URL: Ozon и WB хостят картинки на разных CDN,
+// адреса разные всегда, даже если фото буквально одно и то же.
+// null/undefined — пара ещё не сравнивалась (нажмите «🖼 Сравнить фото»).
+const PHOTO_DIFF_THRESHOLD = 10;
+function isPhotoDiff(p) {
+  return typeof p.photo_hamming === 'number' && p.photo_hamming >= PHOTO_DIFF_THRESHOLD;
+}
+
 function makeRow(p) {
   const o = p.ozon || {}, w = p.wb || {};
   const tr = document.createElement('tr');
   tr.dataset.code = p.vendor_code;
-  const imgsDiff = JSON.stringify(o.images) !== JSON.stringify(w.images);
+  const imgsDiff = isPhotoDiff(p);
   const nameDiff = (o.name||'') !== (w.name||'');
   const descDiff = (o.description||'') !== (w.description||'');
   const ozImgs = (o.images||[]).slice(0,1).map(u => `<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
   const wbImgs = (w.images||[]).slice(0,1).map(u => `<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
+  const photoHint = typeof p.photo_hamming === 'number'
+    ? `<div style="font-size:9px;color:${imgsDiff?'var(--red)':'var(--text-dim)'};margin-top:2px">Δ${p.photo_hamming}</div>`
+    : `<div style="font-size:9px;color:var(--text-dim);margin-top:2px">не сравнено</div>`;
   const ozAttrs = (o.attributes||[]).map(a => `<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
   const wbAttrs = (w.attributes||[]).map(a => `<div><b>${x(a.name)}</b>: ${x(a.value)}</div>`).join('');
   tr.innerHTML = `
@@ -203,7 +224,7 @@ function makeRow(p) {
     <td class="td-images${imgsDiff?' diff':''}">
       <div class="cmp">
         <div><div class="cmp-lbl">Ozon</div><div class="val-oz thumbs">${ozImgs||'<span style="color:var(--text-dim)">нет</span>'}</div></div>
-        <div><div class="cmp-lbl">WB</div><div class="val-wb thumbs">${wbImgs||'<span style="color:var(--text-dim)">нет</span>'}</div></div>
+        <div><div class="cmp-lbl">WB</div><div class="val-wb thumbs">${wbImgs||'<span style="color:var(--text-dim)">нет</span>'}</div>${photoHint}</div>
         <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="images" onchange="onFieldCb(this)"></div>
       </div>
     </td>
@@ -279,13 +300,95 @@ function selectDiff() {
   allProducts.forEach(p => {
     const o = p.ozon || {}, w = p.wb || {};
     const fields = new Set();
-    if (JSON.stringify(o.images) !== JSON.stringify(w.images)) fields.add('images');
+    if (isPhotoDiff(p))                                        fields.add('images');
     if ((o.name||'') !== (w.name||''))                         fields.add('name');
     if ((o.description||'') !== (w.description||''))           fields.add('description');
     if (fields.size) selectedFields[p.vendor_code] = fields;
     else delete selectedFields[p.vendor_code];
   });
   refreshCheckboxes(); updateBtn();
+}
+
+// Только «Фото» — там, где картинка реально другая (Hamming >= порога).
+// Ничего не переносит само по себе — только отмечает чекбоксы, применяет
+// перенос отдельная кнопка «Перенести на Ozon» после вашей проверки.
+function selectPhotoDiff() {
+  let n = 0;
+  allProducts.forEach(p => {
+    if (!isPhotoDiff(p)) return;
+    if (!selectedFields[p.vendor_code]) selectedFields[p.vendor_code] = new Set();
+    selectedFields[p.vendor_code].add('images');
+    n++;
+  });
+  refreshCheckboxes(); updateBtn();
+  showStatus(`Отмечено карточек с разными фото: ${n} (Hamming ≥ ${PHOTO_DIFF_THRESHOLD} из 64)`, 'ok');
+}
+
+// ── Сравнение фото по содержимому ───────────────────────────────────────
+async function loadPhotoDiffStatus() {
+  try {
+    const r = await fetch('/api/content-sync/photo-diff/progress');
+    const d = await r.json();
+    const el = document.getElementById('photo-diff-status');
+    if (d.running) { pollPhotoDiffProgress(); return; }
+    if (d.finished_at) {
+      const dt = new Date(d.finished_at).toLocaleString('ru');
+      el.textContent = `Фото сравнены: ${d.total.toLocaleString('ru')} пар, обновлено ${dt}`;
+    } else {
+      el.textContent = 'Фото ещё не сравнивались — нажмите 🖼';
+      el.style.color = 'var(--red)';
+    }
+  } catch(e) {}
+}
+
+async function refreshPhotoDiff() {
+  const btn = document.getElementById('btn-photo-diff');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/content-sync/photo-diff/run', { method: 'POST' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+    pollPhotoDiffProgress();
+  } catch(e) {
+    showStatus('Ошибка: ' + e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+function pollPhotoDiffProgress() {
+  const btn = document.getElementById('btn-photo-diff');
+  const statusEl = document.getElementById('photo-diff-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Сравниваем...';
+
+  const timer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/content-sync/photo-diff/progress');
+      const d = await r.json();
+      statusEl.style.color = 'var(--accent)';
+      statusEl.textContent = d.total
+        ? `⏳ Сравнено ${d.done.toLocaleString('ru')} из ${d.total.toLocaleString('ru')}...`
+        : '⏳ Собираем список пар...';
+
+      if (!d.running) {
+        clearInterval(timer);
+        btn.disabled = false;
+        btn.textContent = '🖼 Сравнить фото';
+        if (d.error) {
+          showStatus('Ошибка сравнения: ' + d.error, 'error');
+        } else {
+          showStatus(`✓ Фото сравнены: ${d.total.toLocaleString('ru')} пар`, 'ok');
+          // Обновляем таблицу, чтобы подтянуть свежие photo_hamming
+          if (allProducts.length) loadProducts();
+          else loadPhotoDiffStatus();
+        }
+      }
+    } catch(e) {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = '🖼 Сравнить фото';
+    }
+  }, 3000);
 }
 
 function refreshCheckboxes() {
@@ -612,5 +715,6 @@ loadActiveAccounts();
 
 // Загружаем статус при открытии страницы
 loadWbCacheStatus();
+loadPhotoDiffStatus();
 </script>
 {% endblock %}

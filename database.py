@@ -579,3 +579,23 @@ class BroadcastAlert(Base):
 
     key = Column(String, primary_key=True)
     last_sent = Column(DateTime, nullable=True)
+
+
+# =====================================================================
+# СРАВНЕНИЕ ФОТО OZON ↔ WB (по содержимому, не по URL)
+# =====================================================================
+
+class ContentPhotoDiff(Base):
+    """Результат сравнения главного фото Ozon и WB по содержимому (average
+    hash + Hamming-расстояние). URL всегда разные (разные CDN) — сравнивать
+    их напрямую бессмысленно, поэтому результат кэшируем здесь."""
+    __tablename__ = "content_photo_diff"
+
+    vendor_code   = Column(String, primary_key=True)
+    ozon_image_url = Column(String, nullable=True)
+    wb_image_url   = Column(String, nullable=True)
+    ozon_hash      = Column(String, nullable=True)   # 64-битный ahash, hex
+    wb_hash        = Column(String, nullable=True)
+    hamming        = Column(Integer, nullable=True)  # 0..64; NULL — не удалось сравнить
+    error          = Column(String, nullable=True)
+    checked_at     = Column(DateTime, default=datetime.now, onupdate=datetime.now)

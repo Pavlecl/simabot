@@ -3555,10 +3555,13 @@ async def api_content_sync_products(request: Request):
         products_db = r.scalars().all()
 
     from content_sync import MatchedProduct, ProductContent
+    from database import ContentPhotoDiff
     # Читаем WB из кеша в БД — быстро и стабильно
     async with AsyncSessionLocal() as db:
         r = await db.execute(select(WbProductCache))
         wb_cache = {row.vendor_code: row for row in r.scalars().all()}
+        r3 = await db.execute(select(ContentPhotoDiff.vendor_code, ContentPhotoDiff.hamming))
+        photo_hamming = {vc: h for vc, h in r3.all()}
 
     import json as _json
     matched = []
@@ -3599,9 +3602,32 @@ async def api_content_sync_products(request: Request):
         }
 
     return [
-        {"vendor_code": m.vendor_code, "ozon": serialize(m.ozon), "wb": serialize(m.wb)}
+        {"vendor_code": m.vendor_code, "ozon": serialize(m.ozon), "wb": serialize(m.wb),
+         "photo_hamming": photo_hamming.get(m.vendor_code)}
         for m in matched
     ]
+
+
+@app.post("/api/content-sync/photo-diff/run")
+async def api_content_sync_photo_diff_run(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+    from content_sync import run_photo_diff, get_photo_diff_status
+    if get_photo_diff_status()["running"]:
+        return {"ok": True, "already_running": True}
+    asyncio.create_task(run_photo_diff())
+    return {"ok": True}
+
+
+@app.get("/api/content-sync/photo-diff/progress")
+async def api_content_sync_photo_diff_progress(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+    from content_sync import get_photo_diff_status
+    return get_photo_diff_status()
+
 
 @app.post("/api/content-sync/apply")
 async def api_content_sync_apply(request: Request):
