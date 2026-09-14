@@ -4152,7 +4152,7 @@ async def api_sima_check_cart(request: Request, file: UploadFile = File(...)):
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401)
-    import pandas as pd, io
+    import pandas as pd, io, re
     from ozon_api import get_total_ozon_demand
     from database import CostHistory
 
@@ -4171,11 +4171,15 @@ async def api_sima_check_cart(request: Request, file: UploadFile = File(...)):
         if "артикул" in row_content and ("количество" in row_content or "кол-во" in row_content):
             header_row_index = i
             break
-        if sima_file_order_number is None and "заказ" in row_content:
-            for v in row:
-                if isinstance(v, (int, float)) and not pd.isna(v) and v > 0:
-                    sima_file_order_number = str(int(v))
-                    break
+        # Номер — только цифры сразу после слова «заказ» (до 15 любых
+        # нецифровых символов между ними, например "Заказ: 145398574" или
+        # "Заказ №145398574"). Раньше брался первый попавшийся числовой
+        # столбец в любой строке со словом «заказ» — если рядом оказывалось
+        # другое число (дата, телефон, чей-то код), оно и записывалось.
+        if sima_file_order_number is None:
+            m = re.search(r"заказ\D{0,15}?(\d{5,})", row_content)
+            if m:
+                sima_file_order_number = m.group(1)
         if "итого" in row_content:
             vals = [v for v in row if isinstance(v, (int, float)) and not pd.isna(v)]
             if vals:
@@ -4287,7 +4291,6 @@ async def api_sima_assemble(request: Request):
     body = await request.json()
     sima_num    = body.get("sima_num", "").strip()
     supply_date = body.get("supply_date", "").strip()
-    file_order_number = body.get("file_order_number")
     file_total_sum    = body.get("file_total_sum")
     file_total_qty    = body.get("file_total_qty")
     if not sima_num or not supply_date:
@@ -4296,10 +4299,16 @@ async def api_sima_assemble(request: Request):
     from database import SimaOrderHistory
     result = await assemble_orders(sima_order_num=sima_num, supply_date=supply_date)
 
-    order_num_to_save = file_order_number or sima_num
+    # Номер берём ТОЛЬКО из поля "Номер заказа" (sima_num) — того, что оператор
+    # видит на экране и явно подтверждает. Раньше здесь стоял
+    # `file_order_number or sima_num`: file_order_number приходил от JS-объекта
+    # _fileOrderData, который не сбрасывался между сборками. Если оператор
+    # хоть раз пропускал повторную проверку корзины перед новой поставкой,
+    # в историю молча уходил номер из ПРОШЛОГО файла — так десяток разных
+    # поставок за два месяца записались под одним и тем же номером.
     async with AsyncSessionLocal() as db:
         db.add(SimaOrderHistory(
-            sima_order_number=order_num_to_save,
+            sima_order_number=sima_num,
             order_date=datetime.now(),
             total_sum=float(file_total_sum) if file_total_sum is not None else None,
             total_qty=int(file_total_qty) if file_total_qty is not None else None,

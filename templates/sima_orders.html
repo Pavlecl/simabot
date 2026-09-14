@@ -250,12 +250,18 @@ async function checkCart(file) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail);
 
-    // Сохраняем данные файла для передачи в assemble
+    // Сохраняем сумму/количество для передачи в assemble. Номер заказа НЕ
+    // храним отдельно и не шлём в обход поля — подставляем его прямо в
+    // видимый инпут ниже, чтобы сохранялось ровно то, что оператор видит
+    // на экране (и может поправить), а не невидимое значение из объекта,
+    // которое раньше не сбрасывалось между разными поставками.
     _fileOrderData = {
-      number: d.file_order_number || null,
-      sum:    d.file_total_sum    || null,
-      qty:    d.file_total_qty    || null,
+      sum: d.file_total_sum || null,
+      qty: d.file_total_qty || null,
     };
+    if (d.file_order_number) {
+      document.getElementById('sima-num').value = d.file_order_number;
+    }
 
     // Расхождения
     if (d.ok) {
@@ -335,9 +341,8 @@ async function assembleOrders() {
       body: JSON.stringify({
         sima_num: simaNum,
         supply_date: supplyDate,
-        file_order_number: _fileOrderData?.number || null,
-        file_total_sum:    _fileOrderData?.sum    || null,
-        file_total_qty:    _fileOrderData?.qty    || null,
+        file_total_sum: _fileOrderData?.sum || null,
+        file_total_qty: _fileOrderData?.qty || null,
       }),
     });
     const d = await r.json();
@@ -345,12 +350,28 @@ async function assembleOrders() {
     const el = document.getElementById('assemble-result');
     el.innerHTML = d.message.replace(/\n/g, '<br>');
     el.style.display = '';
+
+    // Сбрасываем состояние шагов 2-3 после успешной сборки — иначе номер,
+    // сумма и количество этой поставки молча утекут в следующую, если
+    // оператор забудет заново проверить корзину перед новым заказом.
+    _fileOrderData = null;
+    document.getElementById('sima-num').value = '';
+    document.getElementById('cart-file').value = '';
+    document.getElementById('check-result').style.display = 'none';
+    resetDropZone();
   } catch(e) {
     alert('Ошибка: ' + e.message);
   } finally {
     document.getElementById('assemble-loader').style.display = 'none';
     btn.disabled = false;
   }
+}
+
+function resetDropZone() {
+  document.getElementById('drop-zone').innerHTML = `
+    <div style="font-size:24px;margin-bottom:8px">📂</div>
+    <div style="font-size:12px">Перетащите Excel-файл корзины или нажмите для выбора</div>
+    <div style="font-size:10px;margin-top:4px;color:var(--text-dim)">.xlsx, .csv</div>`;
 }
 
 function copyArt(el, art) {
