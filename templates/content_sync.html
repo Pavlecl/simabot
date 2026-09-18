@@ -31,6 +31,10 @@
   <input type="text" id="filter-input" placeholder="🔍 Артикул или название…"
     oninput="filterRows(this.value)"
     style="padding:5px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px;width:240px">
+  <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;gap:4px;align-items:center"
+    title="Скрыть строки, где не отмечено ни одно поле (фото, название, описание, характеристики)">
+    <input type="checkbox" id="filter-marked-only" onchange="filterRows(document.getElementById('filter-input').value)"> Только отмеченные
+  </label>
   <select id="page-size-select" onchange="changePageSize(this.value)"
   style="padding:5px 8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px">
   <option value="50">50</option>
@@ -202,6 +206,17 @@ function isPhotoDiff(p) {
   return typeof p.photo_hamming === 'number' && p.photo_hamming >= PHOTO_DIFF_THRESHOLD;
 }
 
+// Характеристики — список {name, value}; порядок на Ozon и WB может не
+// совпадать, поэтому сравниваем как набор пар "имя::значение", а не строки.
+function attrsKey(attrs) {
+  return (attrs||[])
+    .map(a => `${(a.name||'').trim().toLowerCase()}::${(a.value||'').toString().trim().toLowerCase()}`)
+    .sort().join('|');
+}
+function isAttrsDiff(o, w) {
+  return attrsKey(o.attributes) !== attrsKey(w.attributes);
+}
+
 function makeRow(p) {
   const o = p.ozon || {}, w = p.wb || {};
   const tr = document.createElement('tr');
@@ -209,6 +224,7 @@ function makeRow(p) {
   const imgsDiff = isPhotoDiff(p);
   const nameDiff = (o.name||'') !== (w.name||'');
   const descDiff = (o.description||'') !== (w.description||'');
+  const attrsDiff = isAttrsDiff(o, w);
   const ozImgs = (o.images||[]).slice(0,1).map(u => `<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
   const wbImgs = (w.images||[]).slice(0,1).map(u => `<img src="${u}" loading="lazy" onerror="this.style.display='none'">`).join('');
   const photoHint = typeof p.photo_hamming === 'number'
@@ -242,7 +258,7 @@ function makeRow(p) {
         <div style="padding-top:20px"><input type="checkbox" class="field-cb" data-code="${p.vendor_code}" data-field="description" onchange="onFieldCb(this)"></div>
       </div>
     </td>
-    <td class="td-attributes">
+    <td class="td-attributes${attrsDiff?' diff':''}">
       <div class="cmp">
         <div><div class="cmp-lbl">Ozon</div><div class="val-oz attr-scroll">${ozAttrs||'—'}</div></div>
         <div><div class="cmp-lbl">WB</div><div class="val-wb attr-scroll">${wbAttrs||'—'}</div></div>
@@ -253,7 +269,9 @@ function makeRow(p) {
 }
 
 // ── Чекбоксы ─────────────────────────────────────────────────────────────────
-function syncRow(master) {
+// silent=true — не перерисовывать фильтр на каждой строке при массовых
+// операциях (toggleAll); вызывающий сам обновит фильтр один раз в конце.
+function syncRow(master, silent) {
   const code = master.dataset.code;
   if (master.checked) {
     if (!selectedFields[code]) selectedFields[code] = new Set();
@@ -268,6 +286,7 @@ function syncRow(master) {
     master.closest('tr').classList.remove('sel-row');
   }
   updateBtn();
+  if (!silent) applyMarkedFilterIfActive();
 }
 
 function onFieldCb(cb) {
@@ -281,21 +300,25 @@ function onFieldCb(cb) {
     if (!selectedFields[code]?.size) delete selectedFields[code];
   }
   updateBtn();
+  applyMarkedFilterIfActive();
 }
 
 function toggleAll(checked) {
-  document.querySelectorAll('.row-cb').forEach(cb => { cb.checked = checked; syncRow(cb); });
+  document.querySelectorAll('.row-cb').forEach(cb => { cb.checked = checked; syncRow(cb, true); });
+  applyMarkedFilterIfActive();
 }
 function selectAll() {
   allProducts.forEach(p => {
     selectedFields[p.vendor_code] = new Set(['images','name','description','attributes']);
   });
-  refreshCheckboxes(); updateBtn();
+  refreshCheckboxes(); updateBtn(); applyMarkedFilterIfActive();
 }
 function deselectAll() {
   Object.keys(selectedFields).forEach(k => delete selectedFields[k]);
-  refreshCheckboxes(); updateBtn();
+  refreshCheckboxes(); updateBtn(); applyMarkedFilterIfActive();
 }
+// Отмечает поля, где Ozon и WB реально отличаются — сразу по всем четырём:
+// фото (по содержимому, не по URL), название, описание, характеристики.
 function selectDiff() {
   allProducts.forEach(p => {
     const o = p.ozon || {}, w = p.wb || {};
@@ -303,10 +326,11 @@ function selectDiff() {
     if (isPhotoDiff(p))                                        fields.add('images');
     if ((o.name||'') !== (w.name||''))                         fields.add('name');
     if ((o.description||'') !== (w.description||''))           fields.add('description');
+    if (isAttrsDiff(o, w))                                      fields.add('attributes');
     if (fields.size) selectedFields[p.vendor_code] = fields;
     else delete selectedFields[p.vendor_code];
   });
-  refreshCheckboxes(); updateBtn();
+  refreshCheckboxes(); updateBtn(); applyMarkedFilterIfActive();
 }
 
 // Только «Фото» — там, где картинка реально другая (Hamming >= порога).
@@ -320,7 +344,7 @@ function selectPhotoDiff() {
     selectedFields[p.vendor_code].add('images');
     n++;
   });
-  refreshCheckboxes(); updateBtn();
+  refreshCheckboxes(); updateBtn(); applyMarkedFilterIfActive();
   showStatus(`Отмечено карточек с разными фото: ${n} (Hamming ≥ ${PHOTO_DIFF_THRESHOLD} из 64)`, 'ok');
 }
 
@@ -442,6 +466,7 @@ async function applyContent() {
     okCodes.forEach(code => delete selectedFields[code]);
     refreshCheckboxes();
     updateBtn();
+    applyMarkedFilterIfActive();
   } catch(e) {
     showStatus(e.message, 'error');
   } finally {
@@ -462,16 +487,6 @@ function showResults(data) {
   document.getElementById('result-modal').style.display = 'flex';
 }
 function closeResultModal() { document.getElementById('result-modal').style.display = 'none'; }
-
-// ── Фильтр ───────────────────────────────────────────────────────────────────
-function filterRows(q) {
-  q = q.toLowerCase();
-  filteredProducts = allProducts.filter(p => {
-    const name = (p.ozon?.name || '').toLowerCase();
-    return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
-  });
-  renderPage(0);
-}
 
 // ── Видимость столбцов ───────────────────────────────────────────────────────
 function toggleCol(cb) {
@@ -634,13 +649,6 @@ function showConfirm(text) {
   });
 }
 
-function changePageSize(val) {
-  PAGE_SIZE = parseInt(val);
-  currentPage = 0;
-  document.getElementById('sync-body').innerHTML = '';
-  renderPage(0);
-}
-
 async function loadActiveAccounts() {
   try {
     const r = await fetch('/api/active-accounts');
@@ -701,13 +709,28 @@ function changePageSize(val) {
   renderPage(0);
 }
 
+// Текстовый поиск + «Только отмеченные» — работают вместе (И), фильтр по
+// отметкам учитывает все четыре поля сразу (фото, название, описание,
+// характеристики): строка остаётся, если отмечено хоть одно из них.
 function filterRows(q) {
   q = q.toLowerCase();
+  const onlyMarked = document.getElementById('filter-marked-only')?.checked;
   filteredProducts = allProducts.filter(p => {
     const name = (p.ozon?.name || '').toLowerCase();
-    return p.vendor_code.toLowerCase().includes(q) || name.includes(q);
+    if (!(p.vendor_code.toLowerCase().includes(q) || name.includes(q))) return false;
+    if (onlyMarked) {
+      const sel = selectedFields[p.vendor_code];
+      return !!sel && sel.size > 0;
+    }
+    return true;
   });
   renderPage(0);
+}
+
+function applyMarkedFilterIfActive() {
+  if (document.getElementById('filter-marked-only')?.checked) {
+    filterRows(document.getElementById('filter-input').value);
+  }
 }
 
 
