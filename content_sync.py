@@ -1448,10 +1448,24 @@ def get_photo_diff_status() -> dict:
     return dict(_photo_diff_status)
 
 
+def _trim_border(im: "Image.Image", tol: int = 12) -> "Image.Image":
+    """Обрезает однородную рамку/подложку по краям кадра.
+    Площадки добавляют разный по толщине паддинг вокруг товара — без обрезки
+    товар занимает разную долю кадра, и average hash считает фото разными,
+    хотя это один и тот же снимок."""
+    from PIL import ImageChops, Image
+    bg = Image.new(im.mode, im.size, im.getpixel((0, 0)))
+    diff = ImageChops.difference(im, bg)
+    diff = ImageChops.add(diff, diff, 2.0, -tol)
+    bbox = diff.getbbox()
+    return im.crop(bbox) if bbox else im
+
+
 def _ahash_bytes(data: bytes) -> str:
     """8×8 average hash. Возвращает 16-символьный hex (64 бита)."""
     from PIL import Image
-    im = Image.open(_io_photodiff.BytesIO(data)).convert("L").resize((8, 8), Image.LANCZOS)
+    im = Image.open(_io_photodiff.BytesIO(data)).convert("L")
+    im = _trim_border(im).resize((8, 8), Image.LANCZOS)
     px = list(im.getdata())
     avg = sum(px) / len(px)
     bits = "".join("1" if p > avg else "0" for p in px)
