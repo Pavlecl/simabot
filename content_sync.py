@@ -1461,15 +1461,25 @@ def _trim_border(im: "Image.Image", tol: int = 12) -> "Image.Image":
     return im.crop(bbox) if bbox else im
 
 
-def _ahash_bytes(data: bytes) -> str:
-    """8×8 average hash. Возвращает 16-символьный hex (64 бита)."""
+def _ahash_from_image(im: "Image.Image") -> str:
     from PIL import Image
-    im = Image.open(_io_photodiff.BytesIO(data)).convert("L")
-    im = _trim_border(im).resize((8, 8), Image.LANCZOS)
+    im = im.resize((8, 8), Image.LANCZOS)
     px = list(im.getdata())
     avg = sum(px) / len(px)
     bits = "".join("1" if p > avg else "0" for p in px)
     return f"{int(bits, 2):016x}"
+
+
+def _ahash_bytes(data: bytes) -> tuple[str, str]:
+    """8×8 average hash. Возвращает (raw_hash, trimmed_hash) — хеш исходного
+    кадра и хеш с обрезанной однородной рамкой/подложкой.
+    Оба варианта нужны: если рамки нет (или площадки обрезают одинаково),
+    обрезка иногда ловит шум JPEG/WEBP-сжатия по краям и портит совпадение —
+    тогда выигрывает raw_hash. Если рамка реально разная (см. content-sync),
+    выигрывает trimmed_hash. Сравнение берёт минимум Hamming по обеим парам."""
+    from PIL import Image
+    im = Image.open(_io_photodiff.BytesIO(data)).convert("L")
+    return _ahash_from_image(im), _ahash_from_image(_trim_border(im))
 
 
 def _hamming(a_hex: str, b_hex: str) -> int:
@@ -1496,9 +1506,9 @@ async def _compare_one(session, sem, vendor_code: str, ozon_url: str, wb_url: st
         row["error"] = "не скачалось: " + ("Ozon" if not ob else "") + ("WB" if not wbb else "")
         return row
     try:
-        oh, wh = _ahash_bytes(ob), _ahash_bytes(wbb)
-        row["ozon_hash"], row["wb_hash"] = oh, wh
-        row["hamming"] = _hamming(oh, wh)
+        (o_raw, o_trim), (w_raw, w_trim) = _ahash_bytes(ob), _ahash_bytes(wbb)
+        row["ozon_hash"], row["wb_hash"] = o_raw, w_raw
+        row["hamming"] = min(_hamming(o_raw, w_raw), _hamming(o_trim, w_trim))
     except Exception as e:  # noqa: BLE001
         row["error"] = f"ошибка сравнения: {e}"
     return row

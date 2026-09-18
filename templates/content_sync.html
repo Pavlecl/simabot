@@ -712,7 +712,12 @@ function changePageSize(val) {
 // Текстовый поиск + «Только отмеченные» — работают вместе (И), фильтр по
 // отметкам учитывает все четыре поля сразу (фото, название, описание,
 // характеристики): строка остаётся, если отмечено хоть одно из них.
-function filterRows(q) {
+// page — на какой странице остаться после пересчёта; по умолчанию 0
+// (новый текстовый запрос или включение/выключение режима — это переход,
+// логично начать сначала). При снятии отдельных галочек в режиме «только
+// отмеченные» (см. applyMarkedFilterIfActive) страницу и прокрутку нужно
+// сохранить — иначе список каждый раз прыгает к первому артикулу.
+function filterRows(q, page) {
   q = q.toLowerCase();
   const onlyMarked = document.getElementById('filter-marked-only')?.checked;
   filteredProducts = allProducts.filter(p => {
@@ -724,13 +729,16 @@ function filterRows(q) {
     }
     return true;
   });
-  renderPage(0);
+  const maxPage = Math.max(0, Math.ceil(filteredProducts.length / PAGE_SIZE) - 1);
+  renderPage(Math.min(page || 0, maxPage));
 }
 
 function applyMarkedFilterIfActive() {
-  if (document.getElementById('filter-marked-only')?.checked) {
-    filterRows(document.getElementById('filter-input').value);
-  }
+  if (!document.getElementById('filter-marked-only')?.checked) return;
+  const wrap = document.getElementById('table-wrap');
+  const scrollTop = wrap ? wrap.scrollTop : 0;
+  filterRows(document.getElementById('filter-input').value, currentPage);
+  if (wrap) wrap.scrollTop = scrollTop;
 }
 
 
