@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.tool-header{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:20px}
+.setup-card{background:var(--surface);border:1px solid var(--border);padding:20px;margin-bottom:16px}
+.setup-row{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.setup-field{display:flex;flex-direction:column;gap:6px}
+.setup-field.grow{flex:1;min-width:280px}
+.setup-label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim)}
+.setup-select,.setup-textarea{padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px}
+.setup-select{min-width:200px;cursor:pointer}
+.setup-textarea{width:100%;min-height:64px;font-family:monospace;resize:vertical}
+.setup-select:focus,.setup-textarea:focus{border-color:var(--accent);outline:none}
+
+.stats{display:flex;gap:18px;flex-wrap:wrap;padding:12px 16px;background:var(--surface);border:1px solid var(--border);margin-bottom:16px;font-size:12px}
+.stat b{display:block;font-size:19px;line-height:1.3}
+.stat span{color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.stat.ok b{color:#22c55e}
+.stat.dim b{color:var(--text-dim)}
+.stat.warn b{color:#f59e0b}
+
+.results-card{background:var(--surface);border:1px solid var(--border)}
+.results-toolbar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.items-table{width:100%;border-collapse:collapse}
+.items-table th{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim);padding:8px 10px;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
+.items-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12px}
+.items-table tr.selected td{background:rgba(255,106,0,.04)}
+.items-table tr.done td{opacity:.5}
+
+.num{font-family:monospace;font-size:11px;color:var(--accent);white-space:nowrap}
+.pill{display:inline-block;font-size:10px;padding:1px 7px;border:1px solid var(--border);color:var(--text-dim);white-space:nowrap}
+.pill.ok{color:#22c55e;border-color:rgba(34,197,94,.4)}
+.pill.warn{color:#f59e0b;border-color:rgba(245,158,11,.4)}
+.pill.err{color:#ef4444;border-color:rgba(239,68,68,.4)}
+.offers{font-size:10px;color:var(--text-dim);max-width:280px;line-height:1.5}
+.issues{font-size:10px;color:#f59e0b;max-width:220px}
+
+.create-bar{padding:16px;border-top:2px solid var(--border);display:flex;align-items:center;gap:16px;background:var(--surface);flex-wrap:wrap}
+.result-row{display:flex;align-items:center;gap:10px;padding:6px 12px;font-size:11px;border-bottom:1px solid var(--border)}
+.result-ok{color:#22c55e}
+.result-err{color:#ef4444}
+
+.loader-overlay{display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:12px;color:var(--text-dim);font-size:12px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hint{font-size:11px;color:var(--text-dim);line-height:1.6}
+</style>
+
+<div class="tool-header">
+  Документы качества <span style="color:var(--accent)">WB → Ozon</span>
+</div>
+
+<div class="setup-card">
+  <div class="setup-row">
+    <div class="setup-field">
+      <span class="setup-label">Кабинет Ozon</span>
+      <select id="ozon-account" class="setup-select">
+        {% for acc in ozon_accounts %}
+        <option value="{{ acc.id }}" {% if acc.is_active %}selected{% endif %}>{{ acc.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="setup-field grow">
+      <span class="setup-label">Артикулы (пусто = весь каталог из кеша WB)</span>
+      <textarea id="offers-input" class="setup-textarea" placeholder="7636553&#10;7359377"></textarea>
+    </div>
+    <button class="btn primary" id="btn-lookup" onclick="runLookup()">↻ Проверить</button>
+  </div>
+  <div class="hint" style="margin-top:10px">
+    Номера деклараций и сертификатов берутся из кеша карточек WB — обновите его на странице
+    <a href="/content-sync" style="color:var(--accent)">Контент</a>, если давно не обновляли.
+    Файл документа загружать не нужно: Ozon сверяет номер с госреестром сам.
+  </div>
+</div>
+
+<div id="stats" class="stats" style="display:none"></div>
+
+<div id="results-section" style="display:none">
+  <div class="results-card">
+    <div class="loader-overlay" id="lookup-loader">
+      <div class="spinner"></div>
+      <span>Сверяю документы WB с каталогом Ozon...</span>
+    </div>
+
+    <div id="results-body" style="display:none">
+      <div class="results-toolbar">
+        <button class="btn" onclick="toggleAll(true)"  style="font-size:10px">✓ Выбрать готовые</button>
+        <button class="btn" onclick="toggleAll(false)" style="font-size:10px">✗ Снять все</button>
+        <span id="sel-info" style="font-size:11px;color:var(--text-dim)"></span>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th style="width:30px"><input type="checkbox" id="check-all" onchange="toggleAll(this.checked)"></th>
+              <th>Номер документа</th>
+              <th>Тип</th>
+              <th>Страна</th>
+              <th>Действует до</th>
+              <th>Товаров</th>
+              <th>Артикулы</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody id="items-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="create-bar">
+        <button class="btn primary" id="btn-submit" onclick="submitRows()" disabled>
+          ↑ Загрузить на Ozon (<span id="submit-count">0</span>)
+        </button>
+        <span class="hint" id="submit-hint">Отметьте документы для загрузки</span>
+      </div>
+    </div>
+
+    <div id="empty-state" style="display:none;padding:50px;text-align:center;color:var(--text-dim);font-size:13px"></div>
+  </div>
+
+  <div id="create-results" style="display:none;margin-top:16px;background:var(--surface);border:1px solid var(--border)">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:bold">
+      Результаты загрузки
+    </div>
+    <div id="create-results-list"></div>
+  </div>
+</div>
+
+<script>
+let _ozonAccountId = null;
+let _plan = [];
+
+async function runLookup() {
+  _ozonAccountId = document.getElementById('ozon-account').value;
+  const raw = document.getElementById('offers-input').value;
+  const offer_ids = raw.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+
+  document.getElementById('results-section').style.display = '';
+  document.getElementById('lookup-loader').style.display = 'flex';
+  document.getElementById('results-body').style.display = 'none';
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('create-results').style.display = 'none';
+  document.getElementById('stats').style.display = 'none';
+  document.getElementById('btn-lookup').disabled = true;
+
+  try {
+    const r = await fetch('/api/cert-sync/lookup', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: _ozonAccountId, offer_ids}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка');
+
+    _plan = data.plan;
+    renderStats(data);
+
+    if (!_plan.length) {
+      document.getElementById('empty-state').textContent =
+        'Документов не нашлось. Проверьте, что кеш WB обновлён и у карточек заполнены разрешительные документы.';
+      document.getElementById('empty-state').style.display = '';
+    } else {
+      renderTable();
+      document.getElementById('results-body').style.display = '';
+    }
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, 'error');
+  } finally {
+    document.getElementById('lookup-loader').style.display = 'none';
+    document.getElementById('btn-lookup').disabled = false;
+  }
+}
+
+function renderStats(data) {
+  const t = data.totals;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat ok"><b>${t.ready}</b><span>готовы к загрузке</span></div>
+    <div class="stat"><b>${t.products_covered}</b><span>товаров покроют</span></div>
+    <div class="stat dim"><b>${t.already}</b><span>уже на Ozon</span></div>
+    <div class="stat warn"><b>${t.no_documents}</b><span>карточек WB без документов</span></div>
+    ${data.not_in_wb_cache.length ? `<div class="stat warn"><b>${data.not_in_wb_cache.length}</b><span>нет в кеше WB</span></div>` : ''}
+  `;
+  document.getElementById('stats').style.display = '';
+}
+
+function renderTable() {
+  const tbody = document.getElementById('items-tbody');
+  tbody.innerHTML = _plan.map((p, i) => {
+    const blocked = p.already_on_ozon || p.issues.length > 0;
+    const status = p.already_on_ozon
+      ? '<span class="pill">уже загружен</span>'
+      : (p.issues.length ? `<span class="pill err">нельзя</span>` : '<span class="pill ok">готов</span>');
+    const until = p.infinite ? 'бессрочно' : (p.expire_date || '').slice(0, 10);
+    const shown = p.offer_ids.slice(0, 6).join(', ');
+    const more = p.offer_ids.length > 6 ? ` и ещё ${p.offer_ids.length - 6}` : '';
+    return `
+      <tr id="row-${i}" class="${p.already_on_ozon ? 'done' : ''}">
+        <td><input type="checkbox" id="chk-${i}" onchange="onCheck()" ${blocked ? 'disabled' : ''}></td>
+        <td><span class="num">${x(p.number)}</span></td>
+        <td>${x(p.type_name)}</td>
+        <td>${x(p.certificate_country)}</td>
+        <td>${x(until)}</td>
+        <td><b>${p.products_count}</b></td>
+        <td class="offers">${x(shown)}${x(more)}</td>
+        <td>${status}${p.issues.length ? `<div class="issues">${p.issues.map(x).join('; ')}</div>` : ''}</td>
+      </tr>`;
+  }).join('');
+  onCheck();
+}
+
+function toggleAll(on) {
+  _plan.forEach((p, i) => {
+    const c = document.getElementById('chk-' + i);
+    if (c && !c.disabled) c.checked = on;
+  });
+  document.getElementById('check-all').checked = on;
+  onCheck();
+}
+
+function onCheck() {
+  let docs = 0, products = 0;
+  _plan.forEach((p, i) => {
+    const c = document.getElementById('chk-' + i);
+    const row = document.getElementById('row-' + i);
+    const on = c && c.checked;
+    if (row) row.classList.toggle('selected', !!on);
+    if (on) { docs++; products += p.products_count; }
+  });
+  document.getElementById('submit-count').textContent = docs;
+  document.getElementById('btn-submit').disabled = docs === 0;
+  document.getElementById('sel-info').textContent = docs
+    ? `Выбрано ${docs} документов, покроют ${products} товаров` : '';
+  document.getElementById('submit-hint').textContent = docs
+    ? `${products} товаров получат документ` : 'Отметьте документы для загрузки';
+}
+
+async function submitRows() {
+  const rows = _plan.filter((p, i) => document.getElementById('chk-' + i)?.checked);
+  if (!rows.length) return;
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+
+  try {
+    const r = await fetch('/api/cert-sync/submit', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: _ozonAccountId, rows}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка');
+    document.getElementById('create-results').style.display = '';
+    document.getElementById('create-results').scrollIntoView({behavior: 'smooth'});
+    await pollStatus();
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function pollStatus() {
+  while (true) {
+    const s = await fetch('/api/cert-sync/status').then(r => r.json());
+    renderProgress(s);
+    if (!s.running) break;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}
+
+function renderProgress(s) {
+  const ok = s.results.filter(r => r.status === 'ok');
+  const err = s.results.filter(r => r.status !== 'ok');
+  const products = ok.reduce((n, r) => n + (r.products || 0), 0);
+  document.getElementById('create-results-list').innerHTML = `
+    <div style="padding:8px 16px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border)">
+      ${s.running ? `⏳ Загружаю ${s.done} из ${s.total}...` : '✅ Готово'} &nbsp;
+      Загружено: <b style="color:#22c55e">${ok.length}</b> (${products} товаров) &nbsp;
+      Ошибок: <b style="color:#ef4444">${err.length}</b>
+      ${s.error ? `<div style="color:#ef4444;margin-top:4px">${x(s.error)}</div>` : ''}
+    </div>
+    ${s.results.map(r => `
+      <div class="result-row">
+        <span class="num" style="min-width:230px">${x(r.number)}</span>
+        <span class="${r.status === 'ok' ? 'result-ok' : 'result-err'}">${r.status === 'ok' ? '✓ загружен' : '✗'}</span>
+        <span style="color:var(--text-dim)">${x(r.message)}</span>
+      </div>
+    `).join('')}
+  `;
+}
+
+function x(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

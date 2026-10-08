@@ -3940,6 +3940,7 @@ async def wb_cache_refresh(request: Request):
                             attributes_json = _json.dumps(attrs,     ensure_ascii=False),
                             barcodes_json   = _json.dumps(barcodes,  ensure_ascii=False),
                             dimensions_json = _json.dumps(dims,      ensure_ascii=False),
+                            documents_json  = _json.dumps(card.get("documents") or {}, ensure_ascii=False),
                             updated_at      = datetime.now(),
                         ))
 
@@ -4182,6 +4183,49 @@ async def api_sima_to_ozon_submit(request: Request, user: dict = Depends(require
 async def api_sima_to_ozon_import_status(user: dict = Depends(require_any_role)):
     import sima_to_ozon
     return sima_to_ozon.get_sima_to_ozon_import_status()
+
+
+# ── Документы качества: перенос деклараций и сертификатов WB → Ozon ─────────
+
+@app.get("/cert-sync", response_class=HTMLResponse)
+async def cert_sync_page(request: Request, user: dict = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+    ozon_accounts = (await db.execute(select(OzonAccount).order_by(OzonAccount.id))).scalars().all()
+    return templates.TemplateResponse("cert_sync.html", {
+        "request": request, "user": user, "active_tab": "cert-sync",
+        "ozon_accounts": ozon_accounts,
+    })
+
+
+@app.post("/api/cert-sync/lookup")
+async def api_cert_sync_lookup(request: Request, user: dict = Depends(require_any_role)):
+    from cert_sync import lookup_certificates
+    body = await request.json()
+    ozon_account_id = int(body["ozon_account_id"])
+    offer_ids = list(body.get("offer_ids") or [])
+    try:
+        return await lookup_certificates(ozon_account_id, offer_ids or None)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/cert-sync/submit")
+async def api_cert_sync_submit(request: Request, user: dict = Depends(require_any_role)):
+    import cert_sync
+    body = await request.json()
+    ozon_account_id = int(body["ozon_account_id"])
+    rows = list(body.get("rows") or [])
+    if not rows:
+        raise HTTPException(status_code=400, detail="Не выбраны документы")
+    if cert_sync._import_status.get("running"):
+        raise HTTPException(status_code=409, detail="Загрузка уже выполняется, дождитесь завершения")
+    asyncio.create_task(cert_sync.submit_certificates(ozon_account_id, rows))
+    return {"started": True, "total": len(rows)}
+
+
+@app.get("/api/cert-sync/status")
+async def api_cert_sync_status(user: dict = Depends(require_any_role)):
+    import cert_sync
+    return cert_sync.get_import_status()
 
 
 # ── Заказы Сима ──────────────────────────────────────────────────────────────
