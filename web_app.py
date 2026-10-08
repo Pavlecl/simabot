@@ -4118,6 +4118,72 @@ async def api_wb_to_ozon_import_status(user: dict = Depends(require_any_role)):
     return content_sync._wb_to_ozon_import_status
 
 
+# ── Сима-Ленд → Ozon: создание новых карточек по списку артикулов ───────────
+
+@app.get("/sima-to-ozon", response_class=HTMLResponse)
+async def sima_to_ozon_page(request: Request, user: dict = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+    ozon_accounts = (await db.execute(select(OzonAccount).order_by(OzonAccount.id))).scalars().all()
+    return templates.TemplateResponse("sima_to_ozon.html", {
+        "request": request, "user": user, "active_tab": "sima-to-ozon",
+        "ozon_accounts": ozon_accounts,
+    })
+
+
+@app.post("/api/sima-to-ozon/lookup")
+async def api_sima_to_ozon_lookup(request: Request, user: dict = Depends(require_any_role)):
+    from sima_to_ozon import lookup_sima_to_ozon
+    body = await request.json()
+    ozon_account_id = int(body["ozon_account_id"])
+    sids = list(body.get("sids") or [])
+    if not sids:
+        raise HTTPException(status_code=400, detail="Не указаны артикулы")
+    try:
+        return await lookup_sima_to_ozon(ozon_account_id, sids)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/sima-to-ozon/category-search")
+async def api_sima_to_ozon_category_search(ozon_account_id: int, q: str, user: dict = Depends(require_any_role)):
+    from sima_to_ozon import search_ozon_categories
+    return {"results": await search_ozon_categories(ozon_account_id, q)}
+
+
+@app.post("/api/sima-to-ozon/category-attrs")
+async def api_sima_to_ozon_category_attrs(request: Request, user: dict = Depends(require_any_role)):
+    from sima_to_ozon import get_category_attrs_with_draft
+    body = await request.json()
+    attrs = await get_category_attrs_with_draft(
+        ozon_account_id=int(body["ozon_account_id"]),
+        description_category_id=int(body["description_category_id"]),
+        type_id=int(body["type_id"]),
+        attrs_raw=dict(body.get("attrs_raw") or {}),
+        trademark=str(body.get("trademark") or ""),
+        fallback_name=str(body.get("fallback_name") or ""),
+    )
+    return {"attrs": attrs}
+
+
+@app.post("/api/sima-to-ozon/submit")
+async def api_sima_to_ozon_submit(request: Request, user: dict = Depends(require_any_role)):
+    import sima_to_ozon
+    body = await request.json()
+    ozon_account_id = int(body["ozon_account_id"])
+    rows = list(body.get("rows") or [])
+    if not rows:
+        raise HTTPException(status_code=400, detail="Не выбраны товары")
+    if sima_to_ozon._sima_to_ozon_import_status.get("running"):
+        raise HTTPException(status_code=409, detail="Загрузка уже выполняется, дождитесь завершения")
+    asyncio.create_task(sima_to_ozon.submit_sima_to_ozon_import(ozon_account_id, rows))
+    return {"started": True, "total": len(rows)}
+
+
+@app.get("/api/sima-to-ozon/import-status")
+async def api_sima_to_ozon_import_status(user: dict = Depends(require_any_role)):
+    import sima_to_ozon
+    return sima_to_ozon.get_sima_to_ozon_import_status()
+
+
 # ── Заказы Сима ──────────────────────────────────────────────────────────────
 
 @app.get("/sima-orders")

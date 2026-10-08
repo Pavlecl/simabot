@@ -1,0 +1,458 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.tool-header{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:20px}
+.setup-card{background:var(--surface);border:1px solid var(--border);padding:20px;margin-bottom:16px}
+.setup-row{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.setup-field{display:flex;flex-direction:column;gap:6px}
+.setup-field.grow{flex:1;min-width:280px}
+.setup-label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim)}
+.setup-select,.setup-input,.setup-textarea{padding:7px 10px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:12px}
+.setup-select{min-width:200px;cursor:pointer}
+.setup-textarea{width:100%;min-height:70px;font-family:monospace;resize:vertical}
+.setup-select:focus,.setup-input:focus,.setup-textarea:focus{border-color:var(--accent);outline:none}
+
+.notice{padding:10px 14px;margin-bottom:12px;font-size:12px;border-left:3px solid var(--border)}
+.notice.ok{border-color:#22c55e;color:#22c55e}
+.notice.warn{border-color:#f59e0b;color:#f59e0b}
+.notice.err{border-color:#ef4444;color:#ef4444}
+
+.results-card{background:var(--surface);border:1px solid var(--border)}
+.results-toolbar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.results-count{font-size:12px;color:var(--text-dim)}
+.results-count b{color:var(--text)}
+.sel-count{font-size:11px;background:rgba(255,106,0,.12);color:var(--accent);padding:3px 10px;border-radius:2px}
+
+.items-table{width:100%;border-collapse:collapse}
+.items-table th{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-dim);padding:8px 10px;border-bottom:2px solid var(--border);text-align:left;white-space:nowrap}
+.items-table td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12px}
+.items-table tr.selected td{background:rgba(255,106,0,.04)}
+.items-table tr.row-problem td{background:rgba(239,68,68,.04)}
+
+.thumb{width:48px;height:48px;object-fit:cover;border:1px solid var(--border)}
+.thumb-ph{width:48px;height:48px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:18px}
+.art-chip{font-family:monospace;color:var(--accent)}
+.cell-input{width:100%;padding:4px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:11px}
+.cell-input:focus{border-color:var(--accent);outline:none}
+.cell-name{min-width:200px;max-width:260px}
+.dims-row{display:flex;gap:3px}
+.dims-row input{width:46px}
+
+.cat-cell{position:relative;min-width:220px}
+.cat-picked{font-size:11px;color:var(--text);padding:4px 6px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);cursor:pointer}
+.cat-picked.empty{color:var(--text-dim);background:var(--surface2);border-color:var(--border)}
+.cat-dropdown{position:absolute;z-index:20;top:100%;left:0;background:var(--surface);border:1px solid var(--accent);min-width:320px;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.cat-dropdown input{width:100%;padding:6px 8px;background:var(--surface2);border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:12px}
+.cat-opt{padding:6px 8px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--border)}
+.cat-opt:hover{background:rgba(255,106,0,.1);color:var(--accent)}
+
+.warn-list{font-size:10px;color:#f59e0b;max-width:220px}
+.warn-list div{margin-bottom:2px}
+
+.attrs-row td{padding:0;border-bottom:1px solid var(--border)}
+.attrs-panel{padding:12px 16px;background:var(--surface2);display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.attr-field{display:flex;flex-direction:column;gap:3px}
+.attr-label{font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.3px}
+.attr-label.req{color:var(--accent)}
+.attr-loading{padding:12px 16px;font-size:11px;color:var(--text-dim)}
+
+.create-bar{padding:16px;border-top:2px solid var(--border);display:flex;align-items:center;gap:16px;background:var(--surface);flex-wrap:wrap}
+.result-row{display:flex;align-items:center;gap:10px;padding:6px 12px;font-size:11px;border-bottom:1px solid var(--border)}
+.result-row .art{font-family:monospace;color:var(--accent);min-width:100px}
+.result-ok{color:#22c55e}
+.result-err{color:#ef4444}
+.result-warn{color:#f59e0b;font-size:11px;margin-left:8px}
+
+.loader-overlay{display:none;flex-direction:column;align-items:center;justify-content:center;padding:60px;gap:12px;color:var(--text-dim);font-size:12px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+
+<div class="tool-header">
+  Сима-Ленд → Ozon <span style="color:var(--accent)">Создание новых карточек</span>
+</div>
+
+<!-- Настройка -->
+<div class="setup-card">
+  <div class="setup-row">
+    <div class="setup-field">
+      <span class="setup-label">Кабинет Ozon (куда заливать)</span>
+      <select id="ozon-account" class="setup-select">
+        {% for acc in ozon_accounts %}
+        <option value="{{ acc.id }}" {% if acc.is_active %}selected{% endif %}>{{ acc.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="setup-field grow">
+      <span class="setup-label">Артикулы Сима-Ленд (sid) — по одному в строке, через запятую или пробел</span>
+      <textarea id="sids-input" class="setup-textarea" placeholder="7060585&#10;7060618&#10;3426197"></textarea>
+    </div>
+    <button class="btn primary" id="btn-lookup" onclick="runLookup()">↻ Проверить</button>
+  </div>
+  <div style="margin-top:10px;font-size:11px;color:var(--text-dim)">
+    offer_id новой карточки на Ozon = артикул Сима-Ленд. Товары, у которых такой offer_id уже есть на Ozon, пропускаются с пометкой — повторно не создаются.
+  </div>
+</div>
+
+<div id="notices"></div>
+
+<!-- Результаты -->
+<div id="results-section" style="display:none">
+  <div class="results-card">
+    <div class="loader-overlay" id="lookup-loader">
+      <div class="spinner"></div>
+      <span>Запрашиваю Сима-Ленд и сверяю с каталогом Ozon...</span>
+    </div>
+
+    <div id="results-body" style="display:none">
+      <div class="results-toolbar">
+        <div class="results-count">К созданию: <b id="found-count">0</b> товаров</div>
+        <button class="btn" onclick="toggleAll(true)"  style="font-size:10px">✓ Выбрать все</button>
+        <button class="btn" onclick="toggleAll(false)" style="font-size:10px">✗ Снять все</button>
+        <span class="sel-count" id="sel-count" style="display:none">Выбрано: <b id="sel-num">0</b></span>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th style="width:30px"><input type="checkbox" id="check-all" onchange="toggleAll(this.checked)"></th>
+              <th style="width:56px">Фото</th>
+              <th>Артикул</th>
+              <th>Название</th>
+              <th>Категория Ozon*</th>
+              <th>Цена*</th>
+              <th>НДС,%</th>
+              <th>Ш×В×Г, мм</th>
+              <th>Вес, г</th>
+              <th>Штрихкод</th>
+              <th>Заметки</th>
+            </tr>
+          </thead>
+          <tbody id="items-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="create-bar">
+        <button class="btn primary" id="btn-submit" onclick="submitRows()" disabled>
+          ↑ Создать карточки на Ozon (<span id="submit-count">0</span>)
+        </button>
+        <span style="font-size:11px;color:var(--text-dim)" id="submit-hint">Отметьте товары и выберите категорию Ozon для каждого</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="create-results" style="display:none;margin-top:16px;background:var(--surface);border:1px solid var(--border)">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:bold">
+      Результаты создания карточек
+    </div>
+    <div id="create-results-list"></div>
+  </div>
+</div>
+
+<script>
+let _ozonAccountId = null;
+let _drafts = [];           // {sid, name, description, images, barcode, extra_barcodes, price, vat, depth, width, height, weight, trademark, attrs_raw, description_category_id, type_id, warnings, _category_name, _attributes}
+let _catSearchTimer = null;
+
+async function runLookup() {
+  _ozonAccountId = document.getElementById('ozon-account').value;
+  const raw = document.getElementById('sids-input').value;
+  const sids = raw.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+  if (!sids.length) { showToast('Введите хотя бы один артикул', 'error'); return; }
+
+  document.getElementById('notices').innerHTML = '';
+  document.getElementById('results-section').style.display = '';
+  document.getElementById('lookup-loader').style.display = 'flex';
+  document.getElementById('results-body').style.display = 'none';
+  document.getElementById('create-results').style.display = 'none';
+  document.getElementById('btn-lookup').disabled = true;
+
+  try {
+    const r = await fetch('/api/sima-to-ozon/lookup', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: _ozonAccountId, sids}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка');
+
+    renderNotices(data);
+    _drafts = data.drafts.map(d => ({
+      ...d,
+      _category_name: '',
+      _attributes: [],
+    }));
+
+    if (!_drafts.length) {
+      document.getElementById('results-body').style.display = 'none';
+    } else {
+      renderTable();
+      document.getElementById('results-body').style.display = '';
+    }
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, 'error');
+  } finally {
+    document.getElementById('lookup-loader').style.display = 'none';
+    document.getElementById('btn-lookup').disabled = false;
+  }
+}
+
+function renderNotices(data) {
+  const el = document.getElementById('notices');
+  let html = '';
+  if (data.exists && data.exists.length) {
+    html += `<div class="notice ok">✓ Уже есть на Ozon (пропущены, ${data.exists.length}): ${data.exists.map(x).join(', ')}</div>`;
+  }
+  if (data.not_found && data.not_found.length) {
+    html += `<div class="notice warn">⚠ Не найдены в каталоге Сима-Ленд (${data.not_found.length}): ${data.not_found.map(x).join(', ')}</div>`;
+  }
+  if (data.invalid && data.invalid.length) {
+    html += `<div class="notice warn">⚠ Не похоже на артикул Сима-Ленд (${data.invalid.length}): ${data.invalid.map(x).join(', ')}</div>`;
+  }
+  if (data.failed && data.failed.length) {
+    const n = data.failed.reduce((s, f) => s + f.sids.length, 0);
+    html += `<div class="notice err">✗ Сима-Ленд не ответила для ${n} артикулов — попробуйте проверить ещё раз позже</div>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderTable() {
+  document.getElementById('found-count').textContent = _drafts.length;
+  const tbody = document.getElementById('items-tbody');
+  tbody.innerHTML = _drafts.map((d, i) => rowHtml(d, i)).join('');
+  updateSelCount();
+}
+
+function rowHtml(d, i) {
+  const img = (d.images && d.images[0])
+    ? `<img class="thumb" src="${x(d.images[0])}" onerror="this.outerHTML='<div class=&quot;thumb-ph&quot;>📦</div>'">`
+    : `<div class="thumb-ph">📦</div>`;
+  const catLabel = d._category_name
+    ? `${x(d._category_name)} (${d.description_category_id}/${d.type_id})`
+    : 'Выбрать категорию…';
+  return `
+    <tr id="row-${i}" class="${d.warnings && d.warnings.length ? 'row-problem' : ''}">
+      <td><input type="checkbox" id="chk-${i}" onchange="onCheckChange()"></td>
+      <td>${img}</td>
+      <td><span class="art-chip">${x(d.sid)}</span></td>
+      <td><input class="cell-input cell-name" value="${x(d.name)}" oninput="_drafts[${i}].name=this.value"></td>
+      <td class="cat-cell" id="cat-cell-${i}">
+        <div class="cat-picked ${d._category_name ? '' : 'empty'}" onclick="openCatSearch(${i})">${catLabel}</div>
+      </td>
+      <td><input class="cell-input" style="width:70px" value="${x(d.price)}" oninput="_drafts[${i}].price=this.value"></td>
+      <td><input class="cell-input" style="width:50px" value="${x(d.vat)}" oninput="_drafts[${i}].vat=this.value"></td>
+      <td>
+        <div class="dims-row">
+          <input class="cell-input" value="${d.width}"  oninput="_drafts[${i}].width=+this.value||0">
+          <input class="cell-input" value="${d.height}" oninput="_drafts[${i}].height=+this.value||0">
+          <input class="cell-input" value="${d.depth}"  oninput="_drafts[${i}].depth=+this.value||0">
+        </div>
+      </td>
+      <td><input class="cell-input" style="width:55px" value="${d.weight}" oninput="_drafts[${i}].weight=+this.value||0"></td>
+      <td><input class="cell-input" style="width:110px" value="${x(d.barcode)}" oninput="_drafts[${i}].barcode=this.value"></td>
+      <td class="warn-list">${(d.warnings || []).map(w => `<div>⚠ ${x(w)}</div>`).join('')}</td>
+    </tr>
+    <tr class="attrs-row" id="attrs-row-${i}" style="display:none"><td colspan="11"></td></tr>
+  `;
+}
+
+function onCheckChange() {
+  _drafts.forEach((d, i) => {
+    document.getElementById('row-' + i)?.classList.toggle('selected', document.getElementById('chk-' + i)?.checked);
+  });
+  updateSelCount();
+}
+
+function toggleAll(on) {
+  _drafts.forEach((d, i) => { const c = document.getElementById('chk-' + i); if (c) c.checked = on; });
+  document.getElementById('check-all').checked = on;
+  onCheckChange();
+}
+
+function updateSelCount() {
+  const n = _drafts.filter((d, i) => document.getElementById('chk-' + i)?.checked).length;
+  document.getElementById('sel-num').textContent = n;
+  document.getElementById('sel-count').style.display = n ? '' : 'none';
+  document.getElementById('submit-count').textContent = n;
+  document.getElementById('btn-submit').disabled = n === 0;
+}
+
+// ── Поиск категории ────────────────────────────────────────────────────────
+function openCatSearch(i) {
+  closeCatSearch();
+  const cell = document.getElementById('cat-cell-' + i);
+  const box = document.createElement('div');
+  box.className = 'cat-dropdown';
+  box.id = 'cat-dropdown';
+  box.innerHTML = `
+    <input type="text" placeholder="Поиск категории, например: ошейник" id="cat-search-input" oninput="onCatSearchInput(${i}, this.value)">
+    <div id="cat-search-results"></div>
+  `;
+  cell.appendChild(box);
+  document.getElementById('cat-search-input').focus();
+  document.addEventListener('click', onDocClickCloseCat, {capture: true});
+}
+
+function onDocClickCloseCat(e) {
+  const dd = document.getElementById('cat-dropdown');
+  if (dd && !dd.contains(e.target) && !e.target.classList.contains('cat-picked')) closeCatSearch();
+}
+
+function closeCatSearch() {
+  document.getElementById('cat-dropdown')?.remove();
+  document.removeEventListener('click', onDocClickCloseCat, {capture: true});
+}
+
+function onCatSearchInput(i, q) {
+  clearTimeout(_catSearchTimer);
+  _catSearchTimer = setTimeout(async () => {
+    if (q.trim().length < 2) return;
+    try {
+      const r = await fetch(`/api/sima-to-ozon/category-search?ozon_account_id=${_ozonAccountId}&q=${encodeURIComponent(q)}`);
+      const data = await r.json();
+      const el = document.getElementById('cat-search-results');
+      if (!el) return;
+      if (!data.results.length) { el.innerHTML = '<div class="cat-opt" style="color:var(--text-dim)">Ничего не найдено</div>'; return; }
+      el.innerHTML = data.results.map(c => `
+        <div class="cat-opt" onclick='pickCategory(${i}, ${c.description_category_id}, ${c.type_id}, ${JSON.stringify(c.name)})'>${x(c.name)}</div>
+      `).join('');
+    } catch (e) {}
+  }, 300);
+}
+
+async function pickCategory(i, descCatId, typeId, name) {
+  _drafts[i].description_category_id = descCatId;
+  _drafts[i].type_id = typeId;
+  _drafts[i]._category_name = name;
+  closeCatSearch();
+  document.getElementById('cat-cell-' + i).innerHTML =
+    `<div class="cat-picked" onclick="openCatSearch(${i})">${x(name)} (${descCatId}/${typeId})</div>`;
+  await loadAttrsForRow(i);
+}
+
+async function loadAttrsForRow(i) {
+  const d = _drafts[i];
+  const attrsRow = document.getElementById('attrs-row-' + i);
+  attrsRow.style.display = '';
+  attrsRow.querySelector('td').innerHTML = '<div class="attr-loading">⏳ Загружаю атрибуты категории...</div>';
+
+  try {
+    const r = await fetch('/api/sima-to-ozon/category-attrs', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        ozon_account_id: _ozonAccountId,
+        description_category_id: d.description_category_id, type_id: d.type_id,
+        attrs_raw: d.attrs_raw, trademark: d.trademark, fallback_name: d.name,
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка');
+    d._attributes = data.attrs;
+    renderAttrsPanel(i);
+  } catch (e) {
+    attrsRow.querySelector('td').innerHTML = `<div class="attr-loading" style="color:#ef4444">Ошибка загрузки атрибутов: ${x(e.message)}</div>`;
+  }
+}
+
+function renderAttrsPanel(i) {
+  const d = _drafts[i];
+  const attrsRow = document.getElementById('attrs-row-' + i);
+  if (!d._attributes.length) {
+    attrsRow.querySelector('td').innerHTML = '<div class="attr-loading">У категории нет дополнительных атрибутов</div>';
+    return;
+  }
+  const sorted = [...d._attributes].sort((a, b) => (b.is_required - a.is_required));
+  attrsRow.querySelector('td').innerHTML = `<div class="attrs-panel">${sorted.map(a => `
+    <div class="attr-field">
+      <span class="attr-label ${a.is_required ? 'req' : ''}">${x(a.name)}${a.is_required ? ' *' : ''}</span>
+      <input class="cell-input" value="${x(a.value_text)}"
+        onchange="updateAttrValue(${i}, ${a.id}, this.value)">
+    </div>
+  `).join('')}</div>`;
+}
+
+function updateAttrValue(i, attrId, value) {
+  const a = _drafts[i]._attributes.find(a => a.id === attrId);
+  if (a) a.value_text = value;
+}
+
+// ── Отправка ─────────────────────────────────────────────────────────────────
+async function submitRows() {
+  const selected = _drafts.filter((d, i) => document.getElementById('chk-' + i)?.checked);
+  const noCategory = selected.filter(d => !d.description_category_id || !d.type_id);
+  if (noCategory.length) {
+    showToast(`У ${noCategory.length} выбранных товаров не указана категория Ozon`, 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  const rows = selected.map(d => ({
+    sid: d.sid, name: d.name, description: d.description, images: d.images,
+    barcode: d.barcode, price: d.price, vat: d.vat,
+    depth: d.depth, width: d.width, height: d.height, weight: d.weight,
+    description_category_id: d.description_category_id, type_id: d.type_id,
+    attributes: d._attributes,
+  }));
+
+  try {
+    const r = await fetch('/api/sima-to-ozon/submit', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ozon_account_id: _ozonAccountId, rows}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка');
+    document.getElementById('create-results').style.display = '';
+    document.getElementById('create-results').scrollIntoView({behavior: 'smooth'});
+    await pollImportStatus();
+  } catch (e) {
+    showToast('Ошибка: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function pollImportStatus() {
+  while (true) {
+    const s = await fetch('/api/sima-to-ozon/import-status').then(r => r.json());
+    renderImportProgress(s);
+    if (!s.running) break;
+    await new Promise(r => setTimeout(r, 2500));
+  }
+}
+
+function renderImportProgress(s) {
+  const entries = Object.entries(s.results || {});
+  const ok      = entries.filter(([, v]) => v.status === 'ok').length;
+  const err     = entries.filter(([, v]) => v.status === 'error').length;
+  const unknown = entries.filter(([, v]) => v.status === 'unknown').length;
+  const pending = entries.filter(([, v]) => v.status === 'pending').length;
+
+  const statusIcon = {ok: '✓ Создана', error: '✗', unknown: '⚠ Не подтверждено', pending: '⏳ В обработке...'};
+  const statusCls  = {ok: 'result-ok', error: 'result-err', unknown: 'result-warn', pending: ''};
+
+  document.getElementById('create-results-list').innerHTML = `
+    <div style="padding:8px 16px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border)">
+      ${s.running ? '⏳ Выполняется...' : '✅ Завершено'} &nbsp;
+      Создано: <b style="color:#22c55e">${ok}</b> &nbsp;
+      Ошибок: <b style="color:#ef4444">${err}</b>
+      ${unknown ? ` &nbsp; Не подтверждено: <b style="color:#f59e0b">${unknown}</b>` : ''}
+      ${pending ? ` &nbsp; В очереди: <b>${pending}</b>` : ''}
+      ${s.error ? `<div style="color:#ef4444;margin-top:4px">${x(s.error)}</div>` : ''}
+    </div>
+    ${entries.map(([sid, v]) => `
+      <div class="result-row">
+        <span class="art">${x(sid)}</span>
+        <span class="${statusCls[v.status] || ''}">${statusIcon[v.status] || v.status}</span>
+        ${v.message ? `<span class="result-warn">${x(v.message)}</span>` : ''}
+      </div>
+    `).join('')}
+  `;
+}
+
+function x(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{% endblock %}

@@ -70,7 +70,7 @@
 
       {% if user.role == 'admin' or 'repricer' in perms or 'content-sync' in perms %}
       <div class="nav-dropdown">
-        <span class="nav-drop-btn {{ 'active' if active_tab in ['repricer','content-sync','wb-to-ozon'] }}">Инструменты ▾</span>
+        <span class="nav-drop-btn {{ 'active' if active_tab in ['repricer','content-sync','wb-to-ozon','sima-to-ozon'] }}">Инструменты ▾</span>
         <div class="nav-drop-menu">
           {% if user.role == 'admin' or 'repricer' in perms %}
           <a href="/repricer">Репрайсер</a>
@@ -80,6 +80,7 @@
           {% endif %}
           {% if user.role == 'admin' %}
           <a href="/wb-to-ozon" class="{{ 'active' if active_tab == 'wb-to-ozon' }}">WB → Ozon</a>
+          <a href="/sima-to-ozon" class="{{ 'active' if active_tab == 'sima-to-ozon' }}">Сима → Ozon</a>
           {% endif %}
         </div>
       </div>
