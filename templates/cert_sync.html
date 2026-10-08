@@ -99,7 +99,7 @@
               <th>Тип</th>
               <th>Страна</th>
               <th>Действует до</th>
-              <th>Товаров</th>
+              <th>К загрузке</th>
               <th>Артикулы</th>
               <th>Статус</th>
             </tr>
@@ -174,9 +174,11 @@ async function runLookup() {
 function renderStats(data) {
   const t = data.totals;
   document.getElementById('stats').innerHTML = `
-    <div class="stat ok"><b>${t.ready}</b><span>готовы к загрузке</span></div>
-    <div class="stat"><b>${t.products_covered}</b><span>товаров покроют</span></div>
-    <div class="stat dim"><b>${t.already}</b><span>уже на Ozon</span></div>
+    <div class="stat ok"><b>${t.create}</b><span>новых документов</span></div>
+    <div class="stat ok"><b>${t.bind}</b><span>догрузить товары</span></div>
+    <div class="stat"><b>${t.products_covered}</b><span>товаров получат документ</span></div>
+    <div class="stat dim"><b>${t.done}</b><span>уже полностью</span></div>
+    ${t.declined ? `<div class="stat" style="color:#ef4444"><b style="color:#ef4444">${t.declined}</b><span>отклонено Ozon</span></div>` : ''}
     <div class="stat warn"><b>${t.no_documents}</b><span>карточек WB без документов</span></div>
     ${data.not_in_wb_cache.length ? `<div class="stat warn"><b>${data.not_in_wb_cache.length}</b><span>нет в кеше WB</span></div>` : ''}
   `;
@@ -186,21 +188,29 @@ function renderStats(data) {
 function renderTable() {
   const tbody = document.getElementById('items-tbody');
   tbody.innerHTML = _plan.map((p, i) => {
-    const blocked = p.already_on_ozon || p.issues.length > 0;
-    const status = p.already_on_ozon
-      ? '<span class="pill">уже загружен</span>'
-      : (p.issues.length ? `<span class="pill err">нельзя</span>` : '<span class="pill ok">готов</span>');
+    const done = p.action === 'done';
+    const blocked = done || p.blocking || !p.products_count;
+    let status;
+    if (p.ozon_status === 'declined') {
+      status = '<span class="pill err">Ozon отклонил</span>'
+        + `<div class="issues">${x(p.ozon_rejection || 'причина не указана')}</div>`;
+    }
+    else if (done) status = '<span class="pill">уже загружен</span>';
+    else if (p.blocking) status = '<span class="pill err">нельзя</span>';
+    else if (p.action === 'bind') status = '<span class="pill warn">догрузить товары</span>';
+    else status = '<span class="pill ok">создать</span>';
     const until = p.infinite ? 'бессрочно' : (p.expire_date || '').slice(0, 10);
     const shown = p.offer_ids.slice(0, 6).join(', ');
     const more = p.offer_ids.length > 6 ? ` и ещё ${p.offer_ids.length - 6}` : '';
+    const bound = p.already_bound ? `<div class="offers">уже привязано: ${p.already_bound}</div>` : '';
     return `
-      <tr id="row-${i}" class="${p.already_on_ozon ? 'done' : ''}">
+      <tr id="row-${i}" class="${done ? 'done' : ''}">
         <td><input type="checkbox" id="chk-${i}" onchange="onCheck()" ${blocked ? 'disabled' : ''}></td>
         <td><span class="num">${x(p.number)}</span></td>
         <td>${x(p.type_name)}</td>
         <td>${x(p.certificate_country)}</td>
         <td>${x(until)}</td>
-        <td><b>${p.products_count}</b></td>
+        <td><b>${p.products_count}</b>${bound}</td>
         <td class="offers">${x(shown)}${x(more)}</td>
         <td>${status}${p.issues.length ? `<div class="issues">${p.issues.map(x).join('; ')}</div>` : ''}</td>
       </tr>`;

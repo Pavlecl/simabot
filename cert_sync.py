@@ -90,8 +90,13 @@ def _country_from_number(number: str) -> str:
 
 
 def _accordance_from_number(number: str) -> str:
-    """«РОСС …» — это национальная система ГОСТ Р, остальное (ЕАЭС/ТС) — EAEU."""
-    return "GOST" if (number or "").strip().upper().startswith("РОСС") else "EAEU"
+    """«РОСС …» — национальная система (ГОСТ Р), остальное (ЕАЭС/ТС) — EAEU.
+
+    Значения подобраны экспериментально: коды из справочника
+    /v2/product/certificate/accordance-types/list (gost, technical_regulations_cu)
+    метод создания не принимает, равно как и GOST/GOST_R.
+    """
+    return "NATIONAL" if (number or "").strip().upper().startswith("РОСС") else "EAEU"
 
 
 def _parse_wb_date(value: Optional[str]) -> Optional[dict]:
@@ -151,19 +156,45 @@ async def _load_wb_cache(offer_ids: Optional[list[str]]) -> dict[str, dict]:
 # Ozon: что уже загружено и какие SKU у товаров
 # ─────────────────────────────────────────────────
 
-async def _ozon_existing_numbers(session: aiohttp.ClientSession, headers: dict) -> set[str]:
-    """Номера документов, уже заведённых в кабинете — чтобы не создавать дубли.
+REJECTION_REASONS = {
+    "not_active_in_registry": "документ не активен в реестре",
+    "annulled": "документ аннулирован в реестре",
+    "incorrect_type": "нужен другой тип документа",
+    "not_all_pages": "предоставлены не все страницы",
+    "not_in_registry": "документа нет в едином реестре",
+    "not_true": "информация не соответствует действительности",
+    "not_found": "не найден",
+    "archive": "документ в архиве",
+    "expired_document": "срок действия истёк",
+    "not_match_information": "копия не соответствует указанным данным",
+    "not_signed": "нет подписи или печати",
+    "not_valid_in_rf": "не действует на территории РФ",
+}
+
+
+async def _ozon_existing_certs(session: aiohttp.ClientSession, headers: dict) -> dict[str, dict]:
+    """{НОМЕР в верхнем регистре: {id, status, rejection, comment}} — что уже
+    заведено в кабинете.
 
     Ozon спокойно принимает повторную загрузку того же номера и плодит
     одинаковые записи, так что защита от дублей — только на нашей стороне.
+    certificate_id нужен, чтобы доложить недостающие товары к уже
+    существующему документу через bind, а не создавать его заново.
+
+    Статус важен не меньше: Ozon сверяет номер с госреестром и может
+    отклонить документ (например, not_active_in_registry) даже после
+    успешного создания — и товар остаётся без подтверждения. WB при этом
+    тот же документ может считать проверенным, так что расхождение надо видеть.
     """
-    numbers: set[str] = set()
+    out: dict[str, dict] = {}
     page = 1
-    while page <= 50:
+    while page <= 200:
         async with session.post(
             f"{OZON_API}/v1/product/certificate/list",
             headers=headers,
-            json={"page": page, "page_size": 1000},
+            # page_size этого метода ограничен сотней (при 1000 — 400 Bad Request),
+            # в отличие от большинства других списков Ozon
+            json={"page": page, "page_size": 100},
         ) as resp:
             if resp.status != 200:
                 break
@@ -171,12 +202,43 @@ async def _ozon_existing_numbers(session: aiohttp.ClientSession, headers: dict) 
         result = data.get("result") or {}
         for cert in (result.get("certificates") or []):
             num = (cert.get("certificate_number") or "").strip()
-            if num:
-                numbers.add(num.upper())
+            cid = cert.get("certificate_id")
+            if not (num and cid) or num.upper() in out:
+                continue
+            reason = cert.get("rejection_reason_code") or ""
+            out[num.upper()] = {
+                "id": int(cid),
+                "status": cert.get("status_code") or "",
+                "rejection": REJECTION_REASONS.get(reason, reason),
+                "comment": cert.get("verification_comment") or "",
+            }
         if page >= (result.get("page_count") or 1):
             break
         page += 1
-    return numbers
+    return out
+
+
+async def _ozon_cert_skus(session: aiohttp.ClientSession, headers: dict, certificate_id: int) -> set[str]:
+    """SKU, уже привязанные к документу — чтобы доложить только недостающие."""
+    skus: set[str] = set()
+    page = 1
+    while page <= 20:
+        async with session.post(
+            f"{OZON_API}/v1/product/certificate/products/list",
+            headers=headers,
+            json={"certificate_id": certificate_id, "page": page, "limit": 1000},
+        ) as resp:
+            if resp.status != 200:
+                break
+            data = await resp.json(content_type=None)
+        items = ((data.get("result") or {}).get("items") or [])
+        for it in items:
+            if it.get("sku"):
+                skus.add(str(it["sku"]))
+        if len(items) < 1000:
+            break
+        page += 1
+    return skus
 
 
 async def _ozon_skus(session: aiohttp.ClientSession, headers: dict, offer_ids: list[str]) -> dict[str, str]:
@@ -250,35 +312,65 @@ async def lookup_certificates(ozon_account_id: int, raw_offer_ids: Optional[list
 
     not_in_wb = [s for s in requested if s not in wb_cache]
 
+    plan: list[dict] = []
     async with aiohttp.ClientSession() as session:
-        existing = await _ozon_existing_numbers(session, headers)
+        existing = await _ozon_existing_certs(session, headers)
         all_offer_ids = sorted({vc for g in groups.values() for vc in g["offer_ids"]})
         sku_map = await _ozon_skus(session, headers, all_offer_ids)
 
-    plan: list[dict] = []
-    for number, g in groups.items():
-        offer_ids = sorted(set(g["offer_ids"]))
-        skus = [sku_map[o] for o in offer_ids if o in sku_map]
-        missing_on_ozon = [o for o in offer_ids if o not in sku_map]
+        for number, g in groups.items():
+            offer_ids = sorted(set(g["offer_ids"]))
+            skus = [sku_map[o] for o in offer_ids if o in sku_map]
+            missing_on_ozon = [o for o in offer_ids if o not in sku_map]
+            found = existing.get(number.upper()) or {}
+            certificate_id = found.get("id")
 
-        issues = []
-        if not g["certificate_type"]:
-            issues.append(f"тип документа WB ({g['wb_type']}) не поддерживается Ozon")
-        if not skus:
-            issues.append("ни один товар не найден на Ozon")
-        if missing_on_ozon and skus:
-            issues.append(f"нет на Ozon: {len(missing_on_ozon)} шт.")
+            # Документ уже заведён — но мог быть привязан не ко всем товарам
+            # (например, часть карточек появилась на Ozon позже). Догружаем
+            # только недостающие SKU через bind, не создавая документ заново.
+            if certificate_id and skus:
+                bound = await _ozon_cert_skus(session, headers, certificate_id)
+                skus_to_add = [s for s in skus if s not in bound]
+            else:
+                bound = set()
+                skus_to_add = skus
 
-        plan.append({
-            **g,
-            "offer_ids": offer_ids,
-            "skus": skus,
-            "products_count": len(skus),
-            "already_on_ozon": number.upper() in existing,
-            "issues": issues,
-        })
+            # blocking — не даём отправить вовсе; остальное просто показываем,
+            # чтобы «часть товаров ещё не заведена на Ozon» не мешала залить
+            # документ для тех, что уже заведены
+            issues: list[str] = []
+            blocking = False
+            if not g["certificate_type"]:
+                issues.append(f"тип документа WB ({g['wb_type']}) не поддерживается Ozon")
+                blocking = True
+            if not skus:
+                issues.append("ни один товар не найден на Ozon")
+                blocking = True
+            if missing_on_ozon and skus:
+                issues.append(f"нет на Ozon: {len(missing_on_ozon)} шт.")
 
-    plan.sort(key=lambda p: (p["already_on_ozon"], -p["products_count"]))
+            if certificate_id:
+                action = "bind" if skus_to_add else "done"
+            else:
+                action = "create"
+
+            plan.append({
+                **g,
+                "offer_ids": offer_ids,
+                "skus": skus_to_add,
+                "products_count": len(skus_to_add),
+                "already_bound": len(bound & set(skus)),
+                "certificate_id": certificate_id,
+                "ozon_status": found.get("status", ""),
+                "ozon_rejection": found.get("rejection", ""),
+                "ozon_comment": found.get("comment", ""),
+                "action": action,
+                "issues": issues,
+                "blocking": blocking,
+            })
+
+    # Сначала то, что требует действия, внутри — крупные документы выше
+    plan.sort(key=lambda p: (p["action"] == "done", -p["products_count"]))
 
     return {
         "plan": plan,
@@ -286,9 +378,11 @@ async def lookup_certificates(ozon_account_id: int, raw_offer_ids: Optional[list
         "not_in_wb_cache": not_in_wb,
         "totals": {
             "documents": len(plan),
-            "ready": sum(1 for p in plan if not p["already_on_ozon"] and not p["issues"]),
-            "already": sum(1 for p in plan if p["already_on_ozon"]),
-            "products_covered": sum(p["products_count"] for p in plan if not p["already_on_ozon"]),
+            "create": sum(1 for p in plan if p["action"] == "create" and not p["blocking"]),
+            "bind": sum(1 for p in plan if p["action"] == "bind" and not p["blocking"]),
+            "done": sum(1 for p in plan if p["action"] == "done"),
+            "declined": sum(1 for p in plan if p.get("ozon_status") == "declined"),
+            "products_covered": sum(p["products_count"] for p in plan if p["action"] != "done"),
             "no_documents": len(no_documents),
         },
     }
@@ -358,6 +452,28 @@ async def submit_certificates(ozon_account_id: int, rows: list[dict]) -> None:
                 continue
 
             try:
+                if row.get("certificate_id"):
+                    # Документ уже заведён — только доприязываем недостающие товары
+                    async with session.post(
+                        f"{OZON_API}/v1/product/certificate/bind",
+                        headers=headers,
+                        json={"certificate_id": int(row["certificate_id"]), "skus": row["skus"]},
+                    ) as resp:
+                        data = await resp.json(content_type=None)
+                        http_status = resp.status
+                    if http_status == 200 and data.get("result"):
+                        results.append({"number": number, "status": "ok",
+                                        "message": f"привязано товаров: {len(row['skus'])}",
+                                        "products": len(row["skus"])})
+                    else:
+                        msg = data.get("message") or str(data)[:200]
+                        results.append({"number": number, "status": "error",
+                                        "message": f"привязка не удалась: {msg}", "products": 0})
+                    _import_status = {"running": True, "total": len(rows), "done": len(results),
+                                      "results": list(results), "error": ""}
+                    await asyncio.sleep(0.3)
+                    continue
+
                 async with session.post(
                     f"{OZON_API}/v2/product/certificate/create",
                     headers=headers,
@@ -372,7 +488,7 @@ async def submit_certificates(ozon_account_id: int, rows: list[dict]) -> None:
                                     "message": f"Ozon {http_status}: {msg}", "products": 0})
                 elif data.get("status") == "COMPLETED" and data.get("certificate_id"):
                     results.append({"number": number, "status": "ok",
-                                    "message": f"certificate_id {data['certificate_id']}",
+                                    "message": f"создан, certificate_id {data['certificate_id']}",
                                     "products": len(row["skus"])})
                 else:
                     bad = [p for p in (data.get("params") or []) if p.get("state") != "VALID"]
