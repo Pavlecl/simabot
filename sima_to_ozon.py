@@ -86,7 +86,7 @@ def _sima_images(raw: dict) -> list[str]:
     photos = raw.get("photos") or []
     urls = [f"{p['url_part']}700.jpg?v={p['version']}" for p in photos if p.get("url_part")]
     if urls:
-        return urls[:10]
+        return urls[:15]  # максимум Ozon для images в /v3/product/import
     if raw.get("photoUrl"):
         return [raw["photoUrl"]]
     return []

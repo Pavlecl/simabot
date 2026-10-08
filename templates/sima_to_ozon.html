@@ -32,10 +32,16 @@
 
 .thumb{width:48px;height:48px;object-fit:cover;border:1px solid var(--border)}
 .thumb-ph{width:48px;height:48px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:18px}
+.thumb-wrap{position:relative;display:inline-block;cursor:pointer}
+.thumb-badge{position:absolute;bottom:-4px;right:-4px;background:var(--accent);color:#000;font-size:9px;font-weight:bold;border-radius:8px;padding:0 4px;line-height:1.5;min-width:14px;text-align:center}
+.photo-cell{position:relative}
+.gallery-popup{position:absolute;z-index:30;top:0;left:52px;background:var(--surface);border:1px solid var(--accent);padding:8px;display:grid;grid-template-columns:repeat(5,56px);gap:6px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:320px}
+.gallery-popup img{width:56px;height:56px;object-fit:cover;border:1px solid var(--border);cursor:zoom-in}
 .art-chip{font-family:monospace;color:var(--accent)}
 .cell-input{width:100%;padding:4px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:11px}
 .cell-input:focus{border-color:var(--accent);outline:none}
 .cell-name{min-width:200px;max-width:260px}
+.cell-desc{min-width:240px;max-width:320px;resize:vertical;font-family:inherit;line-height:1.35}
 .dims-row{display:flex;gap:3px}
 .dims-row input{width:46px}
 
@@ -127,6 +133,7 @@
               <th>Ш×В×Г, мм</th>
               <th>Вес, г</th>
               <th>Штрихкод</th>
+              <th style="min-width:260px">Описание</th>
               <th>Заметки</th>
             </tr>
           </thead>
@@ -225,7 +232,8 @@ function renderTable() {
 }
 
 function rowHtml(d, i) {
-  const img = (d.images && d.images[0])
+  const n = (d.images || []).length;
+  const img = n
     ? `<img class="thumb" src="${x(d.images[0])}" onerror="this.outerHTML='<div class=&quot;thumb-ph&quot;>📦</div>'">`
     : `<div class="thumb-ph">📦</div>`;
   const catLabel = d._category_name
@@ -234,7 +242,12 @@ function rowHtml(d, i) {
   return `
     <tr id="row-${i}" class="${d.warnings && d.warnings.length ? 'row-problem' : ''}">
       <td><input type="checkbox" id="chk-${i}" onchange="onCheckChange()"></td>
-      <td>${img}</td>
+      <td class="photo-cell" id="photo-cell-${i}">
+        <div class="thumb-wrap" onclick="openGallery(${i})" title="${n} фото — нажмите, чтобы посмотреть все">
+          ${img}
+          ${n > 1 ? `<span class="thumb-badge">${n}</span>` : ''}
+        </div>
+      </td>
       <td><span class="art-chip">${x(d.sid)}</span></td>
       <td><input class="cell-input cell-name" value="${x(d.name)}" oninput="_drafts[${i}].name=this.value"></td>
       <td class="cat-cell" id="cat-cell-${i}">
@@ -251,9 +264,10 @@ function rowHtml(d, i) {
       </td>
       <td><input class="cell-input" style="width:55px" value="${d.weight}" oninput="_drafts[${i}].weight=+this.value||0"></td>
       <td><input class="cell-input" style="width:110px" value="${x(d.barcode)}" oninput="_drafts[${i}].barcode=this.value"></td>
+      <td><textarea class="cell-input cell-desc" rows="3" oninput="_drafts[${i}].description=this.value">${x(d.description)}</textarea></td>
       <td class="warn-list">${(d.warnings || []).map(w => `<div>⚠ ${x(w)}</div>`).join('')}</td>
     </tr>
-    <tr class="attrs-row" id="attrs-row-${i}" style="display:none"><td colspan="11"></td></tr>
+    <tr class="attrs-row" id="attrs-row-${i}" style="display:none"><td colspan="12"></td></tr>
   `;
 }
 
@@ -276,6 +290,30 @@ function updateSelCount() {
   document.getElementById('sel-count').style.display = n ? '' : 'none';
   document.getElementById('submit-count').textContent = n;
   document.getElementById('btn-submit').disabled = n === 0;
+}
+
+// ── Галерея фото ─────────────────────────────────────────────────────────────
+function openGallery(i) {
+  closeGallery();
+  const d = _drafts[i];
+  if (!d.images || !d.images.length) return;
+  const cell = document.getElementById('photo-cell-' + i);
+  const box = document.createElement('div');
+  box.className = 'gallery-popup';
+  box.id = 'gallery-popup';
+  box.innerHTML = d.images.map(u => `<img src="${x(u)}" onerror="this.style.opacity=.15" onclick="window.open('${x(u)}','_blank')">`).join('');
+  cell.appendChild(box);
+  document.addEventListener('click', onDocClickCloseGallery, {capture: true});
+}
+
+function onDocClickCloseGallery(e) {
+  const g = document.getElementById('gallery-popup');
+  if (g && !g.contains(e.target) && !e.target.closest('.thumb-wrap')) closeGallery();
+}
+
+function closeGallery() {
+  document.getElementById('gallery-popup')?.remove();
+  document.removeEventListener('click', onDocClickCloseGallery, {capture: true});
 }
 
 // ── Поиск категории ────────────────────────────────────────────────────────
