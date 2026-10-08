@@ -9,16 +9,26 @@ sima_to_ozon.py — заливка новых карточек на Ozon по с
 «false» просто не срабатывал — поле оставалось пустым и блокирующим всегда,
 независимо от реального товара.
 
-Здесь категорию Ozon пользователь выбирает вручную (поиск по дереву, не
-автоугадывание), а любой обязательный Boolean-атрибут без данных дефолтится
-в false без блокировки отправки — без привязки к тому, что это «Честный
-знак» конкретно. Если Ozon всё же отклонит карточку — это вернётся как
-обычная ошибка импорта, по месту.
+Любой обязательный Boolean-атрибут без данных дефолтится в false без
+блокировки отправки — без привязки к тому, что это «Честный знак»
+конкретно. Если Ozon всё же отклонит карточку — это вернётся как обычная
+ошибка импорта, по месту.
+
+Обогащение данными WB: та же карточка почти всегда уже заведена на WB
+(кеш WbProductCache, который наполняет страница /content-sync), а там
+данные часто качественнее, чем у Сима-Ленд — лучше фото, описание с
+SEO-ключами, и, что важно, верный код ТН ВЭД (у Сима-Ленд он регулярно
+неверный — проверено пользователем вручную). Если карточка найдена в
+кеше WB — её данные перекрывают данные Сима-Ленд (включая атрибуты, см.
+_merge_wb_into_draft), а категория Ozon пытается подобраться автоматически
+по категории WB через уже проверенный _ozon_search_category (та же
+функция, что раньше работала в WB→Ozon — рабочая часть, не трогаем).
+Подбор всегда можно переопределить вручную в таблице — ничего не
+блокирует отправку, если автоподбор ошибся или не нашёл совпадения.
 
 Переиспользует из content_sync.py только общие, проверенные Ozon-утилиты:
-дерево категорий, резолвинг словарных атрибутов, конвертацию boolean,
-заголовки аккаунта. Это рабочая часть старого инструмента, проблем в ней
-не было.
+дерево категорий, поиск категории по тексту, резолвинг словарных
+атрибутов, конвертацию boolean, заголовки аккаунта.
 
 offer_id на Ozon = артикул (sid) Сима-Ленд — конвенция уже используется в
 stock_broadcast (см. stock_broadcast/__init__.py) для трансляции остатков,
@@ -28,6 +38,7 @@ offer_id, без штрихкодов и прочей эвристики.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import re as _re
 from typing import Optional
 
@@ -37,10 +48,13 @@ from content_sync import (
     _ozon_headers_for_account,
     _load_ozon_cat_pairs,
     _ozon_category_attrs,
+    _ozon_search_category,
     _find_ozon_dict_value,
     _to_ozon_boolean,
     _OZON_VALID_VAT_RATES,
 )
+
+WB_IMG_PROXY = "https://simacontrol.ru/api/img-proxy?url="
 
 SIMA_BASE = "https://www.sima-land.ru/api/v3"
 SIMA_EXPAND = "stocks,barcodes,description,attrs,photos,trademark,country"
@@ -143,12 +157,13 @@ def _build_sima_draft(raw: dict) -> dict:
             attrs_raw[name] = str(val)
 
     trademark = (raw.get("trademark") or {}).get("name") or ""
+    name = raw.get("name") or sid
 
     warnings.append("цена не определена — установлена 10000 ₽ по умолчанию, скорректируйте перед отправкой")
 
     return {
         "sid": sid,
-        "name": raw.get("name") or sid,
+        "name": name,
         "description": _strip_html(raw.get("description") or "")[:4000],
         "images": images,
         "barcode": barcode,
@@ -160,8 +175,82 @@ def _build_sima_draft(raw: dict) -> dict:
         "attrs_raw": attrs_raw,
         "description_category_id": 0,
         "type_id": 0,
+        "category_name": "",
+        "cat_query": name,  # запрос для автоподбора категории, может быть заменён WB-категорией
+        "wb_matched": False,
         "warnings": warnings,
     }
+
+
+# ─────────────────────────────────────────────────
+# Обогащение данными WB (кеш WbProductCache с /content-sync)
+# ─────────────────────────────────────────────────
+
+async def _fetch_wb_cache_map(sids: list[str]) -> dict:
+    from database import AsyncSessionLocal, WbProductCache
+    from sqlalchemy import select
+    if not sids:
+        return {}
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(WbProductCache).where(WbProductCache.vendor_code.in_(sids)))
+        return {p.vendor_code: p for p in r.scalars().all()}
+
+
+def _merge_wb_into_draft(d: dict, wb) -> dict:
+    """WB-данные перекрывают Сима-Ленд там, где они есть — включая атрибуты
+    (в т.ч. ТН ВЭД, который у Сима-Ленд часто неверный)."""
+    if wb is None:
+        d["warnings"].append("ℹ карточка не найдена в кеше WB (/content-sync) — использованы только данные Сима-Ленд")
+        return d
+
+    try:
+        wb_images = _json.loads(wb.images_json or "[]")
+    except ValueError:
+        wb_images = []
+    if wb_images:
+        d["images"] = [f"{WB_IMG_PROXY}{u}" for u in wb_images[:15] if u]
+
+    if wb.description and wb.description.strip():
+        d["description"] = wb.description.strip()[:4000]
+
+    if wb.name and wb.name.strip():
+        d["name"] = wb.name.strip()
+
+    try:
+        wb_attrs_list = _json.loads(wb.attributes_json or "[]")
+    except ValueError:
+        wb_attrs_list = []
+    wb_attrs = {a["name"].strip().lower(): str(a.get("value", ""))
+                for a in wb_attrs_list if a.get("name") and a.get("value") not in (None, "")}
+    # WB называет поле то «ТНВЭД», то «Код ТН ВЭД» в зависимости от категории —
+    # нормализуем под один ключ "тнвэд", чтобы матчинг в get_category_attrs_with_draft
+    # не зависел от конкретного написания.
+    for key, val in list(wb_attrs.items()):
+        if "тнвэд" in key.replace(" ", ""):
+            wb_attrs["тнвэд"] = val
+            break
+    d["attrs_raw"].update(wb_attrs)  # WB побеждает при совпадении ключа
+
+    if wb.brand and wb.brand.strip():
+        d["trademark"] = wb.brand.strip()
+
+    d["cat_query"] = " ".join(filter(None, [wb.subject_name, wb.name])) or d["cat_query"]
+    d["wb_matched"] = True
+    d["warnings"].append("✓ обогащено данными WB (фото, описание, атрибуты — включая ТН ВЭД)")
+    return d
+
+
+async def _auto_match_category(session: aiohttp.ClientSession, headers: dict, query: str) -> tuple[int, int, str]:
+    desc_cat_id, type_id = await _ozon_search_category(session, headers, query)
+    if not desc_cat_id:
+        return 0, 0, ""
+    pairs = await _load_ozon_cat_pairs(session, headers)
+    name = ""
+    for dc, ti, nm in pairs:
+        if dc == desc_cat_id and ti == type_id:
+            name = nm
+            break
+    return desc_cat_id, type_id, name
 
 
 # ─────────────────────────────────────────────────
@@ -214,6 +303,8 @@ async def lookup_sima_to_ozon(ozon_account_id: int, raw_sids: list[str]) -> dict
         exists = await _ozon_offer_ids_subset(session, headers, clean)
         to_fetch = [s for s in clean if s not in exists]
 
+        wb_cache = await _fetch_wb_cache_map(to_fetch)
+
         sem = asyncio.Semaphore(4)
 
         async def _one(part: list[str]) -> None:
@@ -227,7 +318,9 @@ async def lookup_sima_to_ozon(ozon_account_id: int, raw_sids: list[str]) -> dict
                 for raw in items:
                     sid = str(raw.get("sid") or "")
                     got.add(sid)
-                    drafts.append(_build_sima_draft(raw))
+                    d = _build_sima_draft(raw)
+                    _merge_wb_into_draft(d, wb_cache.get(sid))
+                    drafts.append(d)
                 for s in part:
                     if s not in got:
                         not_found.append(s)
@@ -235,6 +328,27 @@ async def lookup_sima_to_ozon(ozon_account_id: int, raw_sids: list[str]) -> dict
         await asyncio.gather(*[
             _one(to_fetch[i:i + SIMA_BATCH]) for i in range(0, len(to_fetch), SIMA_BATCH)
         ])
+
+        # Автоподбор категории Ozon — по категории WB, если карточка найдена
+        # на WB (query уже заменён на subject_name+name в _merge_wb_into_draft),
+        # иначе по названию товара Сима-Ленд. Всегда можно переопределить
+        # вручную в таблице — ничего не блокирует, если подбор ошибся.
+        cat_sem = asyncio.Semaphore(6)
+
+        async def _match_one(d: dict) -> None:
+            async with cat_sem:
+                try:
+                    desc_cat_id, type_id, name = await _auto_match_category(session, headers, d["cat_query"])
+                except Exception as e:  # noqa: BLE001
+                    print(f"[sto-catmatch] {d['sid']}: {e}", flush=True)
+                    return
+                if desc_cat_id:
+                    d["description_category_id"] = desc_cat_id
+                    d["type_id"] = type_id
+                    d["category_name"] = name
+                    d["warnings"].append(f"🏷 категория подобрана автоматически: «{name}» — проверьте перед отправкой")
+
+        await asyncio.gather(*[_match_one(d) for d in drafts])
 
     order = {s: i for i, s in enumerate(clean)}
     drafts.sort(key=lambda d: order.get(d["sid"], 0))
@@ -303,7 +417,10 @@ async def get_category_attrs_with_draft(
         if "бренд" in name_l:
             val = trademark or attrs_raw.get(name_l, "") or "Нет бренда"
         elif "тн вэд" in name_l:
-            val = attrs_raw.get("tnved") or attrs_raw.get(name_l, "")
+            # WB (нормализовано в "тнвэд" при мёрдже, см. _merge_wb_into_draft) —
+            # в приоритете: у Сима-Ленд ("tnved") этот код регулярно неверный,
+            # пользователь проверял вручную.
+            val = attrs_raw.get("тнвэд") or attrs_raw.get("tnved") or attrs_raw.get(name_l, "")
         else:
             val = attrs_raw.get(name_l, "")
 

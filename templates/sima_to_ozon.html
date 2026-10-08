@@ -48,6 +48,9 @@
 .cat-cell{position:relative;min-width:220px}
 .cat-picked{font-size:11px;color:var(--text);padding:4px 6px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);cursor:pointer}
 .cat-picked.empty{color:var(--text-dim);background:var(--surface2);border-color:var(--border)}
+.cat-picked.auto{background:rgba(255,106,0,.08);border-color:rgba(255,106,0,.35)}
+.attrs-toggle{display:block;margin-top:4px;font-size:10px;color:var(--text-dim);cursor:pointer;text-decoration:underline dotted}
+.attrs-toggle:hover{color:var(--accent)}
 .cat-dropdown{position:absolute;z-index:20;top:100%;left:0;background:var(--surface);border:1px solid var(--accent);min-width:320px;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4)}
 .cat-dropdown input{width:100%;padding:6px 8px;background:var(--surface2);border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:12px}
 .cat-opt{padding:6px 8px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--border)}
@@ -187,8 +190,10 @@ async function runLookup() {
     renderNotices(data);
     _drafts = data.drafts.map(d => ({
       ...d,
-      _category_name: '',
+      _category_name: d.category_name || '',
+      _category_auto: !!d.category_name,
       _attributes: [],
+      _attrs_loaded: false,
     }));
 
     if (!_drafts.length) {
@@ -196,6 +201,9 @@ async function runLookup() {
     } else {
       renderTable();
       document.getElementById('results-body').style.display = '';
+      // Подгружаем атрибуты для автоподобранных категорий в фоне, не разворачивая
+      // панели — чтобы при клике «▾ атрибуты» данные уже были готовы.
+      _drafts.forEach((d, i) => { if (d.description_category_id) loadAttrsForRow(i, false); });
     }
   } catch (e) {
     showToast('Ошибка: ' + e.message, 'error');
@@ -237,7 +245,7 @@ function rowHtml(d, i) {
     ? `<img class="thumb" src="${x(d.images[0])}" onerror="this.outerHTML='<div class=&quot;thumb-ph&quot;>📦</div>'">`
     : `<div class="thumb-ph">📦</div>`;
   const catLabel = d._category_name
-    ? `${x(d._category_name)} (${d.description_category_id}/${d.type_id})`
+    ? `${d._category_auto ? '🤖 ' : ''}${x(d._category_name)} (${d.description_category_id}/${d.type_id})`
     : 'Выбрать категорию…';
   return `
     <tr id="row-${i}" class="${d.warnings && d.warnings.length ? 'row-problem' : ''}">
@@ -251,7 +259,9 @@ function rowHtml(d, i) {
       <td><span class="art-chip">${x(d.sid)}</span></td>
       <td><input class="cell-input cell-name" value="${x(d.name)}" oninput="_drafts[${i}].name=this.value"></td>
       <td class="cat-cell" id="cat-cell-${i}">
-        <div class="cat-picked ${d._category_name ? '' : 'empty'}" onclick="openCatSearch(${i})">${catLabel}</div>
+        <div class="cat-picked ${d._category_name ? (d._category_auto ? 'auto' : '') : 'empty'}" onclick="openCatSearch(${i})"
+          title="${d._category_auto ? 'Подобрано автоматически по категории WB/названию — проверьте' : ''}">${catLabel}</div>
+        ${d.description_category_id ? `<a class="attrs-toggle" onclick="toggleAttrsRow(${i})">▾ атрибуты</a>` : ''}
       </td>
       <td><input class="cell-input" style="width:70px" value="${x(d.price)}" oninput="_drafts[${i}].price=this.value"></td>
       <td><input class="cell-input" style="width:50px" value="${x(d.vat)}" oninput="_drafts[${i}].vat=this.value"></td>
@@ -363,17 +373,24 @@ async function pickCategory(i, descCatId, typeId, name) {
   _drafts[i].description_category_id = descCatId;
   _drafts[i].type_id = typeId;
   _drafts[i]._category_name = name;
+  _drafts[i]._category_auto = false;   // ручной выбор — переопределили автоподбор (если он был)
+  _drafts[i]._attrs_loaded = false;    // категория сменилась — старые атрибуты больше не актуальны
   closeCatSearch();
   document.getElementById('cat-cell-' + i).innerHTML =
-    `<div class="cat-picked" onclick="openCatSearch(${i})">${x(name)} (${descCatId}/${typeId})</div>`;
-  await loadAttrsForRow(i);
+    `<div class="cat-picked" onclick="openCatSearch(${i})">${x(name)} (${descCatId}/${typeId})</div>
+     <a class="attrs-toggle" onclick="toggleAttrsRow(${i})">▾ атрибуты</a>`;
+  await loadAttrsForRow(i, true);
 }
 
-async function loadAttrsForRow(i) {
+// show=true — развернуть панель сразу (после выбора/смены категории).
+// show=false — просто догрузить данные в фоне, не разворачивая (автоподбор при lookup).
+async function loadAttrsForRow(i, show) {
   const d = _drafts[i];
   const attrsRow = document.getElementById('attrs-row-' + i);
-  attrsRow.style.display = '';
-  attrsRow.querySelector('td').innerHTML = '<div class="attr-loading">⏳ Загружаю атрибуты категории...</div>';
+  if (show) {
+    attrsRow.style.display = '';
+    attrsRow.querySelector('td').innerHTML = '<div class="attr-loading">⏳ Загружаю атрибуты категории...</div>';
+  }
 
   try {
     const r = await fetch('/api/sima-to-ozon/category-attrs', {
@@ -387,9 +404,26 @@ async function loadAttrsForRow(i) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Ошибка');
     d._attributes = data.attrs;
+    d._attrs_loaded = true;
     renderAttrsPanel(i);
   } catch (e) {
+    d._attrs_loaded = false;
     attrsRow.querySelector('td').innerHTML = `<div class="attr-loading" style="color:#ef4444">Ошибка загрузки атрибутов: ${x(e.message)}</div>`;
+  }
+}
+
+// Разворачивает/сворачивает панель атрибутов по ссылке в ячейке категории —
+// независимо от выбора категории (который теперь может быть уже подобран
+// автоматически, и панель просто показывает/прячет готовый результат).
+async function toggleAttrsRow(i) {
+  const attrsRow = document.getElementById('attrs-row-' + i);
+  const hidden = attrsRow.style.display === 'none';
+  if (!hidden) { attrsRow.style.display = 'none'; return; }
+  attrsRow.style.display = '';
+  if (_drafts[i]._attrs_loaded) {
+    renderAttrsPanel(i);
+  } else {
+    await loadAttrsForRow(i, true);
   }
 }
 
