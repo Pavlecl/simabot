@@ -43,7 +43,9 @@ async function loadOverview() {
   SB.cfg = d.config;
   SB._status = d.status || {};
 
-  $('sb-enabled').checked = !!d.config.enabled;
+  renderMaster(d.config.enabled, d.status || {});
+  $('sb-run-btn').disabled = !d.config.enabled && !d.config.dry_run;
+  $('sb-run-btn').title = $('sb-run-btn').disabled ? 'Трансляция выключена' : '';
   $('sb-dryrun').checked = !!d.config.dry_run;
 
   const wh = d.config.warehouse_id ? `склад ${d.config.warehouse_id}` : 'склад не выбран';
@@ -55,6 +57,10 @@ async function loadOverview() {
   if (st.last_run) line += ` · последний запуск ${fmtDt(st.last_run)}`;
   if (st.next_run && d.config.enabled) line += ` · следующий ~${fmtDt(st.next_run)}`;
   $('sb-status-line').textContent = line;
+
+  $('sb-status-alert').innerHTML = !d.config.enabled && !st.running
+    ? `<div class="sb-alert">⛔ Трансляция выключена — остатки товаров Симы на складе обнулены. Включить: тумблер «Трансляция».</div>`
+    : '';
 
   const c = d.counts;
   $('sb-cards').innerHTML = [
@@ -96,7 +102,31 @@ function fmtDt(iso) {
   return d.toLocaleString('ru-RU', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
 }
 
-$('sb-enabled').addEventListener('change', e => saveConfig({enabled: e.target.checked}));
+// Мастер-тумблер (на «Обзоре» и в «Настройках» — один и тот же).
+function renderMaster(on, st) {
+  const busy = st.running && st.trigger === 'stop';
+  document.querySelectorAll('.sb-master').forEach(i => { i.checked = !!on; i.disabled = busy; });
+  document.querySelectorAll('.sb-master-label').forEach(l => {
+    l.textContent = busy ? 'Трансляция: обнуляю остатки…' : (on ? 'Трансляция включена' : 'Трансляция выключена, остатки обнулены');
+    l.style.color = on ? 'var(--green)' : 'var(--red)';
+  });
+}
+document.querySelectorAll('.sb-master').forEach(inp => inp.addEventListener('change', async e => {
+  const on = e.target.checked;
+  document.querySelectorAll('.sb-master').forEach(i => { i.checked = on; i.disabled = true; });
+  try {
+    await api('/api/stock-broadcast/master', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({on}),
+    });
+    showToast(on ? 'Трансляция включена — запускаю цикл' : 'Трансляция выключена — обнуляю остатки');
+    pollStatus();
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  } finally {
+    document.querySelectorAll('.sb-master').forEach(i => { i.disabled = false; });
+    loadOverview();
+  }
+}));
 $('sb-dryrun').addEventListener('change', e => saveConfig({dry_run: e.target.checked}));
 $('sb-run-btn').addEventListener('click', async () => {
   $('sb-run-btn').disabled = true;
@@ -379,7 +409,7 @@ async function loadJournal() {
     return `<tr style="cursor:pointer" onclick="openCycle(${c.id})">
       <td>#${c.id}</td>
       <td class="muted">${fmtDt(c.started_at)}</td>
-      <td class="muted">${esc(c.trigger || '')}${c.dry_run ? ' · dry' : ''}</td>
+      <td class="muted">${c.trigger === 'stop' ? '⛔ стоп' : esc(c.trigger || '')}${c.dry_run ? ' · dry' : ''}</td>
       <td class="num">${c.planned}</td>
       <td class="num">${c.written}</td>
       <td class="muted">${nf(c.total_before)} → ${nf(c.total_after)}</td>

@@ -92,7 +92,10 @@ async def run_cycle(trigger: str = "auto") -> dict:
         async with AsyncSessionLocal() as db:
             cfg = await get_or_create_config(db)
 
-            if trigger == "auto" and not cfg.enabled:
+            # Выключенная трансляция = остатки обнулены мастер-тумблером.
+            # Ручной прогон её тоже не должен «оживлять» (кроме DRY-RUN — он
+            # в Ozon не пишет).
+            if not cfg.enabled and (trigger == "auto" or not cfg.dry_run):
                 return {"skipped": "трансляция выключена"}
             if not cfg.ozon_account_id or not cfg.warehouse_id:
                 summary["error"] = "не выбран кабинет или склад"
@@ -438,6 +441,131 @@ def _finish_status(started: datetime, cfg: BroadcastConfig, summary: dict) -> No
     STATUS["last_run"] = started.isoformat()
     STATUS["last_summary"] = summary
     _set_next_run(cfg)
+
+
+# --------------------------------------------------------------------- мастер-тумблер
+async def stop_and_zero(who: str = "") -> dict:
+    """Мастер-тумблер «выкл»: остановить трансляцию и обнулить на целевом
+    FBS-складе ВСЕ артикулы, которые она ведёт (весь список + всё, что
+    когда-либо записывали). Пишет в Ozon даже при DRY-RUN — это явная
+    команда «убрать товар Симы с продажи». Обратное — включить тумблер:
+    первый же цикл вернёт остатки по формуле."""
+    import asyncio
+
+    # 1. Сначала выключаем, чтобы авто-цикл больше не стартовал.
+    async with AsyncSessionLocal() as db:
+        cfg = await get_or_create_config(db)
+        cfg.enabled = False
+        cfg.updated_at = datetime.now()
+        await db.commit()
+
+    # 2. Дожидаемся идущего цикла — иначе он допишет остатки поверх нулей.
+    for _ in range(600):
+        if not STATUS["running"]:
+            break
+        await asyncio.sleep(1)
+    else:
+        return {"error": "цикл не завершился за 10 минут — обнуление не выполнено"}
+
+    STATUS.update(running=True, phase="обнуление", trigger="stop")
+    t0 = time.time()
+    started = datetime.now()
+    summary: dict = {"trigger": "stop", "started": started.isoformat(),
+                     "errors": [], "notes": []}
+    try:
+        async with AsyncSessionLocal() as db:
+            cfg = await get_or_create_config(db)
+            if cfg.enabled:  # пока ждали, тумблер включили обратно
+                summary["skipped"] = "тумблер снова включён — обнуление отменено"
+                return summary
+            if not cfg.ozon_account_id or not cfg.warehouse_id:
+                summary["error"] = "не выбран кабинет или склад"
+                return summary
+            acc = await db.get(OzonAccount, cfg.ozon_account_id)
+            if acc is None:
+                summary["error"] = "кабинет Ozon не найден"
+                return summary
+            headers = {"Client-Id": acc.client_id, "Api-Key": acc.api_key,
+                       "Content-Type": "application/json"}
+
+            items = (await db.execute(select(BroadcastItem))).scalars().all()
+            names = {r.offer_id: (r.name or "") for r in items}
+            states = (await db.execute(select(BroadcastState))).scalars().all()
+            prev_amount = {r.offer_id: (r.last_amount or 0) for r in states}
+            offer_ids = sorted(set(names) | set(prev_amount))
+
+            oz = OzonClient(headers, cfg.warehouse_id)
+            written, bad, batch_errs = await oz.put_stocks(
+                [{"offer_id": o, "stock": 0} for o in offer_ids])
+            bad_ids = {o for o, _ in bad}
+
+            now = datetime.now()
+            for oid in offer_ids:
+                if oid in bad_ids:
+                    continue
+                vals = {"last_amount": 0, "last_branch": "СТОП",
+                        "last_reason": "трансляция выключена", "updated_at": now}
+                await db.execute(
+                    pg_insert(BroadcastState).values(offer_id=oid, **vals)
+                    .on_conflict_do_update(index_elements=["offer_id"], set_=vals))
+            await db.commit()
+
+            plan = [{
+                "offer_id": o, "name": names.get(o, ""), "want": 0,
+                "was": prev_amount.get(o, 0), "branch": "СТОП",
+                "reason": "трансляция выключена", "balance": None, "price": None,
+                "real_min": None, "real_min_src": "", "orders": 0,
+                "wb_orders": 0, "ozon_orders": 0, "calc_qty": 0, "enough": False,
+            } for o in offer_ids]
+            total_before = sum(prev_amount.get(o, 0) for o in offer_ids)
+
+            if who:
+                summary["notes"].append(f"выключил: {who}")
+            if bad:
+                summary["notes"].append(
+                    f"Ozon не обнулил {len(bad)}: {', '.join(sorted(bad_ids)[:5])}")
+            summary["errors"] += batch_errs[:5]
+            summary.update({
+                "dry_run": False, "account": acc.name,
+                "warehouse_id": cfg.warehouse_id, "planned": len(plan),
+                "written": written, "turned_on": 0,
+                "turned_off": sum(1 for p in plan if p["was"] > 0 and p["offer_id"] not in bad_ids),
+                "changed": 0, "total_before": total_before, "total_after": 0,
+                "orders_total": 0, "orders_subtracted": 0,
+                "seconds": round(time.time() - t0, 1),
+            })
+            summary["cycle_id"] = await _save_cycle(db, cfg, summary, started, t0, plan, "stop")
+
+            failed_n = len(offer_ids) - written
+            lines = [
+                "⛔ Трансляция остатков ВЫКЛЮЧЕНА",
+                f"{acc.name} · склад {cfg.warehouse_id}",
+                f"обнулено артикулов: {written} из {len(offer_ids)}"
+                f" (было в сумме {total_before:,} шт)".replace(",", " "),
+            ]
+            if who:
+                lines.append(f"кто: {who}")
+            if failed_n:
+                lines.append(f"⚠️ не обнулено: {failed_n} — проверьте журнал")
+            if batch_errs:
+                lines += [f"• {e}" for e in batch_errs[:3]]
+            await notify.send("\n".join(lines))
+
+            _finish_status(started, cfg, summary)
+            return summary
+    except Exception as e:  # noqa: BLE001
+        tb = traceback.format_exc()[:1500]
+        print(f"STOCK-BROADCAST stop crash:\n{tb}", flush=True)
+        summary["error"] = str(e)
+        try:
+            await notify.send(f"🛑 Обнуление остатков трансляции упало\n{e}\n"
+                              "Остатки могли остаться — проверьте вручную.")
+        except Exception:
+            pass
+        STATUS["last_summary"] = summary
+        return summary
+    finally:
+        STATUS.update(running=False, phase="")
 
 
 # --------------------------------------------------------------------- loop

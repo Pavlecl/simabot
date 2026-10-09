@@ -4996,6 +4996,23 @@ async def api_sb_config_save(request: Request, user: dict = Depends(require_admi
     return {"ok": True, "config": _sb_cfg_dict(cfg)}
 
 
+@app.post("/api/stock-broadcast/master")
+async def api_sb_master(request: Request, user: dict = Depends(require_admin),
+                        db: AsyncSession = Depends(get_db)):
+    """Мастер-тумблер. off -> стоп + обнуление всех артикулов трансляции
+    на целевом складе; on -> включить и сразу прогнать цикл (вернёт остатки)."""
+    body = await request.json()
+    if body.get("on"):
+        cfg = await sb_cycle.get_or_create_config(db)
+        cfg.enabled = True
+        cfg.updated_at = datetime.now()
+        await db.commit()
+        asyncio.create_task(sb_cycle.run_cycle("manual"))
+        return {"ok": True, "enabled": True}
+    asyncio.create_task(sb_cycle.stop_and_zero(user.get("username") or ""))
+    return {"ok": True, "enabled": False}
+
+
 @app.post("/api/stock-broadcast/run")
 async def api_sb_run(user: dict = Depends(require_admin)):
     asyncio.create_task(sb_cycle.run_cycle("manual"))

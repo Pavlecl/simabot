@@ -66,7 +66,7 @@
     <div class="sb-box">
       <div class="sb-row" style="justify-content:space-between">
         <div class="sb-row">
-          <label class="sb-switch"><input type="checkbox" id="sb-enabled"> Авто-цикл включён</label>
+          <label class="sb-switch"><span class="fbo-toggle"><input type="checkbox" class="sb-master" id="sb-enabled"><span class="fbo-toggle-track"><span class="fbo-toggle-thumb"></span></span></span> <span class="sb-master-label">Трансляция</span></label>
           <label class="sb-switch"><input type="checkbox" id="sb-dryrun"> DRY-RUN (в Ozon не писать)</label>
         </div>
         <div class="sb-row">
@@ -175,6 +175,19 @@
 
   <!-- ================= НАСТРОЙКИ ================= -->
   <div class="sb-panel" id="p-settings">
+    <div class="sb-box sb-master-box" style="max-width:560px;margin-bottom:12px">
+      <h3>Трансляция</h3>
+      <label class="sb-switch" style="font-size:14px">
+        <span class="fbo-toggle"><input type="checkbox" class="sb-master" id="sb-master-set"><span class="fbo-toggle-track"><span class="fbo-toggle-thumb"></span></span></span>
+        <b class="sb-master-label">—</b>
+      </label>
+      <div class="muted" style="font-size:11px;margin-top:8px">
+        Выключение сразу останавливает авто-цикл и ставит <b>0</b> на целевом FBS-складе
+        по всем артикулам трансляции (пишет в Ozon даже в режиме DRY-RUN).
+        Включение — первый же цикл вернёт остатки по формуле.
+      </div>
+    </div>
+
     <div class="sb-box" style="max-width:560px">
       <h3>Кабинет и склад</h3>
       <div class="sb-row" style="flex-direction:column;align-items:stretch;gap:10px">
@@ -253,5 +266,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script src="/static/js/stock_broadcast.js?v=1"></script>
+<script src="/static/js/stock_broadcast.js?v=2"></script>
 {% endblock %}
