@@ -134,7 +134,7 @@ class SimaClient:
             it = _parse(raw, self.stock_id)
             out[it.sid] = it
 
-    async def fetch_many(self, sids) -> tuple[dict[str, SimaItem], set[str]]:
+    async def fetch_many(self, sids, should_stop=None) -> tuple[dict[str, SimaItem], set[str]]:
         """Пачками по bulk_size. -> (найденное, sid_из_упавших_пачек).
 
         Второе значение критично. «Нет в ответе» имеет два смысла:
@@ -161,6 +161,8 @@ class SimaClient:
         clean.sort()
         async with aiohttp.ClientSession() as session:
             for i in range(0, len(clean), self.bulk_size):
+                if should_stop and should_stop():
+                    break
                 await self._fetch_batch(session, clean[i:i + self.bulk_size], out, failed)
                 await asyncio.sleep(self.pause_ms / 1000)
         return out, failed

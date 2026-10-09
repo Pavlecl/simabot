@@ -43,7 +43,17 @@ ALERT_COOLDOWN_MIN = 60
 STATUS: dict = {
     "running": False, "phase": "", "trigger": None,
     "last_run": None, "next_run": None, "last_summary": None,
+    "cancel": False,  # мастер-тумблер выключили — идущий цикл бросает работу
 }
+
+
+class _Cancelled(Exception):
+    pass
+
+
+def _check_cancel() -> None:
+    if STATUS["cancel"]:
+        raise _Cancelled()
 
 
 # --------------------------------------------------------------------- конфиг
@@ -145,7 +155,8 @@ async def run_cycle(trigger: str = "auto") -> dict:
             # ---- 4. Сима
             STATUS["phase"] = "выгрузка Симы"
             sima = SimaClient(stock_id=cfg.sima_stock_id or 115)
-            found, failed = await sima.fetch_many(offer_ids)
+            found, failed = await sima.fetch_many(offer_ids, lambda: STATUS["cancel"])
+            _check_cancel()
 
             # ---- 5. заказы
             # Ozon держит свои заказы в резерве (present - reserved) — НЕ вычитаем,
@@ -178,6 +189,7 @@ async def run_cycle(trigger: str = "auto") -> dict:
                     summary["notes"].append("вычет заказов WB включён, но кабинет WB не найден")
 
             # ---- 6. живой FBS + каталог
+            _check_cancel()
             STATUS["phase"] = "остатки Ozon"
             try:
                 live = await oz.fbs_stocks(offer_ids)
@@ -194,6 +206,7 @@ async def run_cycle(trigger: str = "auto") -> dict:
             prev_amount = {r.offer_id: (r.last_amount or 0) for r in state_rows}
 
             # ---- 7. расчёт
+            _check_cancel()
             STATUS["phase"] = "расчёт"
             plan: list[dict] = []
             gone: list[str] = []
@@ -249,6 +262,7 @@ async def run_cycle(trigger: str = "auto") -> dict:
             changed = [p for p in plan if p["want"] != p["was"]]
 
             # ---- 8. запись
+            _check_cancel()
             STATUS["phase"] = "запись"
             written = 0
             bad: list[tuple[str, str]] = []
@@ -362,6 +376,9 @@ async def run_cycle(trigger: str = "auto") -> dict:
             _finish_status(started, cfg, summary)
             return summary
 
+    except _Cancelled:
+        summary["skipped"] = "прервано: трансляцию выключили"
+        return summary
     except Exception as e:  # noqa: BLE001
         tb = traceback.format_exc()[:1500]
         print(f"STOCK-BROADCAST cycle crash:\n{tb}", flush=True)
@@ -459,13 +476,17 @@ async def stop_and_zero(who: str = "") -> dict:
         cfg.updated_at = datetime.now()
         await db.commit()
 
-    # 2. Дожидаемся идущего цикла — иначе он допишет остатки поверх нулей.
-    for _ in range(600):
+    # 2. Прерываем идущий цикл: он бросит работу на ближайшей пачке Симы
+    #    / границе фазы и до записи в Ozon не дойдёт.
+    STATUS["cancel"] = True
+    for _ in range(300):
         if not STATUS["running"]:
             break
         await asyncio.sleep(1)
     else:
-        return {"error": "цикл не завершился за 10 минут — обнуление не выполнено"}
+        STATUS["cancel"] = False
+        return {"error": "цикл не остановился за 5 минут — обнуление не выполнено"}
+    STATUS["cancel"] = False
 
     STATUS.update(running=True, phase="обнуление", trigger="stop")
     t0 = time.time()
@@ -492,11 +513,26 @@ async def stop_and_zero(who: str = "") -> dict:
             names = {r.offer_id: (r.name or "") for r in items}
             states = (await db.execute(select(BroadcastState))).scalars().all()
             prev_amount = {r.offer_id: (r.last_amount or 0) for r in states}
-            offer_ids = sorted(set(names) | set(prev_amount))
+            # Сначала то, где сейчас стоит остаток, — это и есть «товар на
+            # продаже»; потом остальное (на случай рассинхрона с Ozon).
+            offer_ids = sorted(set(names) | set(prev_amount),
+                               key=lambda o: (prev_amount.get(o, 1) <= 0, o))
 
             oz = OzonClient(headers, cfg.warehouse_id)
-            written, bad, batch_errs = await oz.put_stocks(
-                [{"offer_id": o, "stock": 0} for o in offer_ids])
+            written, bad, batch_errs = 0, [], []
+            step = 1000
+            for i in range(0, len(offer_ids), step):
+                if (await db.get(BroadcastConfig, 1, populate_existing=True)).enabled:
+                    summary["notes"].append(
+                        f"обнуление прервано — тумблер включили ({i} из {len(offer_ids)})")
+                    offer_ids = offer_ids[:i]
+                    break
+                STATUS["phase"] = f"обнуление {i:,} / {len(offer_ids):,}".replace(",", " ")
+                w, b, e = await oz.put_stocks(
+                    [{"offer_id": o, "stock": 0} for o in offer_ids[i:i + step]])
+                written += w
+                bad += b
+                batch_errs += e
             bad_ids = {o for o, _ in bad}
 
             now = datetime.now()
