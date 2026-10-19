@@ -56,31 +56,61 @@ def parse_orders(postings):
     return orders
 
 
+class OzonPostingsError(Exception):
+    pass
+
+
+async def list_fbs_postings(session, headers, statuses, warehouse_ids=None,
+                            date_from=None, date_to=None, direction="ASC"):
+    """Все FBS-отправления через /v4/posting/fbs/list (пагинация по cursor).
+
+    С октября 2026 Ozon перевёл список на v4: /v3/posting/fbs/list постоянно
+    отвечает 429 «rate limit per second». В v4 фильтр — statuses/warehouse_ids
+    (старые status/warehouse_id молча игнорируются), limit ≤ 100, а price
+    товара — объект {amount, currency}; приводим его к строке, как было в v3,
+    чтобы не трогать остальной код.
+    """
+    url = "https://api-seller.ozon.ru/v4/posting/fbs/list"
+    flt = {"statuses": list(statuses)}
+    if warehouse_ids:
+        flt["warehouse_ids"] = list(warehouse_ids)
+    if date_from:
+        flt["since"] = date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    if date_to:
+        flt["to"] = date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    postings, cursor = [], None
+    while True:
+        payload = {"dir": direction, "filter": flt, "limit": 100}
+        if cursor:
+            payload["cursor"] = cursor
+        for attempt in range(4):
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status == 429 and attempt < 3:
+                    await asyncio.sleep(1 + attempt)
+                    continue
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise OzonPostingsError(f"Ozon {resp.status}: {text[:200]}")
+                data = await resp.json()
+                break
+        for p in data.get("postings", []):
+            for pr in p.get("products", []):
+                if isinstance(pr.get("price"), dict):
+                    pr["price"] = pr["price"].get("amount", "0")
+        postings.extend(data.get("postings", []))
+        cursor = data.get("cursor")
+        if not data.get("has_next") or not cursor:
+            return postings
+        await asyncio.sleep(0.3)
+
+
 async def fetch_postings(session, status="awaiting_packaging"):
     """Запрашивает список отправлений с определенным статусом"""
-    url = "https://api-seller.ozon.ru/v3/posting/fbs/list"
     date_to = datetime.now() + timedelta(days=1)
     date_from = date_to - timedelta(days=30)
-
-    payload = {
-        "dir": "ASC",
-        "filter": {
-            "status": status,
-            "warehouse_id": WAREHOUSE_LIST,
-            "since": date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-            "to": date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        },
-        "limit": 1000,
-        "with": {"analytics_data": False, "financial_data": False}
-    }
-
-    async with session.post(url, json=payload, headers=HEADERS) as response:
-        if response.status != 200:
-            text = await response.text()
-            print(f"Error fetching postings: {text}")
-            return []
-        data = await response.json()
-        return data.get('result', {}).get('postings', [])
+    return await list_fbs_postings(session, HEADERS, [status], WAREHOUSE_LIST,
+                                   date_from, date_to)
 
 
 async def get_new_orders():

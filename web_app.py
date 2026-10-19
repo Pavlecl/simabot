@@ -139,33 +139,16 @@ _sync_status = {"running": False, "progress": "", "synced": 0, "error": ""}
 
 async def fetch_ozon_postings(statuses: list) -> list:
     """Получает отправления с Ozon по списку статусов."""
-    url = "https://api-seller.ozon.ru/v3/posting/fbs/list"
+    from ozon_api import list_fbs_postings
     date_to = datetime.now() + timedelta(days=1)
     date_from = date_to - timedelta(days=60)
-    all_postings = []
-
-    async with aiohttp.ClientSession() as session:
-        for status in statuses:
-            payload = {
-                "dir": "ASC",
-                "filter": {
-                    "status": status,
-                    "warehouse_id": [OZON_WAREHOUSE_ID],
-                    "since": date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                    "to": date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-                },
-                "limit": 1000,
-                "with": {"analytics_data": False, "financial_data": False}
-            }
-            try:
-                async with session.post(url, json=payload, headers=get_active_headers()) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        all_postings.extend(data.get("result", {}).get("postings", []))
-            except Exception as e:
-                pass
-
-    return all_postings
+    try:
+        async with aiohttp.ClientSession() as session:
+            return await list_fbs_postings(session, get_active_headers(), statuses,
+                                           [OZON_WAREHOUSE_ID], date_from, date_to)
+    except Exception as e:
+        print(f"fetch_ozon_postings error: {e}", flush=True)
+        return []
 
 
 async def fetch_images_for_skus(skus: list) -> dict:
@@ -1839,7 +1822,6 @@ async def update_user_permissions(
 
 async def sync_sales_from_ozon():
     """Синхронизирует историю продаж из Ozon API (delivered + cancelled)"""
-    url = "https://api-seller.ozon.ru/v3/posting/fbs/list"
     date_to = datetime.now()
     date_from = date_to - timedelta(days=180)
 
@@ -1848,71 +1830,51 @@ async def sync_sales_from_ozon():
         prod_res = await db.execute(select(Product.offer_id, Product.brand, Product.category_id, Product.category_name))
         prod_map = {r[0]: {"brand": r[1], "category_id": r[2], "category_name": r[3]} for r in prod_res.all()}
 
+    from ozon_api import list_fbs_postings
     statuses_map = {"delivered": "sale", "cancelled": "cancel"}
 
-    async with aiohttp.ClientSession() as session:
-        for ozon_status, sale_status in statuses_map.items():
-            offset = 0
-            while True:
-                payload = {
-                    "dir": "DESC",
-                    "filter": {
-                        "status": ozon_status,
-                        "since": date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                        "to": date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-                    },
-                    "limit": 1000,
-                    "offset": offset,
-                    "with": {"analytics_data": False, "financial_data": False}
-                }
-                try:
-                    async with session.post(url, json=payload, headers=get_active_headers()) as resp:
-                        if resp.status != 200:
-                            break
-                        data = await resp.json()
-                        postings = data.get("result", {}).get("postings", [])
-                        if not postings:
-                            break
+    for ozon_status, sale_status in statuses_map.items():
+        try:
+            async with aiohttp.ClientSession() as session:
+                postings = await list_fbs_postings(
+                    session, get_active_headers(), [ozon_status],
+                    date_from=date_from, date_to=date_to, direction="DESC")
+        except Exception as e:
+            print(f"sync_sales error: {e}", flush=True)
+            continue
 
-                        async with AsyncSessionLocal() as db:
-                            for posting in postings:
-                                pnum = posting.get("posting_number")
-                                event_date = None
-                                in_process = posting.get("in_process_at") or posting.get("shipment_date")
-                                if in_process:
-                                    try:
-                                        event_date = datetime.fromisoformat(in_process.replace("Z", "+00:00")).replace(tzinfo=None)
-                                    except:
-                                        pass
+        async with AsyncSessionLocal() as db:
+            for posting in postings:
+                pnum = posting.get("posting_number")
+                event_date = None
+                in_process = posting.get("in_process_at") or posting.get("shipment_date")
+                if in_process:
+                    try:
+                        event_date = datetime.fromisoformat(in_process.replace("Z", "+00:00")).replace(tzinfo=None)
+                    except:
+                        pass
 
-                                for prod in posting.get("products", []):
-                                    oid = prod.get("offer_id", "")
-                                    qty = int(prod.get("quantity", 1))
-                                    price = int(float(prod.get("price", 0)))
-                                    pinfo = prod_map.get(oid, {})
+                for prod in posting.get("products", []):
+                    oid = prod.get("offer_id", "")
+                    qty = int(prod.get("quantity", 1))
+                    price = int(float(prod.get("price", 0)))
+                    pinfo = prod_map.get(oid, {})
 
-                                    stmt = pg_insert(SalesHistory).values(
-                                        posting_number=pnum,
-                                        offer_id=oid,
-                                        name=prod.get("name", ""),
-                                        brand=pinfo.get("brand"),
-                                        category_id=pinfo.get("category_id"),
-                                        category_name=pinfo.get("category_name"),
-                                        quantity=qty,
-                                        price=price,
-                                        revenue=price * qty,
-                                        status=sale_status,
-                                        event_date=event_date,
-                                    ).on_conflict_do_nothing(index_elements=["posting_number", "offer_id"])
-                                    await db.execute(stmt)
-                            await db.commit()
-
-                        if len(postings) < 1000:
-                            break
-                        offset += 1000
-                except Exception as e:
-                    print(f"sync_sales error: {e}", flush=True)
-                    break
+                    stmt = pg_insert(SalesHistory).values(
+                        posting_number=pnum,
+                        offer_id=oid,
+                        name=prod.get("name", ""),
+                        brand=pinfo.get("brand"),
+                        category_id=pinfo.get("category_id"),
+                        category_name=pinfo.get("category_name"),
+                        quantity=qty,
+                        price=price,
+                        revenue=price * qty,
+                        status=sale_status,
+                        event_date=event_date,
+                    ).on_conflict_do_nothing(index_elements=["posting_number", "offer_id"])
+                    await db.execute(stmt)
+            await db.commit()
 
 
 @app.get("/analytics", response_class=HTMLResponse)
@@ -4242,9 +4204,12 @@ async def api_sima_get_orders(request: Request):
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401)
-    from ozon_api import get_new_orders
+    from ozon_api import get_new_orders, OzonPostingsError
     import pandas as pd, io, base64
-    orders = await get_new_orders()
+    try:
+        orders = await get_new_orders()
+    except OzonPostingsError as e:
+        raise HTTPException(status_code=502, detail=f"Ozon не отдал заказы: {e}")
     if not orders:
         return {"orders": [], "articles": "", "excel_b64": None}
 

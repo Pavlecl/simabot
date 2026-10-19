@@ -6,7 +6,7 @@
   чтение FBS   /v4/product/info/stocks   (present по type=='fbs')
   запись FBS   /v2/products/stocks       (result[].updated — НЕ статус ответа)
   каталог      /v1/product/list          (проверка, что артикул ещё жив)
-  заказы       /v3/posting/fbs/list      (awaiting_packaging -> вычитаем)
+  заказы       /v4/posting/fbs/list      (awaiting_packaging -> вычитаем)
 """
 from __future__ import annotations
 
@@ -162,31 +162,34 @@ class OzonClient:
         date_to = datetime.now() + timedelta(days=1)
         date_from = date_to - timedelta(days=30)
         async with aiohttp.ClientSession() as s:
-            offset = 0
+            cursor = None
             while True:
-                st, text = await self._post(s, "/v3/posting/fbs/list", {
+                # v4: /v3/posting/fbs/list Ozon больше не обслуживает (вечный 429)
+                body = {
                     "dir": "ASC",
                     "filter": {
-                        "status": "awaiting_packaging",
-                        "warehouse_id": [self.warehouse_id],
+                        "statuses": ["awaiting_packaging"],
+                        "warehouse_ids": [self.warehouse_id],
                         "since": date_from.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                         "to": date_to.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                     },
-                    "limit": 1000, "offset": offset,
-                    "with": {"analytics_data": False, "financial_data": False},
-                })
+                    "limit": 100,
+                }
+                if cursor:
+                    body["cursor"] = cursor
+                st, text = await self._post(s, "/v4/posting/fbs/list", body)
                 if st != 200:
                     self.errors += 1
-                    raise OzonError(f"/v3/posting/fbs/list HTTP {st}: {text[:200]}")
-                postings = (json.loads(text) or {}).get("result", {}).get("postings", [])
-                for p in postings:
+                    raise OzonError(f"/v4/posting/fbs/list HTTP {st}: {text[:200]}")
+                d = json.loads(text) or {}
+                for p in d.get("postings", []):
                     for pr in p.get("products", []):
                         oid = str(pr.get("offer_id") or pr.get("sku") or "")
                         if not oid:
                             continue
                         out[oid] = out.get(oid, 0) + int(pr.get("quantity", 0))
-                if len(postings) < 1000:
+                cursor = d.get("cursor")
+                if not d.get("has_next") or not cursor:
                     break
-                offset += 1000
                 await asyncio.sleep(0.2)
         return out
